@@ -16,8 +16,26 @@ export {
   generateCoverWithReport,
   reviewCover
 } from "./pipeline/generateCover.js";
-export { renderWechatHtml } from "./pipeline/renderWechatHtml.js";
-export { saveWechatDraft } from "./pipeline/saveWechatDraft.js";
+export {
+  canEnterWechatDraftStage,
+  renderWechatHtml,
+  renderWechatHtmlWithReport,
+  reviewWechatHtmlChecks
+} from "./pipeline/renderWechatHtml.js";
+export {
+  assertWechatDraftActionLabel,
+  saveWechatDraft,
+  saveWechatDraftWithReport
+} from "./pipeline/saveWechatDraft.js";
+export {
+  saveWechatDraftBrowserPlanWithReport
+} from "./pipeline/saveWechatDraftBrowser.js";
+export {
+  createWechatBrowserDraftPlan,
+  createWechatBrowserRuntimeConfig,
+  createWechatBrowserSafetyCheck,
+  reviewWechatBrowserActionLabel
+} from "./adapters/wechatBrowser.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await runDailyPipeline();

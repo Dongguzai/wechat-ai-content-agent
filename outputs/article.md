@@ -1,8 +1,8 @@
-AI 编码代理真正卷到的，不是价格，而是工作流
+这条 AI 新闻背后，是一次工作流重排
 
 ## 先把这件事说准确
 
-高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。更准确的边界是：$200/month 更安全地对应 Claude Max 20x 个人套餐价格，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。
+高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。更准确的边界是：外界常说的高价订阅价格，更安全地对应 Claude 的高阶个人订阅方案，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。
 
 ## 真正的冲突不是谁更便宜
 
@@ -18,6 +18,6 @@ Claude Code 是 Anthropic 面向开发者的编码代理，可在项目中规划
 
 ## 趋势判断
 
-Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径，但这不等于能力相同，也不等于可以直接互换。更稳的判断是：这不是简单的免费替代高价工具，而是 coding agent 正在从付费产品变成开源基础设施的一次信号。 下一阶段，coding agent 的竞争重点会从“谁的模型更强”，转向“谁能占住开发者工作流入口”。谁掌握入口，谁就掌握预算、数据流和工具链的默认选择。
+Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径，但这不等于两者能力边界一致，也不代表可以无差别迁移。更稳的判断是：这不是简单的开源工具链选择，而是 coding agent 正在从付费产品变成开源基础设施的一次信号。 下一阶段，coding agent 的竞争重点会从“谁的模型更强”，转向“谁能占住开发者工作流入口”。谁掌握入口，谁就掌握预算、数据流和工具链的默认选择。
 
-原始选题线索：https://venturebeat.com/infrastructure/claude-code-costs-up-to-usd200-a-month-goose-does-the-same-thing-for-free
+原始选题线索：https://example.com/rss/huggingface-open-source-llm

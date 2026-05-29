@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTopicFactPack } from "./buildTopicFactPack.js";
@@ -8,11 +8,15 @@ import { shortlistNewsWithReport } from "./shortlistNews.js";
 import { writeArticleWithReport } from "./writeArticle.js";
 import { reviewArticleWithReport } from "./reviewArticle.js";
 import { generateCoverWithReport } from "./generateCover.js";
+import { renderWechatHtmlWithReport } from "./renderWechatHtml.js";
+import { saveWechatDraftWithReport } from "./saveWechatDraft.js";
+import { saveWechatDraftBrowserPlanWithReport } from "./saveWechatDraftBrowser.js";
 import type {
   DailyPipelineResult,
   PipelineOutputFiles
 } from "../types/pipeline.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import type { CoverPipelineResult } from "../types/cover.js";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -28,6 +32,45 @@ export interface RunDailyPipelineOptions {
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 
+async function readJsonFile<T>(path: string): Promise<T> {
+  const content = await readFile(path, "utf8");
+  return JSON.parse(content) as T;
+}
+
+async function reuseExistingCoverIfAvailable(
+  outputDir: string,
+  logger: Logger
+): Promise<CoverPipelineResult | undefined> {
+  const files = {
+    cover: join(outputDir, "cover.json"),
+    coverPrompt: join(outputDir, "cover-prompt.md"),
+    coverReview: join(outputDir, "cover-review.json"),
+    coverImageDir: join(outputDir, "covers")
+  };
+
+  try {
+    const [cover, review] = await Promise.all([
+      readJsonFile<CoverPipelineResult["cover"]>(files.cover),
+      readJsonFile<CoverPipelineResult["review"]>(files.coverReview)
+    ]);
+
+    if (!review.passed || cover.imagePath !== review.imagePath) {
+      return undefined;
+    }
+
+    logger.info(`Reusing existing cover artifacts; image=${cover.imagePath}.`);
+    return {
+      outputDir,
+      files,
+      cover,
+      review,
+      promptMarkdown: await readFile(files.coverPrompt, "utf8").catch(() => "")
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): string {
   const { artifacts, collectionStats, files, outputDir, shortlistStats } = result;
   const selected = artifacts.selectedTopic.selected;
@@ -39,7 +82,7 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     "",
     "## Summary",
     "",
-    "- Current phase: cover image generation gate",
+    "- Current phase: wechat browser draft plan only",
     `- Candidate news: ${artifacts.candidates.length}`,
     `- Shortlisted news: ${artifacts.shortlisted.length}`,
     `- Selected topic: ${selected.title}`,
@@ -58,6 +101,21 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- Cover image size: ${artifacts.cover.imageSize}`,
     `- Cover review passed: ${artifacts.coverReview.passed ? "yes" : "no"}`,
     `- Cover image path: ${artifacts.cover.imagePath}`,
+    `- WeChat HTML compatible: ${artifacts.wechatLayout.compatibleWithWechat ? "yes" : "no"}`,
+    `- WeChat layout warnings: ${artifacts.wechatLayout.warnings.length}`,
+    `- WeChat draft stage allowed: ${artifacts.wechatLayout.allowedNextStage ? "yes" : "no"}`,
+    `- WeChat draft dry-run mode: ${artifacts.wechatDraft.mode}`,
+    `- WeChat draft dry-run status: ${artifacts.wechatDraft.status}`,
+    `- WeChat mock draftId: ${artifacts.wechatDraft.draftId}`,
+    `- WeChat mock previewUrl: ${artifacts.wechatDraft.previewUrl}`,
+    `- WeChat draft allowedNextStage: ${artifacts.wechatDraft.allowedNextStage ? "yes" : "no"}`,
+    `- Human confirmation required: ${artifacts.wechatDraft.safety.requiresHumanConfirmation ? "yes" : "no"}`,
+    `- WeChat browser draft plan mode: ${artifacts.wechatBrowserDraftPlan.mode}`,
+    `- WeChat browser disabled: ${artifacts.wechatBrowserDraftPlan.browserDisabled ? "yes" : "no"}`,
+    `- WeChat browser real enabled: ${artifacts.wechatBrowserDraftPlan.realBrowserEnabled ? "yes" : "no"}`,
+    `- WeChat browser allow save draft: ${artifacts.wechatBrowserDraftPlan.allowSaveDraft ? "yes" : "no"}`,
+    `- WeChat browser allow preview: ${artifacts.wechatBrowserDraftPlan.allowPreview ? "yes" : "no"}`,
+    `- WeChat browser safety passed: ${artifacts.wechatBrowserSafetyCheck.passed ? "yes" : "no"}`,
     `- RSS shortlisted: ${shortlistStats.rssShortlistedCount}`,
     `- global_search shortlisted: ${shortlistStats.globalSearchShortlistedCount}`,
     `- Collection API real call: ${collectionStats.apiRealCall ? "yes" : "no"}`,
@@ -84,12 +142,29 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- cover-prompt.md: ${files.coverPrompt}`,
     `- cover-review.json: ${files.coverReview}`,
     `- covers/: ${files.coverImageDir}`,
+    `- wechat.html: ${files.wechatHtml}`,
+    `- wechat-layout.json: ${files.wechatLayout}`,
+    `- wechat-layout-report.md: ${files.wechatLayoutReport}`,
+    `- wechat-draft-result.json: ${files.wechatDraftResult}`,
+    `- wechat-draft-report.md: ${files.wechatDraftReport}`,
+    `- wechat-browser-draft-plan.json: ${files.wechatBrowserDraftPlan}`,
+    `- wechat-browser-draft-plan.md: ${files.wechatBrowserDraftPlanReport}`,
+    `- wechat-browser-safety-check.json: ${files.wechatBrowserSafetyCheck}`,
     `- daily-report.md: ${files.dailyReport}`,
     "",
     "## Safety Notes",
     "",
-    "- This run stops after cover image generation.",
-    "- No WeChat HTML, WeChat draft, WeChat backend operation, publishing, or browser automation is used.",
+    "- This run stops after generating the WeChat browser draft plan.",
+    "- 已完成 mock 草稿写入。",
+    "- 已生成真实浏览器写入计划。",
+    "- 未操作真实公众号后台。",
+    "- 未打开公众号后台。",
+    "- 未真实保存草稿。",
+    "- 未发布。",
+    "- 未群发。",
+    "- 需要人工确认。",
+    "- 需要用户显式设置 WECHAT_BROWSER_ENABLE_REAL=true 才能进入真实浏览器测试。",
+    "- No real WeChat backend operation, public send action, mass send action, or browser automation is used.",
     "- APIMart is the only allowed image provider; default mode is mock unless COVER_ENABLE_REAL_API=true and APIMART_API_KEY is present.",
     "- Real APIMart generation is intentionally TODO-gated until the API contract is confirmed.",
     "- Tavily/Exa search summaries are treated as leads only, not factual sources.",
@@ -108,7 +183,7 @@ export async function runDailyPipeline(
   await mkdir(outputDir, { recursive: true });
   logger.info(`Output directory ready: ${outputDir}`);
 
-  logger.info("1/7 collectNews: building the 20-item candidate pool.");
+  logger.info("1/10 collectNews: building the 20-item candidate pool.");
   const collection = await collectNewsWithReport({
     outputDir,
     logger,
@@ -118,7 +193,7 @@ export async function runDailyPipeline(
     useMockRss: options.useMockRss
   });
 
-  logger.info("2/7 shortlistNews: running editorial first-pass selection.");
+  logger.info("2/10 shortlistNews: running editorial first-pass selection.");
   const shortlist = await shortlistNewsWithReport({
     outputDir,
     candidates: collection.candidates,
@@ -126,7 +201,7 @@ export async function runDailyPipeline(
     writeOutputs: true
   });
 
-  logger.info("3/7 selectTopic: choosing today's main editorial topic.");
+  logger.info("3/10 selectTopic: choosing today's main editorial topic.");
   const topicSelection = await selectTopicWithReport({
     outputDir,
     shortlisted: shortlist.shortlisted,
@@ -135,7 +210,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("4/7 buildTopicFactPack: verifying key claims for the selected topic.");
+  logger.info("4/10 buildTopicFactPack: verifying key claims for the selected topic.");
   const factPack = await buildTopicFactPack({
     outputDir,
     topic: topicSelection.topic,
@@ -144,7 +219,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("5/7 writeArticle: writing the WeChat article body.");
+  logger.info("5/10 writeArticle: writing the WeChat article body.");
   const article = await writeArticleWithReport({
     outputDir,
     topic: topicSelection.topic,
@@ -154,7 +229,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("6/7 reviewArticle: auditing the article before cover generation.");
+  logger.info("6/10 reviewArticle: auditing the article before cover generation.");
   const articleReview = await reviewArticleWithReport({
     outputDir,
     articleMarkdown: article.article.markdown,
@@ -166,14 +241,48 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("7/7 generateCover: creating the APIMart-only cover prompt and mock image.");
-  const cover = await generateCoverWithReport({
+  logger.info("7/10 cover: reusing existing cover artifacts when available.");
+  const cover =
+    (await reuseExistingCoverIfAvailable(outputDir, logger)) ??
+    (await generateCoverWithReport({
+      outputDir,
+      articleMarkdown: article.article.markdown,
+      articleMeta: article.meta,
+      articleReview: articleReview.review,
+      selectedTopic: topicSelection.topic,
+      factPack: factPack.factPack,
+      logger,
+      env: options.env,
+      writeOutputs: true,
+      now: options.now
+    }));
+
+  logger.info("8/10 renderWechatHtml: creating Stripe-inspired WeChat HTML layout.");
+  const wechatLayout = await renderWechatHtmlWithReport({
     outputDir,
     articleMarkdown: article.article.markdown,
     articleMeta: article.meta,
     articleReview: articleReview.review,
-    selectedTopic: topicSelection.topic,
-    factPack: factPack.factPack,
+    cover: cover.cover,
+    coverReview: cover.review,
+    logger,
+    writeOutputs: true,
+    now: options.now
+  });
+
+  logger.info("9/10 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
+  const wechatDraft = await saveWechatDraftWithReport({
+    outputDir,
+    logger,
+    writeOutputs: true,
+    now: options.now
+  });
+
+  logger.info(
+    "10/10 saveWechatDraftBrowser: generating disabled browser draft plan and safety check."
+  );
+  const wechatBrowserDraft = await saveWechatDraftBrowserPlanWithReport({
+    outputDir,
     logger,
     env: options.env,
     writeOutputs: true,
@@ -201,6 +310,15 @@ export async function runDailyPipeline(
     coverPrompt: cover.files.coverPrompt,
     coverReview: cover.files.coverReview,
     coverImageDir: cover.files.coverImageDir,
+    wechatHtml: wechatLayout.files.wechatHtml,
+    wechatLayout: wechatLayout.files.wechatLayout,
+    wechatLayoutReport: wechatLayout.files.wechatLayoutReport,
+    wechatDraftResult: wechatDraft.files.wechatDraftResult,
+    wechatDraftReport: wechatDraft.files.wechatDraftReport,
+    wechatBrowserDraftPlan: wechatBrowserDraft.files.wechatBrowserDraftPlan,
+    wechatBrowserDraftPlanReport:
+      wechatBrowserDraft.files.wechatBrowserDraftPlanReport,
+    wechatBrowserSafetyCheck: wechatBrowserDraft.files.wechatBrowserSafetyCheck,
     dailyReport: join(outputDir, "daily-report.md")
   };
 
@@ -216,7 +334,11 @@ export async function runDailyPipeline(
       articleMeta: article.meta,
       articleReview: articleReview.review,
       cover: cover.cover,
-      coverReview: cover.review
+      coverReview: cover.review,
+      wechatLayout: wechatLayout.layout,
+      wechatDraft: wechatDraft.result,
+      wechatBrowserDraftPlan: wechatBrowserDraft.plan,
+      wechatBrowserSafetyCheck: wechatBrowserDraft.safetyCheck
     },
     collectionStats: collection.stats,
     shortlistStats: shortlist.stats
@@ -227,7 +349,7 @@ export async function runDailyPipeline(
   const durationMs = Date.now() - startedAt;
   logger.info(`Dry-run completed in ${durationMs}ms.`);
   logger.info(
-    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}; cover review passed=${cover.review.passed}.`
+    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}; cover review passed=${cover.review.passed}; HTML compatible=${wechatLayout.layout.compatibleWithWechat}; mock draft status=${wechatDraft.result.status}; browser plan mode=${wechatBrowserDraft.plan.mode}.`
   );
 
   return {

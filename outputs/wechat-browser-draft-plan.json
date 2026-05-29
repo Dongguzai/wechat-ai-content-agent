@@ -1,0 +1,121 @@
+{
+  "mode": "browser-disabled",
+  "browserDisabled": true,
+  "realBrowserEnabled": false,
+  "allowSaveDraft": false,
+  "allowPreview": false,
+  "targetUrl": "https://mp.weixin.qq.com",
+  "steps": [
+    {
+      "id": "preflight-artifacts",
+      "label": "前置产物检查",
+      "requiresHumanAction": false,
+      "allowed": true,
+      "safetyCheck": "passed",
+      "notes": "Read-only artifact and SOP check."
+    },
+    {
+      "id": "open-wechat-admin",
+      "label": "打开公众号后台",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "wait-human-scan-login",
+      "label": "等待人工扫码登录",
+      "requiresHumanAction": true,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "enter-draft-page",
+      "label": "进入图文/草稿页面",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "create-new-article",
+      "label": "新建图文",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "fill-title",
+      "label": "填写标题",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "paste-html",
+      "label": "粘贴正文 HTML",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "upload-cover",
+      "label": "上传封面图",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "fill-digest",
+      "label": "填写摘要",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "save-draft",
+      "label": "保存草稿",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "generate-preview",
+      "label": "生成预览",
+      "requiresHumanAction": false,
+      "allowed": false,
+      "safetyCheck": "blocked",
+      "notes": "WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened."
+    },
+    {
+      "id": "stop-for-human-confirmation",
+      "label": "停止并等待人工确认",
+      "requiresHumanAction": true,
+      "allowed": true,
+      "safetyCheck": "passed",
+      "notes": "Mandatory stop point. Wait for human confirmation and do not continue to publish or mass send."
+    }
+  ],
+  "forbiddenActions": [
+    "群发",
+    "发布",
+    "确认发送",
+    "立即发送"
+  ],
+  "humanCheckpoints": [
+    "用户显式设置 WECHAT_BROWSER_ENABLE_REAL=true",
+    "用户准备人工扫码登录",
+    "用户显式设置 WECHAT_BROWSER_ALLOW_SAVE_DRAFT=true 后才允许保存草稿",
+    "用户显式设置 WECHAT_BROWSER_ALLOW_PREVIEW=true 后才允许生成预览",
+    "保存草稿或生成预览后停止并等待人工确认",
+    "最终发布必须人工操作"
+  ],
+  "generatedAt": "2026-05-29T16:02:30.490Z"
+}

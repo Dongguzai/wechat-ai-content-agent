@@ -1,0 +1,22 @@
+{
+  "title": "这条 AI 新闻背后，是一次工作流重排",
+  "digest": "AI 产品和 agent 的价值正在从功能展示转向工作流重组；能被稳定、可审计地放进真实流程，才是它们影响行业的关键。",
+  "htmlPath": "outputs/wechat.html",
+  "coverImagePath": "/Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent/outputs/covers/cover-apimart-mock-2026-05-29T11-19-58-152Z.svg",
+  "style": "stripe-inspired",
+  "compatibleWithWechat": true,
+  "htmlChecks": {
+    "hasInlineStyles": true,
+    "hasNoExternalCss": true,
+    "hasNoJavascript": true,
+    "hasNoIframe": true,
+    "hasNoForbiddenPublishText": true,
+    "hasTitle": true,
+    "hasCoverImage": true,
+    "hasHeadings": true,
+    "mobileReadable": true
+  },
+  "warnings": [],
+  "generatedAt": "2026-05-29T16:02:30.485Z",
+  "allowedNextStage": true
+}

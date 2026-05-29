@@ -1,0 +1,65 @@
+{
+  "mode": "mock",
+  "status": "draft_saved",
+  "title": "这条 AI 新闻背后，是一次工作流重排",
+  "draftId": "mock-draft-20260529160230487",
+  "previewUrl": "mock://wechat-draft/mock-draft-20260529160230487/preview",
+  "htmlPath": "outputs/wechat.html",
+  "coverImagePath": "/Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent/outputs/covers/cover-apimart-mock-2026-05-29T11-19-58-152Z.svg",
+  "actions": [
+    {
+      "label": "检查文章审核结果",
+      "status": "passed"
+    },
+    {
+      "label": "检查封面审核结果",
+      "status": "passed"
+    },
+    {
+      "label": "检查 HTML 排版结果",
+      "status": "passed"
+    },
+    {
+      "label": "创建草稿",
+      "status": "passed"
+    },
+    {
+      "label": "填写标题",
+      "status": "passed"
+    },
+    {
+      "label": "填写正文 HTML",
+      "status": "passed"
+    },
+    {
+      "label": "上传封面图",
+      "status": "passed"
+    },
+    {
+      "label": "保存草稿",
+      "status": "passed"
+    },
+    {
+      "label": "生成预览",
+      "status": "passed"
+    },
+    {
+      "label": "等待人工确认",
+      "status": "passed"
+    }
+  ],
+  "safety": {
+    "autoPublishBlocked": true,
+    "onlyDraftSaved": true,
+    "requiresHumanConfirmation": true,
+    "forbiddenActionsChecked": [
+      "群发",
+      "发布",
+      "确认发送",
+      "立即发送"
+    ]
+  },
+  "allowedNextStage": false,
+  "humanActionRequired": "请人工登录微信公众号后台检查草稿预览，确认无误后再手动发布。",
+  "generatedAt": "2026-05-29T16:02:30.487Z"
+}

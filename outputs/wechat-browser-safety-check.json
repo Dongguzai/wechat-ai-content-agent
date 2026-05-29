@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "realBrowserEnabled": false,
+  "allowSaveDraft": false,
+  "allowPreview": false,
+  "articleReviewPassed": true,
+  "coverReviewPassed": true,
+  "layoutAllowedNextStage": true,
+  "forbiddenActionsBlocked": true,
+  "credentialsStored": false,
+  "cookieTokenCommitted": false,
+  "issues": [],
+  "generatedAt": "2026-05-29T16:02:30.490Z"
+}

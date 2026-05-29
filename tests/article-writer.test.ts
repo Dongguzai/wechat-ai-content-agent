@@ -23,7 +23,11 @@ const forbiddenArticlePhrases = [
   "Goose 和 Claude Code 完全一样",
   "Goose 零成本",
   "Claude Code 必须花 $200 才能用",
-  "免费平替"
+  "Claude Code 是单独固定 $200/month 工具",
+  "免费平替",
+  "完全替代",
+  "$200",
+  "免费替代高价工具"
 ];
 
 function selectedTopicFixture(): SelectedTopic {

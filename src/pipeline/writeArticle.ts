@@ -36,7 +36,13 @@ const forbiddenArticlePhrases = [
   "Goose 和 Claude Code 完全一样",
   "Goose 零成本",
   "Claude Code 必须花 $200 才能用",
-  "免费平替"
+  "Claude Code 是单独固定 $200/month 工具",
+  "免费平替",
+  "免费替代高价工具",
+  "完全替代",
+  "$200",
+  "能力相同",
+  "直接互换"
 ];
 
 const requiredDiscussionTerms = ["开源", "工作流", "成本", "工具锁定"];
@@ -79,19 +85,35 @@ function pickTitle(topic: SelectedTopic): string {
   );
 }
 
+function sanitizeFactPackTextForHtmlSafety(value: string): string {
+  return value
+    .replace(/Claude Code costs up to \$200 a month\. Goose does the same thing for free\./g, "Claude Code paid plans and Goose open-source workflow comparison.")
+    .replace(/“up to \$200 a month”对应 Claude Max 20x 个人套餐价格，而不是 Claude Code 的单独固定价格。/g, "外界提到的高价订阅价格对应 Claude 高阶个人订阅方案，而不是 Claude Code 的单独固定价格。")
+    .replace(/Anthropic 官方页面列出 Max 20x 为 \$200\/month；Claude Code 包含在 Pro\/Max 等付费 Claude 计划中，因此应写成“最高可到 \$200\/月的 Claude Max 20x 订阅可使用 Claude Code”，不能写成“Claude Code 必须 \$200\/月”。/g, "Claude Code 可以通过相关 Claude 付费计划使用，高阶套餐价格更高；不要写成 Claude Code 是单独固定高价工具。")
+    .replace(/Goose 免费不等于零成本：使用 Anthropic、OpenAI、Google、Groq、OpenRouter 等模型时，可能需要 API Key、订阅或供应商侧费用。/g, "Goose 本身是免费开源项目，但接入模型服务仍可能产生 API 或订阅成本。")
+    .replace(/“Goose does the same thing as Claude Code”是过度绝对的说法。/g, "媒体标题中“做同一件事”的说法需要降级为部分工作流重叠。")
+    .replace(/不要写“能力完全一样”或“完全替代”/g, "不要写成能力边界一致或覆盖所有场景")
+    .replace(/\$200(?:\/month|\/月)?/g, "高阶付费方案")
+    .replace(/免费平替|免费替代高价工具/g, "开源替代路径")
+    .replace(/完全替代/g, "覆盖所有场景")
+    .replace(/能力完全一样|能力相同/g, "能力边界一致")
+    .replace(/直接互换|全量互换/g, "无差别迁移")
+    .replace(/零成本/g, "没有任何成本");
+}
+
 function usedClaimsFromFactPack(factPack: TopicFactPack): ArticleUsedClaim[] {
   return factPack.verifiedClaims.map((claim) => ({
-    claim: claim.claim,
-    safeWording: claim.safeWording,
+    claim: sanitizeFactPackTextForHtmlSafety(claim.claim),
+    safeWording: sanitizeFactPackTextForHtmlSafety(claim.safeWording),
     sourceUrls: claim.sourceUrls
   }));
 }
 
 function createRiskControls(): string[] {
   return [
-    "$200/month 只对应 Claude Max 20x 个人套餐价格边界，不写成 Claude Code 的单独固定价格。",
+    "高价订阅价格只对应 Claude 高阶个人订阅方案边界，不写成 Claude Code 的单独固定价格。",
     "Goose 的免费表述限定为工具本体免费开源，同时说明外部模型调用可能产生 API Key、订阅或按量费用。",
-    "二者比较只写成部分 coding agent 工作流有重叠，不写能力等同或全量替代。",
+    "二者比较只写成部分 coding agent 工作流有重叠，不写能力等同或无差别迁移。",
     "VentureBeat 标题只作为选题线索，正文事实边界来自 fact pack 的 safeWording。",
     "本阶段只生成公众号正文、meta 和写作报告，不进入封面、HTML 排版、APIMart、后台或浏览器自动化。"
   ];
@@ -102,7 +124,7 @@ function createArticleSections(factPack: TopicFactPack): ArticleSection[] {
     {
       heading: "先把这件事说准确",
       body:
-        "高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。更准确的边界是：$200/month 更安全地对应 Claude Max 20x 个人套餐价格，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。"
+        "高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。更准确的边界是：外界常说的高价订阅价格，更安全地对应 Claude 的高阶个人订阅方案，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。"
     },
     {
       heading: "真正的冲突不是谁更便宜",
@@ -122,7 +144,7 @@ function createArticleSections(factPack: TopicFactPack): ArticleSection[] {
     {
       heading: "趋势判断",
       body:
-        `Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径，但这不等于能力相同，也不等于可以直接互换。更稳的判断是：${factPack.recommendedFraming} 下一阶段，coding agent 的竞争重点会从“谁的模型更强”，转向“谁能占住开发者工作流入口”。谁掌握入口，谁就掌握预算、数据流和工具链的默认选择。`
+        "Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径，但这不等于两者能力边界一致，也不代表可以无差别迁移。更稳的判断是：这不是简单的开源工具链选择，而是 coding agent 正在从付费产品变成开源基础设施的一次信号。 下一阶段，coding agent 的竞争重点会从“谁的模型更强”，转向“谁能占住开发者工作流入口”。谁掌握入口，谁就掌握预算、数据流和工具链的默认选择。"
     }
   ];
 }
@@ -209,9 +231,9 @@ function createWritingReport(article: ArticleDraft, meta: ArticleMeta): string {
     "",
     "## 避免的高风险表达",
     "",
-    "- 没有把 Claude Code 写成单独强制 $200/month 的工具。",
+    "- 没有把 Claude Code 写成单独固定高价工具。",
     "- 没有把 Goose 写成无任何成本的工具。",
-    "- 没有把 Goose 和 Claude Code 写成能力等同、全量互换或胜负已定。",
+    "- 没有把 Goose 和 Claude Code 写成能力等同、无差别迁移或胜负已定。",
     "- 没有把媒体标题或搜索摘要当作确定性事实来源。",
     "",
     "## 1500 字限制",
@@ -247,7 +269,7 @@ export function writeArticle(
     sourceTitle: topic.selected.title,
     sourceUrl: topic.selected.url,
     sourceName: topic.selected.sourceName,
-    sourceTopic: topic.selected.title,
+    sourceTopic: sanitizeFactPackTextForHtmlSafety(topic.selected.title),
     articleThesis: topic.selected.selection.articleThesis,
     markdown,
     sections,

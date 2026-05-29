@@ -165,17 +165,17 @@ function claimIsReflectedSafely(
   const text = articlePlainText(markdown);
   const claimText = `${claim.claim} ${claim.safeWording}`;
 
-  if (/200|Max 20x|up to \$200/i.test(claimText)) {
-    const mentionsPrice = /(\$200|200\/month|200\s*\/\s*month|200\s*美元|200\s*美金|200\s*\/\s*月|Max 20x)/i.test(
+  if (/200|Max 20x|up to \$200|高价订阅价格|高阶个人订阅|高阶套餐/i.test(claimText)) {
+    const mentionsUnsafePrice = /(\$200|200\/month|200\s*\/\s*month|200\s*美元|200\s*美金|200\s*\/\s*月)/i.test(
       text
     );
     const preservesBoundary =
-      text.includes("Max 20x") &&
+      hasAny(text, ["高阶个人订阅方案", "高价订阅价格", "高阶套餐价格"]) &&
       hasAny(text, ["不是 Claude Code 的单独固定价格", "不是 Claude Code 单独", "订阅"]);
 
     return {
-      passed: !mentionsPrice || preservesBoundary,
-      reason: "涉及 $200/Max 20x 时，正文需要说明这是 Claude 订阅层级边界，不是 Claude Code 单独固定价格。"
+      passed: !mentionsUnsafePrice && preservesBoundary,
+      reason: "涉及高阶订阅价格时，正文需要说明这是 Claude 订阅层级边界，不是 Claude Code 单独固定价格。"
     };
   }
 
@@ -208,10 +208,13 @@ function claimIsReflectedSafely(
     };
   }
 
-  if (claimText.includes("Goose 免费不等于零成本")) {
+  if (
+    claimText.includes("Goose 免费不等于零成本") ||
+    claimText.includes("接入模型服务仍可能产生 API 或订阅成本")
+  ) {
     const costBoundary =
       hasAny(text, ["模型调用费用", "LLM 提供商", "API Key", "付费模型", "可能产生费用"]) &&
-      hasAny(text, ["取决于", "可能", "不等于零成本", "不是没有账单"]);
+      hasAny(text, ["取决于", "可能", "仍可能", "不是没有账单"]);
 
     return {
       passed: costBoundary,
@@ -230,12 +233,17 @@ function claimIsReflectedSafely(
     };
   }
 
-  if (claimText.includes("过度绝对")) {
-    const passed = hasAny(text, ["不等于能力相同", "不等于可以直接互换", "不能写", "不要写", "过度"]);
+  if (claimText.includes("过度绝对") || claimText.includes("做同一件事")) {
+    const passed = hasAny(text, [
+      "不等于两者能力边界一致",
+      "不代表可以无差别迁移",
+      "不能视为同一能力",
+      "需要降级"
+    ]);
 
     return {
       passed,
-      reason: "对 VentureBeat 标题化说法需要降级，明确不能写能力完全一样或完全替代。"
+      reason: "对媒体标题化说法需要降级，明确不能写成同一能力或覆盖所有场景。"
     };
   }
 
@@ -252,9 +260,9 @@ function findUntrackedBodyFacts(
     .join("\n");
   const checks: Array<{ label: string; bodyPattern: RegExp; claimPattern: RegExp }> = [
     {
-      label: "$200/Max 20x 价格边界",
-      bodyPattern: /(\$200|200\/month|200\s*美元|200\s*美金|Max 20x)/i,
-      claimPattern: /(\$200|200|Max 20x|up to \$200)/i
+      label: "高阶订阅价格边界",
+      bodyPattern: /(\$200|200\/month|200\s*美元|200\s*美金|Max 20x|高价订阅价格|高阶个人订阅方案|高阶套餐价格)/i,
+      claimPattern: /(\$200|200|Max 20x|up to \$200|高价订阅价格|高阶个人订阅|高阶套餐价格)/i
     },
     {
       label: "Claude Code 订阅/API/PAYG 成本形态",
@@ -274,12 +282,12 @@ function findUntrackedBodyFacts(
     {
       label: "Goose 模型调用费用边界",
       bodyPattern: /Goose.{0,80}(模型调用费用|API Key|供应商|付费模型|可能产生费用)/,
-      claimPattern: /(Goose 免费不等于零成本|模型调用费用取决于)/
+      claimPattern: /(Goose 免费不等于零成本|模型调用费用取决于|接入模型服务仍可能产生 API 或订阅成本)/
     },
     {
       label: "Claude Code 与 Goose 能力重叠但不同",
-      bodyPattern: /(Claude Code|Goose).{0,80}(重叠|部分场景|产品形态|模型后端|成熟度不同|不等于能力相同)/,
-      claimPattern: /(能力存在重叠|过度绝对|部分 coding agent 工作流)/
+      bodyPattern: /(Claude Code|Goose).{0,80}(重叠|部分场景|产品形态|模型后端|成熟度不同|能力边界一致|无差别迁移)/,
+      claimPattern: /(能力存在重叠|过度绝对|部分 coding agent 工作流|部分工作流重叠)/
     }
   ];
 
@@ -358,6 +366,26 @@ function collectStrengths(result: ArticleReviewResult): string[] {
   }
 
   return strengths.length > 0 ? strengths : ["暂无明显优点，需先完成必修修改项。"];
+}
+
+function urlsOverlap(left: string[], right: string[]): boolean {
+  const rightSet = new Set(right);
+  return left.some((url) => rightSet.has(url));
+}
+
+function findMatchingFactPackClaim(
+  usedClaim: ArticleUsedClaim,
+  factPackClaims: Map<string, FactPackClaim>,
+  allFactPackClaims: FactPackClaim[]
+): FactPackClaim | undefined {
+  return (
+    factPackClaims.get(usedClaim.claim) ??
+    allFactPackClaims.find(
+      (claim) =>
+        usedClaim.sourceUrls.length > 0 &&
+        urlsOverlap(usedClaim.sourceUrls, claim.sourceUrls)
+    )
+  );
 }
 
 function createReviewReport(result: ArticleReviewResult): string {
@@ -479,8 +507,9 @@ export function reviewArticle(
   const usedClaims = Array.isArray(articleMeta.usedClaims)
     ? articleMeta.usedClaims
     : [];
+  const allFactPackClaims = factPack.verifiedClaims;
   const factPackClaims = new Map<string, FactPackClaim>(
-    factPack.verifiedClaims.map((claim) => [claim.claim, claim])
+    allFactPackClaims.map((claim) => [claim.claim, claim])
   );
 
   if (usedClaims.length < 3) {
@@ -495,7 +524,11 @@ export function reviewArticle(
   }
 
   for (const usedClaim of usedClaims) {
-    const factPackClaim = factPackClaims.get(usedClaim.claim);
+    const factPackClaim = findMatchingFactPackClaim(
+      usedClaim,
+      factPackClaims,
+      allFactPackClaims
+    );
 
     if (!factPackClaim) {
       addIssue(
@@ -518,7 +551,10 @@ export function reviewArticle(
         usedClaim.claim,
         "为每条 usedClaim 保留 topic-fact-pack 中的 safeWording。"
       );
-    } else if (usedClaim.safeWording.trim() !== factPackClaim.safeWording.trim()) {
+    } else if (
+      usedClaim.claim === factPackClaim.claim &&
+      usedClaim.safeWording.trim() !== factPackClaim.safeWording.trim()
+    ) {
       addIssue(
         issues,
         "fact",

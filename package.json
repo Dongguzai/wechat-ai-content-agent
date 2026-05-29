@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "dev": "tsx src/index.ts",
-    "dry-run": "tsx scripts/dry-run.ts",
+    "dry-run": "node --import tsx scripts/dry-run.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

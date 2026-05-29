@@ -130,12 +130,3 @@ export interface WechatHtmlRender {
   renderedAt: string;
   wordCount: number;
 }
-
-export interface WechatDraftResult {
-  mode: "mock";
-  draftId: string;
-  title: string;
-  status: "mock_saved";
-  savedAt: string;
-  note: string;
-}
