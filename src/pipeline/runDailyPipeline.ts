@@ -7,6 +7,7 @@ import { selectTopicWithReport } from "./selectTopic.js";
 import { shortlistNewsWithReport } from "./shortlistNews.js";
 import { writeArticleWithReport } from "./writeArticle.js";
 import { reviewArticleWithReport } from "./reviewArticle.js";
+import { generateCoverWithReport } from "./generateCover.js";
 import type {
   DailyPipelineResult,
   PipelineOutputFiles
@@ -38,7 +39,7 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     "",
     "## Summary",
     "",
-    "- Current phase: article review gate",
+    "- Current phase: cover image generation gate",
     `- Candidate news: ${artifacts.candidates.length}`,
     `- Shortlisted news: ${artifacts.shortlisted.length}`,
     `- Selected topic: ${selected.title}`,
@@ -52,6 +53,11 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- Article review score: ${artifacts.articleReview.score}`,
     `- Article review passed: ${artifacts.articleReview.passed ? "yes" : "no"}`,
     `- Article review verdict: ${artifacts.articleReview.finalVerdict}`,
+    `- Cover provider: ${artifacts.cover.provider}`,
+    `- Cover mode: ${artifacts.cover.mode}`,
+    `- Cover image size: ${artifacts.cover.imageSize}`,
+    `- Cover review passed: ${artifacts.coverReview.passed ? "yes" : "no"}`,
+    `- Cover image path: ${artifacts.cover.imagePath}`,
     `- RSS shortlisted: ${shortlistStats.rssShortlistedCount}`,
     `- global_search shortlisted: ${shortlistStats.globalSearchShortlistedCount}`,
     `- Collection API real call: ${collectionStats.apiRealCall ? "yes" : "no"}`,
@@ -74,12 +80,18 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- article-writing-report.md: ${files.articleWritingReport}`,
     `- article-review.json: ${files.articleReview}`,
     `- article-review-report.md: ${files.articleReviewReport}`,
+    `- cover.json: ${files.cover}`,
+    `- cover-prompt.md: ${files.coverPrompt}`,
+    `- cover-review.json: ${files.coverReview}`,
+    `- covers/: ${files.coverImageDir}`,
     `- daily-report.md: ${files.dailyReport}`,
     "",
     "## Safety Notes",
     "",
-    "- This run stops after article review.",
-    "- No cover, WeChat HTML, WeChat draft, APIMart call, or browser automation is used.",
+    "- This run stops after cover image generation.",
+    "- No WeChat HTML, WeChat draft, WeChat backend operation, publishing, or browser automation is used.",
+    "- APIMart is the only allowed image provider; default mode is mock unless COVER_ENABLE_REAL_API=true and APIMART_API_KEY is present.",
+    "- Real APIMart generation is intentionally TODO-gated until the API contract is confirmed.",
     "- Tavily/Exa search summaries are treated as leads only, not factual sources.",
     "- The article uses topic-fact-pack safeWording and avoids absolute comparison claims.",
     ""
@@ -96,7 +108,7 @@ export async function runDailyPipeline(
   await mkdir(outputDir, { recursive: true });
   logger.info(`Output directory ready: ${outputDir}`);
 
-  logger.info("1/6 collectNews: building the 20-item candidate pool.");
+  logger.info("1/7 collectNews: building the 20-item candidate pool.");
   const collection = await collectNewsWithReport({
     outputDir,
     logger,
@@ -106,7 +118,7 @@ export async function runDailyPipeline(
     useMockRss: options.useMockRss
   });
 
-  logger.info("2/6 shortlistNews: running editorial first-pass selection.");
+  logger.info("2/7 shortlistNews: running editorial first-pass selection.");
   const shortlist = await shortlistNewsWithReport({
     outputDir,
     candidates: collection.candidates,
@@ -114,7 +126,7 @@ export async function runDailyPipeline(
     writeOutputs: true
   });
 
-  logger.info("3/6 selectTopic: choosing today's main editorial topic.");
+  logger.info("3/7 selectTopic: choosing today's main editorial topic.");
   const topicSelection = await selectTopicWithReport({
     outputDir,
     shortlisted: shortlist.shortlisted,
@@ -123,7 +135,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("4/6 buildTopicFactPack: verifying key claims for the selected topic.");
+  logger.info("4/7 buildTopicFactPack: verifying key claims for the selected topic.");
   const factPack = await buildTopicFactPack({
     outputDir,
     topic: topicSelection.topic,
@@ -132,7 +144,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("5/6 writeArticle: writing the WeChat article body.");
+  logger.info("5/7 writeArticle: writing the WeChat article body.");
   const article = await writeArticleWithReport({
     outputDir,
     topic: topicSelection.topic,
@@ -142,7 +154,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("6/6 reviewArticle: auditing the article before cover and HTML.");
+  logger.info("6/7 reviewArticle: auditing the article before cover generation.");
   const articleReview = await reviewArticleWithReport({
     outputDir,
     articleMarkdown: article.article.markdown,
@@ -150,6 +162,20 @@ export async function runDailyPipeline(
     factPack: factPack.factPack,
     selectedTopic: topicSelection.topic,
     logger,
+    writeOutputs: true,
+    now: options.now
+  });
+
+  logger.info("7/7 generateCover: creating the APIMart-only cover prompt and mock image.");
+  const cover = await generateCoverWithReport({
+    outputDir,
+    articleMarkdown: article.article.markdown,
+    articleMeta: article.meta,
+    articleReview: articleReview.review,
+    selectedTopic: topicSelection.topic,
+    factPack: factPack.factPack,
+    logger,
+    env: options.env,
     writeOutputs: true,
     now: options.now
   });
@@ -171,6 +197,10 @@ export async function runDailyPipeline(
     articleWritingReport: article.files.articleWritingReport,
     articleReview: articleReview.files.articleReview,
     articleReviewReport: articleReview.files.articleReviewReport,
+    cover: cover.files.cover,
+    coverPrompt: cover.files.coverPrompt,
+    coverReview: cover.files.coverReview,
+    coverImageDir: cover.files.coverImageDir,
     dailyReport: join(outputDir, "daily-report.md")
   };
 
@@ -184,7 +214,9 @@ export async function runDailyPipeline(
       topicFactPack: factPack.factPack,
       article: article.article,
       articleMeta: article.meta,
-      articleReview: articleReview.review
+      articleReview: articleReview.review,
+      cover: cover.cover,
+      coverReview: cover.review
     },
     collectionStats: collection.stats,
     shortlistStats: shortlist.stats
@@ -195,7 +227,7 @@ export async function runDailyPipeline(
   const durationMs = Date.now() - startedAt;
   logger.info(`Dry-run completed in ${durationMs}ms.`);
   logger.info(
-    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}.`
+    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}; cover review passed=${cover.review.passed}.`
   );
 
   return {

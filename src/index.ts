@@ -11,7 +11,11 @@ export {
   reviewArticle,
   reviewArticleWithReport
 } from "./pipeline/reviewArticle.js";
-export { generateCover } from "./pipeline/generateCover.js";
+export {
+  generateCover,
+  generateCoverWithReport,
+  reviewCover
+} from "./pipeline/generateCover.js";
 export { renderWechatHtml } from "./pipeline/renderWechatHtml.js";
 export { saveWechatDraft } from "./pipeline/saveWechatDraft.js";
 

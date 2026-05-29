@@ -4,6 +4,7 @@ import type {
   ArticleMeta,
   ArticleReviewResult
 } from "./article.js";
+import type { CoverResult, CoverReviewResult } from "./cover.js";
 import type {
   NewsCollectionStats,
   NewsShortlistStats,
@@ -29,6 +30,10 @@ export interface PipelineOutputFiles {
   articleWritingReport: string;
   articleReview: string;
   articleReviewReport: string;
+  cover: string;
+  coverPrompt: string;
+  coverReview: string;
+  coverImageDir: string;
   dailyReport: string;
 }
 
@@ -40,6 +45,8 @@ export interface DailyPipelineArtifacts {
   article: ArticleDraft;
   articleMeta: ArticleMeta;
   articleReview: ArticleReviewResult;
+  cover: CoverResult;
+  coverReview: CoverReviewResult;
 }
 
 export interface DailyPipelineResult {
