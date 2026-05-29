@@ -1,0 +1,22 @@
+{
+  "name": "wechat-ai-content-agent",
+  "version": "0.1.0",
+  "description": "Mock dry-run skeleton for a WeChat AI content production agent.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "dry-run": "tsx scripts/dry-run.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.24",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
