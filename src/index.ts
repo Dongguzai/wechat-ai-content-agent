@@ -1,8 +1,9 @@
 import { pathToFileURL } from "node:url";
-import { collectNewsWithReport } from "./pipeline/collectNews.js";
+import { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 
 export { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 export { collectNews } from "./pipeline/collectNews.js";
+export { shortlistNews, shortlistNewsWithReport } from "./pipeline/shortlistNews.js";
 export { selectTopic } from "./pipeline/selectTopic.js";
 export { writeArticle } from "./pipeline/writeArticle.js";
 export { reviewArticle } from "./pipeline/reviewArticle.js";
@@ -11,5 +12,5 @@ export { renderWechatHtml } from "./pipeline/renderWechatHtml.js";
 export { saveWechatDraft } from "./pipeline/saveWechatDraft.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await collectNewsWithReport();
+  await runDailyPipeline();
 }

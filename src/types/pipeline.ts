@@ -1,36 +1,31 @@
 import type {
-  ArticleDraft,
-  ArticleReviewResult,
-  CoverInfo,
-  SelectedTopic,
-  WechatDraftResult,
-  WechatHtmlRender
-} from "./article.js";
-import type { NewsItem } from "./news.js";
+  NewsCollectionStats,
+  NewsShortlistStats,
+  NormalizedNewsItem,
+  ShortlistedNewsItem
+} from "./news.js";
 
 export interface PipelineOutputFiles {
-  latestNews: string;
-  selectedTopic: string;
-  articleMarkdown: string;
-  articleReview: string;
-  cover: string;
-  wechatHtml: string;
+  rawNews: string;
+  normalizedNews: string;
+  rejectedNews: string;
+  candidateNews: string;
+  collectionReport: string;
+  shortlistedNews: string;
+  shortlistReport: string;
   dailyReport: string;
 }
 
 export interface DailyPipelineArtifacts {
-  news: NewsItem[];
-  selectedTopic: SelectedTopic;
-  article: ArticleDraft;
-  review: ArticleReviewResult;
-  cover: CoverInfo;
-  wechatHtml: WechatHtmlRender;
-  draft: WechatDraftResult;
+  candidates: NormalizedNewsItem[];
+  shortlisted: ShortlistedNewsItem[];
 }
 
 export interface DailyPipelineResult {
   outputDir: string;
   files: PipelineOutputFiles;
   artifacts: DailyPipelineArtifacts;
+  collectionStats: NewsCollectionStats;
+  shortlistStats: NewsShortlistStats;
   durationMs: number;
 }

@@ -1,3 +1,3 @@
-import { collectNewsWithReport } from "../src/pipeline/collectNews.js";
+import { runDailyPipeline } from "../src/pipeline/runDailyPipeline.js";
 
-await collectNewsWithReport();
+await runDailyPipeline();

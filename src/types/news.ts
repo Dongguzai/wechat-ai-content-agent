@@ -10,6 +10,18 @@ export type NewsSourceType = "rss" | "global_search" | "manual";
 
 export type SearchProvider = "tavily" | "exa" | "none";
 
+export type NewsTag =
+  | "tooling"
+  | "open-source"
+  | "agent"
+  | "developer-workflow"
+  | "model"
+  | "product"
+  | "research"
+  | "business"
+  | "community"
+  | "policy";
+
 export interface NewsScores {
   freshness: number;
   heat: number;
@@ -74,6 +86,71 @@ export interface NormalizedNewsItem {
 }
 
 export type NewsItem = NormalizedNewsItem;
+
+export type ShortlistRecommendedUse =
+  | "main_topic_candidate"
+  | "secondary_topic"
+  | "reference_only";
+
+export interface ShortlistScoreDimensions {
+  technicalValue: number;
+  wechatTopic: number;
+  businessImpact: number;
+  controversy: number;
+  sourceCredibility: number;
+  explainability: number;
+  originality: number;
+}
+
+export interface ShortlistedNewsEditorial {
+  shortlistReason: string;
+  audienceFit: string;
+  topicAngle: string;
+  riskNote?: string;
+  recommendedUse: ShortlistRecommendedUse;
+}
+
+export interface ShortlistedNewsItem extends NormalizedNewsItem {
+  tags: NewsTag[];
+  shortlistScore: number;
+  shortlistMetrics: ShortlistScoreDimensions;
+  editorial: ShortlistedNewsEditorial;
+}
+
+export interface ShortlistOutputFiles {
+  shortlistedNews: string;
+  shortlistReport: string;
+}
+
+export interface ShortlistElimination {
+  id: string;
+  title: string;
+  sourceName?: string;
+  sourceType?: NewsSourceType;
+  provider?: SearchProvider;
+  reason: string;
+  shortlistScore?: number;
+}
+
+export interface NewsShortlistStats {
+  candidateCount: number;
+  shortlistedCount: number;
+  rssShortlistedCount: number;
+  globalSearchShortlistedCount: number;
+  tavilyShortlistedCount: number;
+  exaShortlistedCount: number;
+  categoryCounts: Record<NewsCategory, number>;
+  tagCounts: Record<NewsTag, number>;
+}
+
+export interface NewsShortlistResult {
+  outputDir: string;
+  files: ShortlistOutputFiles;
+  candidates: NormalizedNewsItem[];
+  shortlisted: ShortlistedNewsItem[];
+  eliminated: ShortlistElimination[];
+  stats: NewsShortlistStats;
+}
 
 export interface CollectionWarning {
   source:

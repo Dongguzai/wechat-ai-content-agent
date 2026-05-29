@@ -1,9 +1,24 @@
-import type { NewsCategory, NewsScores, RawNewsItem } from "../types/news.js";
+import type {
+  NewsCategory,
+  NewsScores,
+  NormalizedNewsItem,
+  RawNewsItem,
+  ShortlistScoreDimensions
+} from "../types/news.js";
 
 export const scoreWeights = {
   technicalValue: 0.45,
   wechatTopic: 0.45,
   freshness: 0.1
+} as const;
+
+export const shortlistScoreWeights = {
+  technicalValue: 0.25,
+  wechatTopic: 0.3,
+  businessImpact: 0.15,
+  controversy: 0.1,
+  sourceCredibility: 0.1,
+  explainability: 0.1
 } as const;
 
 export const categoryKeywords: Record<NewsCategory, string[]> = {
@@ -134,6 +149,63 @@ const aiKeywords = [
   "知识库"
 ];
 
+const officialSourceSignals = [
+  "openai",
+  "anthropic",
+  "deepmind",
+  "google",
+  "microsoft",
+  "meta",
+  "hugging face",
+  "langchain",
+  "nvidia",
+  "mit",
+  "bair",
+  "berkeley",
+  "github"
+];
+
+const crediblePublicationSignals = [
+  "venturebeat",
+  "the verge",
+  "simon willison",
+  "developer",
+  "research lab",
+  "technical blog",
+  "company blog"
+];
+
+const explainabilitySignals = [
+  "workflow",
+  "enterprise",
+  "developer",
+  "customer",
+  "pricing",
+  "cost",
+  "funding",
+  "policy",
+  "safety",
+  "benchmark",
+  "github",
+  "open source",
+  "education",
+  "office",
+  "search",
+  "agent"
+];
+
+const originalitySignals = [
+  "technical report",
+  "paper",
+  "model card",
+  "github",
+  "release notes",
+  "company blog",
+  "research lab",
+  "official",
+  "source:"
+];
+
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
 }
@@ -190,6 +262,105 @@ export function isLowTrustDomain(url: string): boolean {
   return lowTrustDomains.some(
     (lowTrustDomain) =>
       domain === lowTrustDomain || domain.endsWith(`.${lowTrustDomain}`)
+  );
+}
+
+function scoreSourceCredibility(item: NormalizedNewsItem): number {
+  const sourceName = item.sourceName.toLowerCase();
+
+  if (isLowTrustDomain(item.url)) {
+    return 40;
+  }
+
+  if (isTrustedDomain(item.url)) {
+    return 95;
+  }
+
+  if (officialSourceSignals.some((signal) => sourceName.includes(signal))) {
+    return item.sourceType === "rss" ? 90 : 78;
+  }
+
+  if (crediblePublicationSignals.some((signal) => sourceName.includes(signal))) {
+    return item.sourceType === "rss" ? 82 : 72;
+  }
+
+  return item.sourceType === "rss" ? 76 : 62;
+}
+
+function scoreExplainability(item: NormalizedNewsItem): number {
+  const text = `${item.title} ${item.summary} ${item.tags?.join(" ") ?? ""}`.toLowerCase();
+  const categoryBase: Record<NewsCategory, number> = {
+    product: 78,
+    funding: 77,
+    policy: 75,
+    tooling: 73,
+    model: 70,
+    research: 66
+  };
+  const signalBoost = explainabilitySignals.filter((signal) =>
+    text.includes(signal)
+  ).length * 3;
+  const jargonPenalty =
+    /\b(architecture|quantization|transformer|latent|embedding|inference)\b/.test(
+      text
+    ) && item.category === "research"
+      ? 5
+      : 0;
+
+  return clampScore(categoryBase[item.category] + signalBoost - jargonPenalty);
+}
+
+function scoreOriginality(item: NormalizedNewsItem): number {
+  const text = `${item.title} ${item.summary} ${item.evidence.join(" ")}`.toLowerCase();
+  let score = item.sourceType === "rss" ? 76 : 58;
+
+  if (isTrustedDomain(item.url)) {
+    score += 16;
+  }
+
+  if (officialSourceSignals.some((signal) => item.sourceName.toLowerCase().includes(signal))) {
+    score += 10;
+  }
+
+  if (originalitySignals.some((signal) => text.includes(signal))) {
+    score += 8;
+  }
+
+  if (item.sourceType === "global_search") {
+    score -= 8;
+  }
+
+  if (item.duplicateSources && item.duplicateSources.length > 0) {
+    score += 4;
+  }
+
+  return clampScore(score);
+}
+
+export function scoreShortlistDimensions(
+  item: NormalizedNewsItem
+): ShortlistScoreDimensions {
+  return {
+    technicalValue: item.scores.technicalValue,
+    wechatTopic: item.scores.wechatTopic,
+    businessImpact: item.scores.businessImpact,
+    controversy: item.scores.controversy,
+    sourceCredibility: scoreSourceCredibility(item),
+    explainability: scoreExplainability(item),
+    originality: scoreOriginality(item)
+  };
+}
+
+export function calculateShortlistScore(
+  dimensions: ShortlistScoreDimensions
+): number {
+  return clampScore(
+    dimensions.technicalValue * shortlistScoreWeights.technicalValue +
+      dimensions.wechatTopic * shortlistScoreWeights.wechatTopic +
+      dimensions.businessImpact * shortlistScoreWeights.businessImpact +
+      dimensions.controversy * shortlistScoreWeights.controversy +
+      dimensions.sourceCredibility * shortlistScoreWeights.sourceCredibility +
+      dimensions.explainability * shortlistScoreWeights.explainability
   );
 }
 

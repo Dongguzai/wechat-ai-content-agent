@@ -1,30 +1,30 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { collectNews } from "./collectNews.js";
-import { generateCover } from "./generateCover.js";
-import { renderWechatHtml } from "./renderWechatHtml.js";
-import { reviewArticle } from "./reviewArticle.js";
-import { saveWechatDraft } from "./saveWechatDraft.js";
-import { selectTopic } from "./selectTopic.js";
-import { writeArticle } from "./writeArticle.js";
-import type { DailyPipelineResult, PipelineOutputFiles } from "../types/pipeline.js";
+import { fileURLToPath } from "node:url";
+import { collectNewsWithReport } from "./collectNews.js";
+import { shortlistNewsWithReport } from "./shortlistNews.js";
+import type {
+  DailyPipelineResult,
+  PipelineOutputFiles
+} from "../types/pipeline.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+
+type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 export interface RunDailyPipelineOptions {
   outputDir?: string;
   logger?: Logger;
+  fetchImpl?: FetchLike;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+  useMockRss?: boolean;
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
 function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): string {
-  const { artifacts, files, outputDir } = result;
+  const { artifacts, collectionStats, files, outputDir, shortlistStats } = result;
 
   return [
     "# Daily AI Content Pipeline Report",
@@ -33,30 +33,29 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     "",
     "## Summary",
     "",
-    `- News collected: ${artifacts.news.length}`,
-    `- Selected topic: ${artifacts.selectedTopic.news.title}`,
-    `- Article title: ${artifacts.article.title}`,
-    `- Article length: ${artifacts.article.wordCount} chars`,
-    `- Review passed: ${artifacts.review.passed}`,
-    `- Cover mode: ${artifacts.cover.mode}`,
-    `- Draft mode: ${artifacts.draft.mode}`,
-    `- Draft status: ${artifacts.draft.status}`,
+    "- Current phase: editorial shortlist only",
+    `- Candidate news: ${artifacts.candidates.length}`,
+    `- Shortlisted news: ${artifacts.shortlisted.length}`,
+    `- RSS shortlisted: ${shortlistStats.rssShortlistedCount}`,
+    `- global_search shortlisted: ${shortlistStats.globalSearchShortlistedCount}`,
+    `- Collection API real call: ${collectionStats.apiRealCall ? "yes" : "no"}`,
     "",
     "## Output Files",
     "",
-    `- latest-news.json: ${files.latestNews}`,
-    `- selected-topic.json: ${files.selectedTopic}`,
-    `- article.md: ${files.articleMarkdown}`,
-    `- article-review.json: ${files.articleReview}`,
-    `- cover.json: ${files.cover}`,
-    `- wechat.html: ${files.wechatHtml}`,
+    `- raw-news.json: ${files.rawNews}`,
+    `- normalized-news.json: ${files.normalizedNews}`,
+    `- rejected-news.json: ${files.rejectedNews}`,
+    `- candidate-news.json: ${files.candidateNews}`,
+    `- collection-report.md: ${files.collectionReport}`,
+    `- shortlisted-news.json: ${files.shortlistedNews}`,
+    `- shortlist-report.md: ${files.shortlistReport}`,
     `- daily-report.md: ${files.dailyReport}`,
     "",
     "## Safety Notes",
     "",
-    "- Source URLs are required for every news item.",
-    "- The current draft step is mock-only.",
-    "- No external service, browser automation, schedule, or database is used in this phase.",
+    "- This run stops after shortlisting; it does not select a final topic.",
+    "- No article, cover, WeChat draft, APIMart call, or browser automation is used.",
+    "- Tavily/Exa search summaries are treated as leads only, not factual sources.",
     ""
   ].join("\n");
 }
@@ -71,68 +70,53 @@ export async function runDailyPipeline(
   await mkdir(outputDir, { recursive: true });
   logger.info(`Output directory ready: ${outputDir}`);
 
-  logger.info("1/7 collectNews: loading mock AI news.");
-  const news = await collectNews();
+  logger.info("1/2 collectNews: building the 20-item candidate pool.");
+  const collection = await collectNewsWithReport({
+    outputDir,
+    logger,
+    fetchImpl: options.fetchImpl,
+    env: options.env,
+    now: options.now,
+    useMockRss: options.useMockRss
+  });
 
-  logger.info("2/7 selectTopic: choosing the highest scored topic.");
-  const selectedTopic = selectTopic(news);
-
-  logger.info("3/7 writeArticle: drafting a mock WeChat article.");
-  const article = writeArticle(selectedTopic);
-
-  logger.info("4/7 reviewArticle: running mock editorial review.");
-  const review = reviewArticle(article);
-
-  if (!review.passed) {
-    throw new Error(`Article review failed: ${review.issues.join("; ")}`);
-  }
-
-  logger.info("5/7 generateCover: creating mock cover metadata.");
-  const cover = generateCover(selectedTopic);
-
-  logger.info("6/7 renderWechatHtml: rendering WeChat-compatible HTML.");
-  const wechatHtml = renderWechatHtml(article);
-
-  logger.info("7/7 saveWechatDraft: saving a mock draft record.");
-  const draft = await saveWechatDraft({ article, cover, html: wechatHtml });
+  logger.info("2/2 shortlistNews: running editorial first-pass selection.");
+  const shortlist = await shortlistNewsWithReport({
+    outputDir,
+    candidates: collection.candidates,
+    logger,
+    writeOutputs: true
+  });
 
   const files: PipelineOutputFiles = {
-    latestNews: join(outputDir, "latest-news.json"),
-    selectedTopic: join(outputDir, "selected-topic.json"),
-    articleMarkdown: join(outputDir, "article.md"),
-    articleReview: join(outputDir, "article-review.json"),
-    cover: join(outputDir, "cover.json"),
-    wechatHtml: join(outputDir, "wechat.html"),
+    rawNews: collection.files.rawNews,
+    normalizedNews: collection.files.normalizedNews,
+    rejectedNews: collection.files.rejectedNews,
+    candidateNews: collection.files.candidateNews,
+    collectionReport: collection.files.collectionReport,
+    shortlistedNews: shortlist.files.shortlistedNews,
+    shortlistReport: shortlist.files.shortlistReport,
     dailyReport: join(outputDir, "daily-report.md")
   };
-
-  await writeJson(files.latestNews, news);
-  await writeJson(files.selectedTopic, selectedTopic);
-  await writeFile(files.articleMarkdown, `${article.markdown}\n`, "utf8");
-  await writeJson(files.articleReview, review);
-  await writeJson(files.cover, cover);
-  await writeFile(files.wechatHtml, `${wechatHtml.html}\n`, "utf8");
 
   const partialResult = {
     outputDir,
     files,
     artifacts: {
-      news,
-      selectedTopic,
-      article,
-      review,
-      cover,
-      wechatHtml,
-      draft
-    }
+      candidates: collection.candidates,
+      shortlisted: shortlist.shortlisted
+    },
+    collectionStats: collection.stats,
+    shortlistStats: shortlist.stats
   };
   const report = createDailyReport(partialResult);
   await writeFile(files.dailyReport, report, "utf8");
 
   const durationMs = Date.now() - startedAt;
   logger.info(`Dry-run completed in ${durationMs}ms.`);
-  logger.info(`Selected topic: ${selectedTopic.news.title}`);
-  logger.info(`Generated files: ${Object.values(files).join(", ")}`);
+  logger.info(
+    `Shortlisted ${shortlist.stats.shortlistedCount} items; no final topic selected.`
+  );
 
   return {
     ...partialResult,
