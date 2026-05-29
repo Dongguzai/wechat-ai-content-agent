@@ -59,12 +59,61 @@ export interface ArticleWritingResult {
   report: string;
 }
 
+export type ArticleReviewIssueType =
+  | "fact"
+  | "logic"
+  | "style"
+  | "title"
+  | "policy"
+  | "structure";
+
+export type ArticleReviewSeverity = "low" | "medium" | "high";
+
+export interface ArticleReviewIssue {
+  type: ArticleReviewIssueType;
+  severity: ArticleReviewSeverity;
+  message: string;
+  evidence: string;
+  suggestion: string;
+}
+
+export interface ArticleFactBoundaryCheck {
+  passed: boolean;
+  violations: string[];
+}
+
+export interface ArticleQualityCheck {
+  wordCountOk: boolean;
+  hasTitle: boolean;
+  hasHeadings: boolean;
+  thirdPersonPerspective: boolean;
+  notNewsRelease: boolean;
+  themesCovered: string[];
+}
+
 export interface ArticleReviewResult {
   passed: boolean;
-  riskLevel: "low" | "medium" | "high";
-  issues: string[];
-  suggestions: string[];
-  reviewedAt: string;
+  score: number;
+  summary: string;
+  issues: ArticleReviewIssue[];
+  requiredFixes: string[];
+  optionalSuggestions: string[];
+  factBoundaryCheck: ArticleFactBoundaryCheck;
+  qualityCheck: ArticleQualityCheck;
+  finalVerdict: string;
+  generatedAt: string;
+}
+
+export interface ArticleReviewOutputFiles {
+  articleReview: string;
+  articleReviewReport: string;
+}
+
+export interface ArticleReviewPipelineResult {
+  outputDir: string;
+  files: ArticleReviewOutputFiles;
+  review: ArticleReviewResult;
+  report: string;
 }
 
 export interface CoverInfo {

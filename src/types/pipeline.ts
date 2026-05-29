@@ -1,5 +1,9 @@
 import type { TopicFactPack } from "./factPack.js";
-import type { ArticleDraft, ArticleMeta } from "./article.js";
+import type {
+  ArticleDraft,
+  ArticleMeta,
+  ArticleReviewResult
+} from "./article.js";
 import type {
   NewsCollectionStats,
   NewsShortlistStats,
@@ -23,6 +27,8 @@ export interface PipelineOutputFiles {
   article: string;
   articleMeta: string;
   articleWritingReport: string;
+  articleReview: string;
+  articleReviewReport: string;
   dailyReport: string;
 }
 
@@ -33,6 +39,7 @@ export interface DailyPipelineArtifacts {
   topicFactPack: TopicFactPack;
   article: ArticleDraft;
   articleMeta: ArticleMeta;
+  articleReview: ArticleReviewResult;
 }
 
 export interface DailyPipelineResult {

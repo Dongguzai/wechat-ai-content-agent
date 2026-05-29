@@ -6,6 +6,7 @@ import { collectNewsWithReport } from "./collectNews.js";
 import { selectTopicWithReport } from "./selectTopic.js";
 import { shortlistNewsWithReport } from "./shortlistNews.js";
 import { writeArticleWithReport } from "./writeArticle.js";
+import { reviewArticleWithReport } from "./reviewArticle.js";
 import type {
   DailyPipelineResult,
   PipelineOutputFiles
@@ -37,7 +38,7 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     "",
     "## Summary",
     "",
-    "- Current phase: article writing only",
+    "- Current phase: article review gate",
     `- Candidate news: ${artifacts.candidates.length}`,
     `- Shortlisted news: ${artifacts.shortlisted.length}`,
     `- Selected topic: ${selected.title}`,
@@ -48,6 +49,9 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- Article title: ${artifacts.article.title}`,
     `- Article word count: ${artifacts.article.wordCount}`,
     `- Article used claims: ${artifacts.articleMeta.usedClaims.length}`,
+    `- Article review score: ${artifacts.articleReview.score}`,
+    `- Article review passed: ${artifacts.articleReview.passed ? "yes" : "no"}`,
+    `- Article review verdict: ${artifacts.articleReview.finalVerdict}`,
     `- RSS shortlisted: ${shortlistStats.rssShortlistedCount}`,
     `- global_search shortlisted: ${shortlistStats.globalSearchShortlistedCount}`,
     `- Collection API real call: ${collectionStats.apiRealCall ? "yes" : "no"}`,
@@ -68,11 +72,13 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- article.md: ${files.article}`,
     `- article-meta.json: ${files.articleMeta}`,
     `- article-writing-report.md: ${files.articleWritingReport}`,
+    `- article-review.json: ${files.articleReview}`,
+    `- article-review-report.md: ${files.articleReviewReport}`,
     `- daily-report.md: ${files.dailyReport}`,
     "",
     "## Safety Notes",
     "",
-    "- This run stops after writing the article body.",
+    "- This run stops after article review.",
     "- No cover, WeChat HTML, WeChat draft, APIMart call, or browser automation is used.",
     "- Tavily/Exa search summaries are treated as leads only, not factual sources.",
     "- The article uses topic-fact-pack safeWording and avoids absolute comparison claims.",
@@ -90,7 +96,7 @@ export async function runDailyPipeline(
   await mkdir(outputDir, { recursive: true });
   logger.info(`Output directory ready: ${outputDir}`);
 
-  logger.info("1/5 collectNews: building the 20-item candidate pool.");
+  logger.info("1/6 collectNews: building the 20-item candidate pool.");
   const collection = await collectNewsWithReport({
     outputDir,
     logger,
@@ -100,7 +106,7 @@ export async function runDailyPipeline(
     useMockRss: options.useMockRss
   });
 
-  logger.info("2/5 shortlistNews: running editorial first-pass selection.");
+  logger.info("2/6 shortlistNews: running editorial first-pass selection.");
   const shortlist = await shortlistNewsWithReport({
     outputDir,
     candidates: collection.candidates,
@@ -108,7 +114,7 @@ export async function runDailyPipeline(
     writeOutputs: true
   });
 
-  logger.info("3/5 selectTopic: choosing today's main editorial topic.");
+  logger.info("3/6 selectTopic: choosing today's main editorial topic.");
   const topicSelection = await selectTopicWithReport({
     outputDir,
     shortlisted: shortlist.shortlisted,
@@ -117,7 +123,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("4/5 buildTopicFactPack: verifying key claims for the selected topic.");
+  logger.info("4/6 buildTopicFactPack: verifying key claims for the selected topic.");
   const factPack = await buildTopicFactPack({
     outputDir,
     topic: topicSelection.topic,
@@ -126,11 +132,23 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("5/5 writeArticle: writing the WeChat article body.");
+  logger.info("5/6 writeArticle: writing the WeChat article body.");
   const article = await writeArticleWithReport({
     outputDir,
     topic: topicSelection.topic,
     factPack: factPack.factPack,
+    logger,
+    writeOutputs: true,
+    now: options.now
+  });
+
+  logger.info("6/6 reviewArticle: auditing the article before cover and HTML.");
+  const articleReview = await reviewArticleWithReport({
+    outputDir,
+    articleMarkdown: article.article.markdown,
+    articleMeta: article.meta,
+    factPack: factPack.factPack,
+    selectedTopic: topicSelection.topic,
     logger,
     writeOutputs: true,
     now: options.now
@@ -151,6 +169,8 @@ export async function runDailyPipeline(
     article: article.files.article,
     articleMeta: article.files.articleMeta,
     articleWritingReport: article.files.articleWritingReport,
+    articleReview: articleReview.files.articleReview,
+    articleReviewReport: articleReview.files.articleReviewReport,
     dailyReport: join(outputDir, "daily-report.md")
   };
 
@@ -163,7 +183,8 @@ export async function runDailyPipeline(
       selectedTopic: topicSelection.topic,
       topicFactPack: factPack.factPack,
       article: article.article,
-      articleMeta: article.meta
+      articleMeta: article.meta,
+      articleReview: articleReview.review
     },
     collectionStats: collection.stats,
     shortlistStats: shortlist.stats
@@ -174,7 +195,7 @@ export async function runDailyPipeline(
   const durationMs = Date.now() - startedAt;
   logger.info(`Dry-run completed in ${durationMs}ms.`);
   logger.info(
-    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article ready.`
+    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}.`
   );
 
   return {

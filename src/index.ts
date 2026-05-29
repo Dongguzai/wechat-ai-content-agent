@@ -7,7 +7,10 @@ export { collectNews } from "./pipeline/collectNews.js";
 export { shortlistNews, shortlistNewsWithReport } from "./pipeline/shortlistNews.js";
 export { selectTopic } from "./pipeline/selectTopic.js";
 export { writeArticle, writeArticleWithReport } from "./pipeline/writeArticle.js";
-export { reviewArticle } from "./pipeline/reviewArticle.js";
+export {
+  reviewArticle,
+  reviewArticleWithReport
+} from "./pipeline/reviewArticle.js";
 export { generateCover } from "./pipeline/generateCover.js";
 export { renderWechatHtml } from "./pipeline/renderWechatHtml.js";
 export { saveWechatDraft } from "./pipeline/saveWechatDraft.js";
