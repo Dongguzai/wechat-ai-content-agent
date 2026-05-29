@@ -1,7 +1,10 @@
+import type { TopicFactPack } from "./factPack.js";
+import type { ArticleDraft, ArticleMeta } from "./article.js";
 import type {
   NewsCollectionStats,
   NewsShortlistStats,
   NormalizedNewsItem,
+  SelectedTopic,
   ShortlistedNewsItem
 } from "./news.js";
 
@@ -13,12 +16,23 @@ export interface PipelineOutputFiles {
   collectionReport: string;
   shortlistedNews: string;
   shortlistReport: string;
+  selectedTopic: string;
+  topicSelectionReport: string;
+  topicFactPackJson: string;
+  topicFactPackReport: string;
+  article: string;
+  articleMeta: string;
+  articleWritingReport: string;
   dailyReport: string;
 }
 
 export interface DailyPipelineArtifacts {
   candidates: NormalizedNewsItem[];
   shortlisted: ShortlistedNewsItem[];
+  selectedTopic: SelectedTopic;
+  topicFactPack: TopicFactPack;
+  article: ArticleDraft;
+  articleMeta: ArticleMeta;
 }
 
 export interface DailyPipelineResult {

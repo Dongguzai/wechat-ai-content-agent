@@ -102,6 +102,15 @@ export interface ShortlistScoreDimensions {
   originality: number;
 }
 
+export interface TopicDecisionScoreDimensions {
+  wechatTopic: number;
+  businessImpact: number;
+  technicalValue: number;
+  controversy: number;
+  sourceCredibility: number;
+  explainability: number;
+}
+
 export interface ShortlistedNewsEditorial {
   shortlistReason: string;
   audienceFit: string;
@@ -115,6 +124,60 @@ export interface ShortlistedNewsItem extends NormalizedNewsItem {
   shortlistScore: number;
   shortlistMetrics: ShortlistScoreDimensions;
   editorial: ShortlistedNewsEditorial;
+}
+
+export type SourceReliability = "high" | "medium" | "low";
+
+export interface SelectedTopicSelection {
+  selectedReason: string;
+  whyMostWorthWriting: string;
+  coreConflict: string;
+  publicInterest: string;
+  technicalSignificance: string;
+  businessImpact: string;
+  predictedImpact: string;
+  writingAngle: string;
+  suggestedTitles: string[];
+  articleThesis: string;
+  riskNotes: string[];
+  sourceReliability: SourceReliability;
+  decisionScore: number;
+}
+
+export type SelectedTopicItem = ShortlistedNewsItem & {
+  selection: SelectedTopicSelection;
+};
+
+export interface SelectedTopicRunnerUp {
+  title: string;
+  url: string;
+  reason: string;
+  whyNotSelected: string;
+}
+
+export interface SelectedTopicRejectedItem {
+  title: string;
+  url: string;
+  reason: string;
+}
+
+export interface SelectedTopic {
+  selected: SelectedTopicItem;
+  runnersUp: SelectedTopicRunnerUp[];
+  rejected: SelectedTopicRejectedItem[];
+  generatedAt: string;
+}
+
+export interface TopicSelectionOutputFiles {
+  selectedTopic: string;
+  topicSelectionReport: string;
+}
+
+export interface TopicSelectionResult {
+  outputDir: string;
+  files: TopicSelectionOutputFiles;
+  shortlisted: ShortlistedNewsItem[];
+  topic: SelectedTopic;
 }
 
 export interface ShortlistOutputFiles {

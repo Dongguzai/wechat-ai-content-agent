@@ -2,10 +2,11 @@ import { pathToFileURL } from "node:url";
 import { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 
 export { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
+export { buildTopicFactPack } from "./pipeline/buildTopicFactPack.js";
 export { collectNews } from "./pipeline/collectNews.js";
 export { shortlistNews, shortlistNewsWithReport } from "./pipeline/shortlistNews.js";
 export { selectTopic } from "./pipeline/selectTopic.js";
-export { writeArticle } from "./pipeline/writeArticle.js";
+export { writeArticle, writeArticleWithReport } from "./pipeline/writeArticle.js";
 export { reviewArticle } from "./pipeline/reviewArticle.js";
 export { generateCover } from "./pipeline/generateCover.js";
 export { renderWechatHtml } from "./pipeline/renderWechatHtml.js";

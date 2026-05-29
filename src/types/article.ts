@@ -19,10 +19,44 @@ export interface ArticleDraft {
   sourceTitle: string;
   sourceUrl: string;
   sourceName: string;
+  sourceTopic: string;
+  articleThesis: string;
   markdown: string;
   sections: ArticleSection[];
   wordCount: number;
+  usedClaims: ArticleUsedClaim[];
+  riskControls: string[];
   createdAt: string;
+}
+
+export interface ArticleUsedClaim {
+  claim: string;
+  safeWording: string;
+  sourceUrls: string[];
+}
+
+export interface ArticleMeta {
+  title: string;
+  wordCount: number;
+  sourceTopic: string;
+  articleThesis: string;
+  usedClaims: ArticleUsedClaim[];
+  riskControls: string[];
+  generatedAt: string;
+}
+
+export interface ArticleWritingOutputFiles {
+  article: string;
+  articleMeta: string;
+  articleWritingReport: string;
+}
+
+export interface ArticleWritingResult {
+  outputDir: string;
+  files: ArticleWritingOutputFiles;
+  article: ArticleDraft;
+  meta: ArticleMeta;
+  report: string;
 }
 
 export interface ArticleReviewResult {

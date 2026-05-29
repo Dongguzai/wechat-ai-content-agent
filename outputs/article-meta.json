@@ -1,0 +1,75 @@
+{
+  "title": "AI 编码代理真正卷到的，不是价格，而是工作流",
+  "wordCount": 1198,
+  "sourceTopic": "Claude Code costs up to $200 a month. Goose does the same thing for free.",
+  "articleThesis": "编码代理的主战场正在从模型能力转向工作流控制权；高价闭源工具和免费开源替代的对比，提醒开发者和团队重新评估成本、可控性与长期锁定风险。",
+  "usedClaims": [
+    {
+      "claim": "“up to $200 a month”对应 Claude Max 20x 个人套餐价格，而不是 Claude Code 的单独固定价格。",
+      "safeWording": "Anthropic 官方页面列出 Max 20x 为 $200/month；Claude Code 包含在 Pro/Max 等付费 Claude 计划中，因此应写成“最高可到 $200/月的 Claude Max 20x 订阅可使用 Claude Code”，不能写成“Claude Code 必须 $200/月”。",
+      "sourceUrls": [
+        "https://claude.com/pricing",
+        "https://support.claude.com/en/articles/11049762-choose-a-claude-plan",
+        "https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan"
+      ]
+    },
+    {
+      "claim": "Claude Code 可处理项目级编码任务，包括跨文件修改、测试、修 bug、Git/PR 和 MCP 工具连接。",
+      "safeWording": "Claude Code 是 Anthropic 面向开发者的编码代理，可在项目中规划、修改代码、运行验证，并连接外部工具。",
+      "sourceUrls": [
+        "https://code.claude.com/docs/en/overview"
+      ]
+    },
+    {
+      "claim": "Claude Code 的成本不只一种形态：订阅计划、API token 消耗、团队/企业计划和额外用量都可能影响实际成本。",
+      "safeWording": "Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。",
+      "sourceUrls": [
+        "https://code.claude.com/docs/en/costs",
+        "https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan",
+        "https://claude.com/pricing"
+      ]
+    },
+    {
+      "claim": "Goose 是开源 AI agent，本体可免费获取和使用。",
+      "safeWording": "Goose 可安全表述为“免费开源的本地 AI agent/开发者代理工具”。",
+      "sourceUrls": [
+        "https://github.com/aaif-goose/goose",
+        "https://goose-docs.ai/docs/getting-started/providers/"
+      ]
+    },
+    {
+      "claim": "Goose 免费不等于零成本：使用 Anthropic、OpenAI、Google、Groq、OpenRouter 等模型时，可能需要 API Key、订阅或供应商侧费用。",
+      "safeWording": "更稳妥的说法是“Goose 本体免费开源，但模型调用费用取决于你接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用”。",
+      "sourceUrls": [
+        "https://goose-docs.ai/docs/getting-started/providers/",
+        "https://github.com/aaif-goose/goose"
+      ]
+    },
+    {
+      "claim": "Claude Code 和 Goose 都可归入 coding agent / developer agent 范畴，能力存在重叠。",
+      "safeWording": "两者都面向开发者自动化，能覆盖代码理解、文件修改、命令执行或项目级任务的一部分场景；但产品形态、模型后端、权限治理、交互体验和成熟度不同。",
+      "sourceUrls": [
+        "https://code.claude.com/docs/en/overview",
+        "https://github.com/aaif-goose/goose",
+        "https://block.github.io/goose/docs/guides/tips/"
+      ]
+    },
+    {
+      "claim": "“Goose does the same thing as Claude Code”是过度绝对的说法。",
+      "safeWording": "可以写“Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径”，不要写“能力完全一样”或“完全替代”。",
+      "sourceUrls": [
+        "https://venturebeat.com/infrastructure/claude-code-costs-up-to-usd200-a-month-goose-does-the-same-thing-for-free",
+        "https://code.claude.com/docs/en/overview",
+        "https://github.com/aaif-goose/goose"
+      ]
+    }
+  ],
+  "riskControls": [
+    "$200/month 只对应 Claude Max 20x 个人套餐价格边界，不写成 Claude Code 的单独固定价格。",
+    "Goose 的免费表述限定为工具本体免费开源，同时说明外部模型调用可能产生 API Key、订阅或按量费用。",
+    "二者比较只写成部分 coding agent 工作流有重叠，不写能力等同或全量替代。",
+    "VentureBeat 标题只作为选题线索，正文事实边界来自 fact pack 的 safeWording。",
+    "本阶段只生成公众号正文、meta 和写作报告，不进入封面、HTML 排版、APIMart、后台或浏览器自动化。"
+  ],
+  "generatedAt": "2026-05-29T10:10:24.954Z"
+}

@@ -3,7 +3,9 @@ import type {
   NewsScores,
   NormalizedNewsItem,
   RawNewsItem,
-  ShortlistScoreDimensions
+  ShortlistedNewsItem,
+  ShortlistScoreDimensions,
+  TopicDecisionScoreDimensions
 } from "../types/news.js";
 
 export const scoreWeights = {
@@ -17,6 +19,15 @@ export const shortlistScoreWeights = {
   wechatTopic: 0.3,
   businessImpact: 0.15,
   controversy: 0.1,
+  sourceCredibility: 0.1,
+  explainability: 0.1
+} as const;
+
+export const decisionScoreWeights = {
+  wechatTopic: 0.25,
+  businessImpact: 0.2,
+  technicalValue: 0.2,
+  controversy: 0.15,
   sourceCredibility: 0.1,
   explainability: 0.1
 } as const;
@@ -361,6 +372,32 @@ export function calculateShortlistScore(
       dimensions.controversy * shortlistScoreWeights.controversy +
       dimensions.sourceCredibility * shortlistScoreWeights.sourceCredibility +
       dimensions.explainability * shortlistScoreWeights.explainability
+  );
+}
+
+export function scoreTopicDecisionDimensions(
+  item: ShortlistedNewsItem
+): TopicDecisionScoreDimensions {
+  return {
+    wechatTopic: item.shortlistMetrics.wechatTopic,
+    businessImpact: item.shortlistMetrics.businessImpact,
+    technicalValue: item.shortlistMetrics.technicalValue,
+    controversy: item.shortlistMetrics.controversy,
+    sourceCredibility: item.shortlistMetrics.sourceCredibility,
+    explainability: item.shortlistMetrics.explainability
+  };
+}
+
+export function calculateDecisionScore(
+  dimensions: TopicDecisionScoreDimensions
+): number {
+  return clampScore(
+    dimensions.wechatTopic * decisionScoreWeights.wechatTopic +
+      dimensions.businessImpact * decisionScoreWeights.businessImpact +
+      dimensions.technicalValue * decisionScoreWeights.technicalValue +
+      dimensions.controversy * decisionScoreWeights.controversy +
+      dimensions.sourceCredibility * decisionScoreWeights.sourceCredibility +
+      dimensions.explainability * decisionScoreWeights.explainability
   );
 }
 
