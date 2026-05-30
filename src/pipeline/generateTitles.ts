@@ -370,7 +370,7 @@ function createReport(selection: TitleSelectionSummary): string {
     "",
     `Generated at: ${selection.generatedAt}`,
     "",
-    "## v0.3.0 输入",
+    "## v0.3.1 输入",
     "",
     `- editorialStyleRead: ${selection.editorialStyleRead ? "yes" : "no"}`,
     `- feedbackRead: ${selection.feedbackRead ? "yes" : "no"}`,

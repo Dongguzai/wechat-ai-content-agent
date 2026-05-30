@@ -1,6 +1,6 @@
-# v0.1.0 Troubleshooting
+# v0.3.1 Troubleshooting
 
-本文档收敛 v0.1.0 常见阻断。处理原则是先保持 dry-run 和安全开关，再定位具体产物或配置。
+本文档收敛 v0.3.1 常见阻断。处理原则是先保持 dry-run 和安全开关，再定位具体产物或配置。
 
 ## 1. 依赖或运行环境
 
@@ -81,7 +81,7 @@ node --version
 COVER_IMAGE_SIZE=900x383
 ```
 
-v0.1.0 只接受公众号封面目标尺寸 `900x383`。
+v0.3.1 只接受公众号封面目标尺寸 `900x383`。
 
 ### `tsx` IPC 或临时目录权限问题
 
@@ -128,7 +128,7 @@ COVER_ENABLE_REAL_API=true
 
 说明：
 
-- v0.1.0 尚未接入真实 APIMart 端点。
+- v0.3.1 尚未接入真实 APIMart 端点。
 - 封板默认应保持 `COVER_ENABLE_REAL_API=false`。
 - 需要真实公众号草稿时，使用人工准备的 JPG/PNG 封面并通过微信素材上传获得 `WECHAT_COVER_MEDIA_ID`。
 
@@ -172,6 +172,20 @@ WECHAT_DRAFT_DRY_RUN=false
 
 任一开关缺失都会阻断真实调用。
 
+### `pnpm preflight:final` 被 same-day lock 阻断
+
+现象：
+
+- `outputs/final-preflight-report.md` 的 Blocking Issues 出现 `same-day real draft lock`。
+- 文案为 `same-day real draft lock exists: a real draft was already created today.`。
+
+处理：
+
+- 先确认当天是否已经真实创建过公众号草稿，不要用重试绕过锁。
+- 只有明确需要同一天创建第二个真实草稿时，先执行 `pnpm preflight:final -- --force`。
+- 最终真实写入也必须显式使用 `pnpm wechat:draft:real -- --force`。
+- `--force` 只覆盖同日草稿锁，不会放宽文章审核、封面审核、HTML 排版、草稿 API 或发布/群发安全检查。
+
 ### `WECHAT_APP_ID is required` 或 `WECHAT_APP_SECRET is required`
 
 处理：
@@ -183,6 +197,20 @@ WECHAT_APP_SECRET=...
 
 不要把这些值提交到 git，也不要写进前端公开变量。
 
+### `WECHAT_COVER_MEDIA_ID` 缺失
+
+现象：
+
+- 最终预检出现 `cover media id present` 阻断。
+- 报错包含 `WECHAT_COVER_MEDIA_ID must be present before final real-draft preflight.`。
+
+处理：
+
+- 真实草稿封面必须通过草稿请求中的 `thumb_media_id` 设置。
+- 先用真实 JPG/PNG/JPEG 封面执行 `pnpm wechat:upload-cover`，保存输出的 `WECHAT_COVER_MEDIA_ID=...`。
+- 只做 `pnpm wechat:draft:dry-run` 时可以没有真实 media id；进入 `pnpm preflight:final` 和真实草稿前必须补齐。
+- 不要把普通图片 URL、mock SVG 路径或本地文件路径当作 `WECHAT_COVER_MEDIA_ID`。
+
 ### `Mock SVG cover blocks real WeChat draft creation`
 
 真实草稿不接受 mock SVG。二选一：
@@ -190,13 +218,38 @@ WECHAT_APP_SECRET=...
 - 设置已上传的 `WECHAT_COVER_MEDIA_ID`。
 - 设置真实 JPG/PNG 的 `WECHAT_COVER_IMAGE_PATH`，让草稿脚本先上传封面素材。
 
-### 微信返回 IP 白名单或 credential 错误
+### 正文图片破图，或预检提示本地图片路径
+
+现象：
+
+- `pnpm preflight:final` 提示 `html has no local image paths`。
+- 人工打开公众号草稿后正文图片破图。
+- `outputs/wechat.html` 中出现 `outputs/covers/...`、`/Users/...`、`file://...`、相对路径或本地图片文件名。
 
 处理：
 
-- 在公众号后台配置当前机器或服务器出口 IP 白名单。
-- 检查 `WECHAT_APP_ID` / `WECHAT_APP_SECRET` 是否属于同一公众号。
-- 重新执行 `pnpm wechat:draft:real`。
+- 本地图片不能直接进入微信正文 HTML；微信编辑器无法读取本机 `outputs/` 或 `/Users/` 路径。
+- 正文图片需要先上传到微信可访问的图片地址，再把 HTML 里的 `img src` 替换为微信返回的 URL。
+- 当前封面不插入正文；封面只通过 `WECHAT_COVER_MEDIA_ID` 对应的 `thumb_media_id` 设置。
+- 修正 HTML 后重新执行 `pnpm wechat:draft:dry-run` 和 `pnpm preflight:final`。
+
+### 微信返回 `invalid appid`
+
+处理：
+
+- 检查 `WECHAT_APP_ID` 是否来自当前公众号后台，且没有多余空格、引号或复制错误。
+- 检查当前 shell 是否用旧变量覆盖了 `.env`；命令行和 shell 变量优先级高于 `.env`。
+- 确认 `WECHAT_APP_ID` 与 `WECHAT_APP_SECRET` 属于同一个公众号。
+- 不要在日志、文档或 issue 中粘贴完整 AppSecret。
+
+### 微信返回 IP 白名单错误
+
+处理：
+
+- 在公众号后台把当前机器或服务器的出口 IP 加入 IP 白名单。
+- 如果本地网络、代理、云主机或 CI 出口变化，重新确认出口 IP。
+- IP 白名单修正后，重新执行 `pnpm preflight:final`，确认通过后再执行真实草稿写入。
+- 不要因为白名单失败而改用发布、群发或浏览器自动化路径。
 
 ### access_token 获取失败
 
@@ -246,7 +299,7 @@ WECHAT_FORBID_MASS_SEND=true
 
 ## 7. 微信后台浏览器
 
-v0.1.0 不默认操作微信公众号后台。若看到浏览器相关阻断：
+v0.3.1 不默认操作微信公众号后台。若看到浏览器相关阻断：
 
 - `WECHAT_BROWSER_ENABLE_REAL=false` 表示不会打开真实后台。
 - `WECHAT_BROWSER_ALLOW_SAVE_DRAFT=false` 表示不会点击保存草稿。

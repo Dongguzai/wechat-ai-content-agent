@@ -1031,7 +1031,7 @@ function createTopicSelectionReport(
     "",
     `Generated at: ${topic.generatedAt}`,
     "",
-    "## v0.3.0 内容质量输入",
+    "## v0.3.1 内容质量输入",
     "",
     `- manualTopicUsed: ${context.manualTopic?.used ? "yes" : "no"}`,
     context.manualTopic?.used

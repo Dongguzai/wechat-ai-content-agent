@@ -553,7 +553,7 @@ test("same-day real draft lock blocks duplicate creation by default", async () =
           fetchImpl,
           now: new Date("2026-05-29T12:00:00.000Z")
         }),
-      /already created on/
+      /A real WeChat draft was already created on 2026-05-29 .* Use --force to override\./
     );
     assert.equal(calls, callsAfterFirstDraft);
   } finally {

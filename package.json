@@ -1,6 +1,6 @@
 {
   "name": "wechat-ai-content-agent",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local-first WeChat AI content production agent with dry-run safety gates.",
   "type": "module",
   "private": true,

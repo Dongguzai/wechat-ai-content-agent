@@ -1,6 +1,6 @@
 # 公众号 AI 内容生产与草稿发布 Agent
 
-v0.3.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、标题优化、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路，并补齐每日稳定运行所需的归档、最终预检和真实草稿运行锁。
+v0.3.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、标题优化、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路，并补齐每日稳定运行所需的归档、最终预检和真实草稿运行锁。
 
 默认运行不会调用真实微信写入接口，不会打开微信公众号后台，不会发布，不会群发。真实创建公众号草稿必须显式打开双开关，并通过官方草稿箱 API 创建草稿，最终发布仍然只能人工完成。
 
@@ -14,7 +14,7 @@ v0.3.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 6. 可读取 `feedback/*.json` 的最近人工反馈，作为选题和标题评分参考。
 7. 可用 `inputs/manual-topic.md` 或 `--manual-topic` 手动覆盖今日选题，但不能绕过 fact pack 和文章审核。
 8. 生成公众号文章、文章审核报告、封面 prompt / mock 封面和封面审核报告。
-9. 渲染公众号兼容 HTML；当前 v0.3.0 默认不在正文插入封面图。
+9. 渲染公众号兼容 HTML；当前 v0.3.1 默认不在正文插入封面图。
 10. 生成 mock 草稿产物。
 11. 生成微信公众号官方 API 草稿箱请求预检和 dry-run 报告。
 12. 每次 `pnpm dry-run` 或 `pnpm run:daily` 成功后，把核心产物归档到 `runs/yyyy-mm-dd-HHmmss/`，并写入 `run-report.md`。
@@ -150,7 +150,7 @@ WECHAT_COVER_MEDIA_ID=已上传的thumb_media_id \
 pnpm wechat:draft:real
 ```
 
-如果同一天已经成功创建过真实草稿，`pnpm wechat:draft:real` 会默认阻止重复写入。确认需要覆盖时，显式追加 `--force`：
+如果同一天已经成功创建过真实草稿，`pnpm wechat:draft:real` 会默认阻止重复写入。也就是说，同一天重复创建真实草稿需要显式追加 `--force`：
 
 ```bash
 pnpm wechat:draft:real -- --force
@@ -165,7 +165,7 @@ pnpm wechat:draft:real -- --force
 | command | purpose |
 | --- | --- |
 | `pnpm dev` | 运行入口文件 |
-| `pnpm env:check` | 检查 `.env` 格式、变量漂移和真实模式必填项 |
+| `pnpm env:check` | 检查 `.env` 格式、变量漂移、当前草稿模式和真实模式必填项 |
 | `pnpm dry-run` | 执行完整本地 dry-run 流水线 |
 | `pnpm run:daily` | 执行每日稳定运行流程，默认 dry-run 并归档核心产物 |
 | `pnpm preflight:final` | 检查真实草稿写入前的最终条件，不调用真实微信 API |
@@ -219,7 +219,7 @@ pnpm wechat:draft:real -- --force
 ## 公众号图片策略
 
 - 公众号封面通过官方草稿接口的 `thumb_media_id` 设置，对应本项目中的 `WECHAT_COVER_MEDIA_ID`。
-- 当前 v0.3.0 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
+- 当前 v0.3.1 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
 - 正文内图片不能使用本地路径、`outputs/covers` 路径或 `/Users/` 这类机器路径。需要先通过微信 `uploadimg` 接口上传，再把正文 HTML 中的图片地址替换为微信返回的 URL。
 
 ## 真实草稿写入
@@ -247,7 +247,7 @@ WECHAT_COVER_MEDIA_ID=已上传的thumb_media_id \
 pnpm wechat:draft:real
 ```
 
-同一天重复创建真实草稿会被 `.local/wechat-draft-locks/yyyy-mm-dd.json` 阻止；确认需要覆盖时使用 `pnpm wechat:draft:real -- --force`。
+同一天重复创建真实草稿会被 `.local/wechat-draft-locks/yyyy-mm-dd.json` 阻止；确认需要覆盖时必须使用 `pnpm wechat:draft:real -- --force`，否则不会发起第二次草稿创建请求。
 
 如果没有 `WECHAT_COVER_MEDIA_ID`，可以先用真实 JPG/PNG 封面上传素材：
 
@@ -269,6 +269,13 @@ pnpm env:check
 ```
 
 检查项包括 `.env` 语法、`.env.example` 是否覆盖当前代码读取点、`.env` 是否有未声明变量、布尔/数字/枚举值是否合法，以及真实搜索、真实封面和真实公众号草稿模式的必填项是否齐备。
+
+`pnpm env:check` 会明确提示当前微信草稿模式：
+
+- dry-run/preflight 模式：只生成请求预览和预检产物，不获取 `access_token`，不创建真实公众号草稿。
+- real 模式：需要 `WECHAT_API_ENABLE_REAL_DRAFT=true`、`WECHAT_DRAFT_ALLOW_REAL_API=true`、`WECHAT_DRAFT_DRY_RUN=false`、AppID/AppSecret，以及 `WECHAT_COVER_MEDIA_ID` 或真实 JPG/PNG 封面路径。该模式也只允许创建草稿，不允许发布或群发。
+
+`env:check` 本身只做本地配置检查，不调用微信 API。
 
 `.env.example` 按当前代码读取点分组维护。默认值用于安全 dry-run：
 

@@ -347,6 +347,36 @@ function validateConditionalEnv(
   }
 }
 
+function describeWechatDraftMode(env: NodeJS.ProcessEnv): string[] {
+  const realDraftReady =
+    isExplicitTrue(env, "WECHAT_API_ENABLE_REAL_DRAFT") &&
+    isExplicitTrue(env, "WECHAT_DRAFT_ALLOW_REAL_API") &&
+    isExplicitFalse(env, "WECHAT_DRAFT_DRY_RUN");
+  const realDraftIntent =
+    isExplicitTrue(env, "WECHAT_API_ENABLE_REAL_DRAFT") ||
+    isExplicitTrue(env, "WECHAT_DRAFT_ALLOW_REAL_API") ||
+    isExplicitFalse(env, "WECHAT_DRAFT_DRY_RUN");
+
+  if (realDraftReady) {
+    return [
+      "WeChat draft mode: real API draft creation is configured; env:check validates credentials and cover inputs but does not call WeChat API.",
+      "Real mode is limited to official draft creation and still requires publish/mass-send guards to stay enabled."
+    ];
+  }
+
+  if (realDraftIntent) {
+    return [
+      "WeChat draft mode: incomplete real-mode intent detected; keep WECHAT_DRAFT_DRY_RUN=true for dry-run or set both real switches plus credentials and cover inputs.",
+      "Dry-run mode only writes request previews/preflight outputs and does not fetch access_token or create WeChat drafts."
+    ];
+  }
+
+  return [
+    "WeChat draft mode: dry-run/preflight only; no access_token fetch and no real draft creation should occur.",
+    "Real draft mode requires WECHAT_API_ENABLE_REAL_DRAFT=true, WECHAT_DRAFT_ALLOW_REAL_API=true, WECHAT_DRAFT_DRY_RUN=false, AppID/AppSecret, and WECHAT_COVER_MEDIA_ID or a real JPG/PNG cover path."
+  ];
+}
+
 function formatMissingExampleKeys(
   missingKeys: string[],
   references: Map<string, Set<string>>
@@ -453,6 +483,7 @@ export async function checkEnvironment(
   }
 
   validateConditionalEnv(runtimeEnv, errors, warnings);
+  info.push(...describeWechatDraftMode(runtimeEnv));
 
   return {
     ok: errors.length === 0,

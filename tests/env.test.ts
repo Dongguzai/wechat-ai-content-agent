@@ -71,6 +71,7 @@ test(".env.example covers code env references and passes default validation", as
   });
 
   assert.deepEqual(result.errors, []);
+  assert.match(result.info.join("\n"), /dry-run\/preflight only/);
 });
 
 test("env check catches unknown local keys and invalid values", async () => {
@@ -103,4 +104,38 @@ test("env check catches unknown local keys and invalid values", async () => {
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("env check explains dry-run and real WeChat draft modes", async () => {
+  const dryRun = await checkEnvironment({
+    projectRoot: process.cwd(),
+    dotenvPath: null,
+    env: {
+      WECHAT_API_ENABLE_REAL_DRAFT: "false",
+      WECHAT_DRAFT_ALLOW_REAL_API: "false",
+      WECHAT_DRAFT_DRY_RUN: "true",
+      WECHAT_FORBID_PUBLISH: "true",
+      WECHAT_FORBID_MASS_SEND: "true"
+    }
+  });
+  const realMode = await checkEnvironment({
+    projectRoot: process.cwd(),
+    dotenvPath: null,
+    env: {
+      WECHAT_API_ENABLE_REAL_DRAFT: "true",
+      WECHAT_DRAFT_ALLOW_REAL_API: "true",
+      WECHAT_DRAFT_DRY_RUN: "false",
+      WECHAT_APP_ID: "APP_ID_VALUE",
+      WECHAT_APP_SECRET: "APP_SECRET_VALUE",
+      WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE",
+      WECHAT_FORBID_PUBLISH: "true",
+      WECHAT_FORBID_MASS_SEND: "true"
+    }
+  });
+
+  assert.deepEqual(dryRun.errors, []);
+  assert.deepEqual(realMode.errors, []);
+  assert.match(dryRun.info.join("\n"), /no real draft creation/);
+  assert.match(realMode.info.join("\n"), /real API draft creation is configured/);
+  assert.match(realMode.info.join("\n"), /does not call WeChat API/);
 });
