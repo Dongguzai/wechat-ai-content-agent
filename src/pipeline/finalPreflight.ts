@@ -69,6 +69,21 @@ function makeCheck(
   };
 }
 
+function sameDayDraftLockMessage(input: {
+  locked: boolean;
+  force: boolean;
+}): string {
+  if (!input.locked) {
+    return "same-day real draft lock is clear.";
+  }
+
+  if (input.force) {
+    return "Existing same-day lock is being overridden by --force.";
+  }
+
+  return "same-day real draft lock exists: a real draft was already created today.";
+}
+
 function extractImageSrcs(html: string): string[] {
   return [...html.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']?([^"'\s>]+)/gi)].map(
     (match) => match[1].trim()
@@ -337,11 +352,12 @@ export async function runFinalPreflight(
       sensitiveOutputs
     ),
     makeCheck(
-      "same-day real draft lock is clear",
+      "same-day real draft lock",
       !lockState.locked || force,
-      force
-        ? "Existing same-day lock is being overridden by --force."
-        : "No same-day real draft lock exists.",
+      sameDayDraftLockMessage({
+        locked: lockState.locked,
+        force
+      }),
       lockState.locked ? [lockState.lockFile] : []
     )
   ];

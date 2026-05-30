@@ -11,6 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runFinalPreflight } from "../src/pipeline/finalPreflight.js";
+import { writeWechatDraftRunLock } from "../src/pipeline/wechatDraftRunLock.js";
+
+const SAME_DAY_LOCK_BLOCKED_MESSAGE =
+  "same-day real draft lock exists: a real draft was already created today.";
+const SAME_DAY_LOCK_CLEAR_MESSAGE = "same-day real draft lock is clear.";
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -86,6 +91,116 @@ test("final preflight passes when all real-draft prerequisites are satisfied", a
 
     assert.doesNotMatch(outputText, /SUPER_SECRET_SHOULD_NOT_APPEAR/);
     assert.doesNotMatch(outputText, /access_token\s*[:=]/i);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("same-day draft lock preflight passes when no lock exists", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-no-lock-"));
+
+  try {
+    await writeFinalPreflightFixture(outputDir);
+
+    const result = await runFinalPreflight({
+      outputDir,
+      lockDir: join(outputDir, "locks"),
+      env: {
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
+      },
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+    const lockCheck = result.checks.find(
+      (check) => check.name === "same-day real draft lock"
+    );
+    const report = await readFile(join(outputDir, "final-preflight-report.md"), "utf8");
+
+    assert.equal(result.passed, true);
+    assert.equal(lockCheck?.passed, true);
+    assert.equal(lockCheck?.message, SAME_DAY_LOCK_CLEAR_MESSAGE);
+    assert.match(report, /same-day real draft lock is clear\./);
+    assert.doesNotMatch(report, /No same-day real draft lock exists/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("same-day draft lock blocks final preflight without force", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-lock-blocked-"));
+  const lockDir = join(outputDir, "locks");
+
+  try {
+    await writeFinalPreflightFixture(outputDir);
+    await writeWechatDraftRunLock({
+      lockDir,
+      mediaId: "DRAFT_MEDIA_ID_VALUE",
+      title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+      now: new Date("2026-05-29T08:00:00.000Z")
+    });
+
+    const result = await runFinalPreflight({
+      outputDir,
+      lockDir,
+      env: {
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
+      },
+      now: new Date("2026-05-29T12:00:00.000Z")
+    });
+    const lockCheck = result.checks.find(
+      (check) => check.name === "same-day real draft lock"
+    );
+    const report = await readFile(join(outputDir, "final-preflight-report.md"), "utf8");
+    const expectedIssue = `same-day real draft lock: ${SAME_DAY_LOCK_BLOCKED_MESSAGE}`;
+
+    assert.equal(result.passed, false);
+    assert.equal(lockCheck?.passed, false);
+    assert.equal(lockCheck?.message, SAME_DAY_LOCK_BLOCKED_MESSAGE);
+    assert.deepEqual(result.issues, [expectedIssue]);
+    assert.match(
+      report,
+      /## Blocking Issues\n\n- same-day real draft lock: same-day real draft lock exists: a real draft was already created today\./
+    );
+    assert.doesNotMatch(report, /No same-day real draft lock exists/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("--force lets final preflight pass with a same-day draft lock", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-lock-force-"));
+  const lockDir = join(outputDir, "locks");
+
+  try {
+    await writeFinalPreflightFixture(outputDir);
+    await writeWechatDraftRunLock({
+      lockDir,
+      mediaId: "DRAFT_MEDIA_ID_VALUE",
+      title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+      now: new Date("2026-05-29T08:00:00.000Z")
+    });
+
+    const result = await runFinalPreflight({
+      outputDir,
+      lockDir,
+      env: {
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
+      },
+      now: new Date("2026-05-29T12:00:00.000Z"),
+      force: true
+    });
+    const lockCheck = result.checks.find(
+      (check) => check.name === "same-day real draft lock"
+    );
+    const report = await readFile(join(outputDir, "final-preflight-report.md"), "utf8");
+
+    assert.equal(result.passed, true);
+    assert.equal(lockCheck?.passed, true);
+    assert.equal(
+      lockCheck?.message,
+      "Existing same-day lock is being overridden by --force."
+    );
+    assert.match(report, /Existing same-day lock is being overridden by --force\./);
+    assert.doesNotMatch(report, /No same-day real draft lock exists/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
