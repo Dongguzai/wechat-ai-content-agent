@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { forceApimartImage } from "../hooks/forceApimartImage.js";
 import type {
   CoverGenerationMode,
@@ -33,6 +34,9 @@ interface ApimartImageConfig {
   model: string;
   size: string;
   resolution: string;
+  taskInitialDelayMs: number;
+  taskPollIntervalMs: number;
+  taskTimeoutMs: number;
 }
 
 interface ApimartImageRequestBody {
@@ -53,6 +57,9 @@ interface ImageBytes {
 const defaultImageModel = "gpt-image-2";
 const requiredApiSize = "16:9";
 const requiredApiResolution = "2k";
+const defaultTaskInitialDelayMs = 10_000;
+const defaultTaskPollIntervalMs = 5_000;
+const defaultTaskTimeoutMs = 180_000;
 
 function realApiEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.COVER_ENABLE_REAL_API?.trim().toLowerCase() === "true";
@@ -169,7 +176,7 @@ async function createRealApimartImage(
     bytes: responseBytes,
     contentType,
     fetchImpl,
-    apiKey: config.apiKey
+    config
   });
 
   await mkdir(options.outputDir, { recursive: true });
@@ -208,17 +215,32 @@ export async function generateApimartImage(
 
 function resolveApimartImageConfig(env: NodeJS.ProcessEnv): ApimartImageConfig {
   const apiKey = envValue(env, "APIMART_API_KEY");
-  const apiUrl = envValue(env, "APIMART_IMAGE_API_URL");
+  const rawApiUrl = envValue(env, "APIMART_IMAGE_API_URL");
   const model = envValue(env, "APIMART_IMAGE_MODEL") ?? defaultImageModel;
   const size = envValue(env, "APIMART_IMAGE_SIZE") ?? requiredApiSize;
   const resolution =
     envValue(env, "APIMART_IMAGE_RESOLUTION") ?? requiredApiResolution;
+  const taskInitialDelayMs = envMs(
+    env,
+    "APIMART_TASK_INITIAL_DELAY_MS",
+    defaultTaskInitialDelayMs
+  );
+  const taskPollIntervalMs = envMs(
+    env,
+    "APIMART_TASK_POLL_INTERVAL_MS",
+    defaultTaskPollIntervalMs
+  );
+  const taskTimeoutMs = envMs(
+    env,
+    "APIMART_TASK_TIMEOUT_MS",
+    defaultTaskTimeoutMs
+  );
 
   if (!apiKey) {
     throw new Error("COVER_ENABLE_REAL_API=true requires APIMART_API_KEY.");
   }
 
-  if (!apiUrl) {
+  if (!rawApiUrl) {
     throw new Error("COVER_ENABLE_REAL_API=true requires APIMART_IMAGE_API_URL.");
   }
 
@@ -235,7 +257,7 @@ function resolveApimartImageConfig(env: NodeJS.ProcessEnv): ApimartImageConfig {
   }
 
   try {
-    const url = new URL(apiUrl);
+    const url = new URL(rawApiUrl);
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       throw new Error("invalid protocol");
     }
@@ -245,11 +267,42 @@ function resolveApimartImageConfig(env: NodeJS.ProcessEnv): ApimartImageConfig {
 
   return {
     apiKey,
-    apiUrl,
+    apiUrl: normalizeApimartImageApiUrl(rawApiUrl),
     model,
     size,
-    resolution
+    resolution,
+    taskInitialDelayMs,
+    taskPollIntervalMs,
+    taskTimeoutMs
   };
+}
+
+function envMs(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  defaultValue: number
+): number {
+  const rawValue = envValue(env, name);
+  if (!rawValue) {
+    return defaultValue;
+  }
+
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative number of milliseconds.`);
+  }
+
+  return value;
+}
+
+function normalizeApimartImageApiUrl(apiUrl: string): string {
+  const url = new URL(apiUrl);
+
+  if (url.pathname === "/" || url.pathname === "") {
+    url.pathname = "/v1/images/generations";
+  }
+
+  return url.toString();
 }
 
 function createApimartPrompt(options: GenerateApimartImageOptions): string {
@@ -288,7 +341,7 @@ async function extractImageFromApimartResponse(input: {
   bytes: Buffer;
   contentType: string;
   fetchImpl: typeof fetch;
-  apiKey: string;
+  config: ApimartImageConfig;
 }): Promise<ImageBytes> {
   const inlineImageFormat = detectImageFormat(input.bytes, input.contentType);
 
@@ -305,7 +358,7 @@ async function extractImageFromApimartResponse(input: {
     );
   }
 
-  const json = parseJsonResponse(input.bytes, [input.apiKey]);
+  const json = parseJsonResponse(input.bytes, [input.config.apiKey]);
   const base64Image = extractBase64Image(json);
 
   if (base64Image) {
@@ -315,11 +368,21 @@ async function extractImageFromApimartResponse(input: {
   const imageUrl = extractImageUrl(json);
 
   if (imageUrl) {
-    return fetchImageUrl(imageUrl, input.fetchImpl, input.apiKey);
+    return fetchImageUrl(imageUrl, input.fetchImpl, input.config.apiKey);
+  }
+
+  const taskId = extractTaskId(json);
+
+  if (taskId) {
+    return pollApimartImageTask({
+      taskId,
+      fetchImpl: input.fetchImpl,
+      config: input.config
+    });
   }
 
   throw new Error(
-    "APIMart image API response did not include data[0].url, data[0].b64_json, image_url, url, or binary PNG/JPG image bytes."
+    "APIMart image API response did not include data[0].url, data[0].b64_json, image_url, url, task_id, or binary PNG/JPG image bytes."
   );
 }
 
@@ -370,6 +433,10 @@ function firstDataRecord(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+function rootOrDataRecord(value: unknown): Record<string, unknown> | undefined {
+  return firstDataRecord(value) ?? (isRecord(value) ? value : undefined);
+}
+
 function extractBase64Image(value: unknown): string | undefined {
   const dataRecord = firstDataRecord(value);
 
@@ -391,6 +458,11 @@ function extractImageUrl(value: unknown): string | undefined {
     return dataRecord.url;
   }
 
+  const nestedImageUrl = extractNestedImageUrl(dataRecord ?? value);
+  if (nestedImageUrl) {
+    return nestedImageUrl;
+  }
+
   if (!isRecord(value)) {
     return undefined;
   }
@@ -408,6 +480,172 @@ function extractImageUrl(value: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function extractNestedImageUrl(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const result = isRecord(value.result) ? value.result : value;
+  const images = Array.isArray(result.images) ? result.images : undefined;
+
+  if (!images) {
+    return undefined;
+  }
+
+  for (const image of images) {
+    if (!isRecord(image)) {
+      continue;
+    }
+
+    if (typeof image.url === "string") {
+      return image.url;
+    }
+
+    if (Array.isArray(image.url)) {
+      const firstUrl = image.url.find((url) => typeof url === "string");
+      if (typeof firstUrl === "string") {
+        return firstUrl;
+      }
+    }
+
+    if (typeof image.image_url === "string") {
+      return image.image_url;
+    }
+  }
+
+  return undefined;
+}
+
+function extractTaskId(value: unknown): string | undefined {
+  const record = rootOrDataRecord(value);
+
+  if (!record) {
+    return undefined;
+  }
+
+  if (typeof record.task_id === "string") {
+    return record.task_id;
+  }
+
+  if (typeof record.id === "string" && typeof record.status === "string") {
+    return record.id;
+  }
+
+  return undefined;
+}
+
+function extractTaskStatus(value: unknown): string | undefined {
+  const record = rootOrDataRecord(value);
+  return typeof record?.status === "string" ? record.status : undefined;
+}
+
+function extractTaskError(value: unknown): string {
+  const record = rootOrDataRecord(value);
+
+  for (const key of ["error", "message", "errmsg"]) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "unknown APIMart task failure";
+}
+
+function taskStatusUrl(apiUrl: string, taskId: string): string {
+  const url = new URL(apiUrl);
+  const versionMatch = url.pathname.match(/^(.*?\/v\d+)(?:\/|$)/);
+  const versionPath = versionMatch?.[1] || "/v1";
+
+  return new URL(
+    `${versionPath}/tasks/${encodeURIComponent(taskId)}`,
+    url.origin
+  ).toString();
+}
+
+async function pollApimartImageTask(input: {
+  taskId: string;
+  fetchImpl: typeof fetch;
+  config: ApimartImageConfig;
+}): Promise<ImageBytes> {
+  const startedAt = Date.now();
+  const deadline = startedAt + input.config.taskTimeoutMs;
+  const statusUrl = taskStatusUrl(input.config.apiUrl, input.taskId);
+
+  if (input.config.taskInitialDelayMs > 0) {
+    await sleep(input.config.taskInitialDelayMs);
+  }
+
+  while (true) {
+    const response = await input.fetchImpl(statusUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${input.config.apiKey}`,
+        Accept: "application/json, image/png, image/jpeg"
+      }
+    });
+    const contentType = response.headers.get("content-type") ?? "";
+    const responseBytes = Buffer.from(await response.arrayBuffer());
+
+    if (!response.ok) {
+      throw new Error(
+        `APIMart image task query failed with HTTP ${response.status}${formatStatusText(
+          response.statusText
+        )}.${formatResponsePreview(responseBytes, contentType, [
+          input.config.apiKey
+        ])}`
+      );
+    }
+
+    const inlineImageFormat = detectImageFormat(responseBytes, contentType);
+    if (inlineImageFormat) {
+      return {
+        bytes: responseBytes,
+        format: inlineImageFormat
+      };
+    }
+
+    if (!looksLikeJson(responseBytes, contentType)) {
+      throw new Error(
+        "APIMart image task query returned neither supported JSON nor PNG/JPG image bytes."
+      );
+    }
+
+    const json = parseJsonResponse(responseBytes, [input.config.apiKey]);
+    const base64Image = extractBase64Image(json);
+
+    if (base64Image) {
+      return decodeBase64Image(base64Image);
+    }
+
+    const imageUrl = extractImageUrl(json);
+    if (imageUrl) {
+      return fetchImageUrl(imageUrl, input.fetchImpl, input.config.apiKey);
+    }
+
+    const status = extractTaskStatus(json)?.toLowerCase();
+
+    if (status === "completed") {
+      throw new Error("APIMart image task completed without a PNG/JPG image URL.");
+    }
+
+    if (status === "failed" || status === "error" || status === "cancelled" || status === "canceled") {
+      throw new Error(`APIMart image task failed: ${extractTaskError(json)}.`);
+    }
+
+    if (Date.now() >= deadline) {
+      break;
+    }
+
+    const remainingMs = Math.max(0, deadline - Date.now());
+    await sleep(Math.min(input.config.taskPollIntervalMs, remainingMs));
+  }
+
+  throw new Error(
+    `APIMart image task timed out after ${input.config.taskTimeoutMs}ms.`
+  );
 }
 
 async function fetchImageUrl(

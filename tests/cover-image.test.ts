@@ -544,6 +544,84 @@ test("generateApimartImage real mode accepts APIMart data[0].url, image_url, and
   }
 });
 
+test("generateApimartImage real mode polls async APIMart task responses", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-async-task-"));
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    fetchCalls.push({
+      input: input.toString(),
+      init
+    });
+
+    if (fetchCalls.length === 1) {
+      return jsonResponse({
+        code: 200,
+        data: [
+          {
+            status: "submitted",
+            task_id: "task_123"
+          }
+        ]
+      });
+    }
+
+    if (fetchCalls.length === 2) {
+      return jsonResponse({
+        code: 200,
+        data: {
+          id: "task_123",
+          status: "completed",
+          result: {
+            images: [
+              {
+                url: ["https://cdn.apimart.test/task-result.png"]
+              }
+            ]
+          }
+        }
+      });
+    }
+
+    return pngResponse();
+  };
+
+  try {
+    const result = await generateApimartImage({
+      provider: "apimart",
+      imagePrompt:
+        "Create a 900x383 cover with clear visual center, central subject, Chinese headline, and 2K quality.",
+      negativePrompt: "real brand marks, official product marks, price labels",
+      coverText: "AI 编码代理\n卷向工作流",
+      imageSize: "900x383",
+      outputDir,
+      env: apimartRealEnv({
+        APIMART_IMAGE_API_URL: "https://api.apimart.test",
+        APIMART_TASK_INITIAL_DELAY_MS: "0",
+        APIMART_TASK_POLL_INTERVAL_MS: "0",
+        APIMART_TASK_TIMEOUT_MS: "100"
+      }),
+      now: new Date("2026-05-29T00:00:00.000Z"),
+      fetchImpl
+    });
+    const savedBytes = await readFile(result.imagePath);
+    const taskHeaders = new Headers(fetchCalls[1]?.init?.headers);
+
+    assert.equal(result.provider, "apimart");
+    assert.equal(result.mode, "real");
+    assert.equal(result.realApiCalled, true);
+    assert.match(result.imagePath, /\.png$/);
+    assert.deepEqual(savedBytes, onePixelPng);
+    assert.equal(fetchCalls.length, 3);
+    assert.equal(fetchCalls[0]?.input, "https://api.apimart.test/v1/images/generations");
+    assert.equal(fetchCalls[1]?.input, "https://api.apimart.test/v1/tasks/task_123");
+    assert.equal(fetchCalls[2]?.input, "https://cdn.apimart.test/task-result.png");
+    assert.equal(fetchCalls[1]?.init?.method, "GET");
+    assert.equal(taskHeaders.get("authorization"), "Bearer real-key-placeholder");
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("generateApimartImage real mode accepts a binary PNG image response", async () => {
   const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-binary-"));
   const fetchImpl: typeof fetch = async () => pngResponse();
