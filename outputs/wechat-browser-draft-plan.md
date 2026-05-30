@@ -2,33 +2,33 @@
 
 ## 1. 当前模式
 
-browser-disabled
+browser-real
 
 ## 2. 是否会打开真实浏览器
 
-否。WECHAT_BROWSER_ENABLE_REAL=false，当前只生成 browser-disabled plan。
+是，但本 9B-1 骨架只生成计划；真实 DOM selector 仍为 TODO。
 
 ## 3. 是否允许保存草稿
 
-否
+是
 
 ## 4. 是否允许生成预览
 
-否
+是
 
 ## 5. 操作步骤
 
 - preflight-artifacts: 前置产物检查 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Read-only artifact and SOP check.
-- open-wechat-admin: 打开公众号后台 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- wait-human-scan-login: 等待人工扫码登录 | allowed=false | requiresHumanAction=true | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- enter-draft-page: 进入图文/草稿页面 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- create-new-article: 新建图文 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- fill-title: 填写标题 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- paste-html: 粘贴正文 HTML | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- upload-cover: 上传封面图 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- fill-digest: 填写摘要 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- save-draft: 保存草稿 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
-- generate-preview: 生成预览 | allowed=false | requiresHumanAction=false | safetyCheck=blocked | WECHAT_BROWSER_ENABLE_REAL=false; browser remains disabled and no real page is opened.
+- open-wechat-admin: 打开公众号后台 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- wait-human-scan-login: 等待人工扫码登录 | allowed=true | requiresHumanAction=true | safetyCheck=passed | Requires human QR-code scan. No credentials, cookie, or token may be stored.
+- enter-draft-page: 进入图文/草稿页面 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- create-new-article: 新建图文 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- fill-title: 填写标题 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- paste-html: 粘贴正文 HTML | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- upload-cover: 上传封面图 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- fill-digest: 填写摘要 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- save-draft: 保存草稿 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
+- generate-preview: 生成预览 | allowed=true | requiresHumanAction=false | safetyCheck=passed | Allowed only inside the future real-browser wrapper. DOM selectors remain TODO in 9B-1.
 - stop-for-human-confirmation: 停止并等待人工确认 | allowed=true | requiresHumanAction=true | safetyCheck=passed | Mandatory stop point. Wait for human confirmation and do not continue to publish or mass send.
 
 ## 6. 人工介入点
@@ -50,9 +50,9 @@ browser-disabled
 ## 8. 安全检查结果
 
 - passed: true
-- realBrowserEnabled: false
-- allowSaveDraft: false
-- allowPreview: false
+- realBrowserEnabled: true
+- allowSaveDraft: true
+- allowPreview: true
 - articleReviewPassed: true
 - coverReviewPassed: true
 - layoutAllowedNextStage: true

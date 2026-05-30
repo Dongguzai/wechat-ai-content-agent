@@ -8,9 +8,9 @@ import type { CoverResult, CoverReviewResult } from "./cover.js";
 import type { WechatLayoutResult } from "./layout.js";
 import type { WechatDraftResult } from "./wechatDraft.js";
 import type {
-  WechatBrowserDraftPlan,
-  WechatBrowserSafetyCheck
-} from "./wechatBrowser.js";
+  WechatApiDraftResult,
+  WechatApiPreflight
+} from "./wechatApiDraft.js";
 import type {
   NewsCollectionStats,
   NewsShortlistStats,
@@ -45,9 +45,9 @@ export interface PipelineOutputFiles {
   wechatLayoutReport: string;
   wechatDraftResult: string;
   wechatDraftReport: string;
-  wechatBrowserDraftPlan: string;
-  wechatBrowserDraftPlanReport: string;
-  wechatBrowserSafetyCheck: string;
+  wechatApiDraftResult: string;
+  wechatApiDraftReport: string;
+  wechatApiPreflight: string;
   dailyReport: string;
 }
 
@@ -63,8 +63,8 @@ export interface DailyPipelineArtifacts {
   coverReview: CoverReviewResult;
   wechatLayout: WechatLayoutResult;
   wechatDraft: WechatDraftResult;
-  wechatBrowserDraftPlan: WechatBrowserDraftPlan;
-  wechatBrowserSafetyCheck: WechatBrowserSafetyCheck;
+  wechatApiDraft: WechatApiDraftResult;
+  wechatApiPreflight: WechatApiPreflight;
 }
 
 export interface DailyPipelineResult {

@@ -28,8 +28,21 @@ export {
   saveWechatDraftWithReport
 } from "./pipeline/saveWechatDraft.js";
 export {
+  saveWechatDraftApi,
+  saveWechatDraftApiWithReport
+} from "./pipeline/saveWechatDraftApi.js";
+export {
   saveWechatDraftBrowserPlanWithReport
 } from "./pipeline/saveWechatDraftBrowser.js";
+export {
+  addWechatDraft,
+  getAccessToken,
+  uploadCoverMaterial
+} from "./adapters/wechatOfficialApi.js";
+export {
+  forbidWechatPublishApi,
+  verifyWechatDraftOnlyApiGuard
+} from "./hooks/forbidWechatPublishApi.js";
 export {
   createWechatBrowserDraftPlan,
   createWechatBrowserRuntimeConfig,

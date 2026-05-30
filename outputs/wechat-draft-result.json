@@ -2,8 +2,8 @@
   "mode": "mock",
   "status": "draft_saved",
   "title": "这条 AI 新闻背后，是一次工作流重排",
-  "draftId": "mock-draft-20260529160230487",
-  "previewUrl": "mock://wechat-draft/mock-draft-20260529160230487/preview",
+  "draftId": "mock-draft-20260529171057127",
+  "previewUrl": "mock://wechat-draft/mock-draft-20260529171057127/preview",
   "htmlPath": "outputs/wechat.html",
   "coverImagePath": "/Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent/outputs/covers/cover-apimart-mock-2026-05-29T11-19-58-152Z.svg",
   "actions": [
@@ -61,5 +61,5 @@
   },
   "allowedNextStage": false,
   "humanActionRequired": "请人工登录微信公众号后台检查草稿预览，确认无误后再手动发布。",
-  "generatedAt": "2026-05-29T16:02:30.487Z"
+  "generatedAt": "2026-05-29T17:10:57.127Z"
 }

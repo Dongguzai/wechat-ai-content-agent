@@ -1,8 +1,10 @@
 # wechat-draft-publisher
 
-负责第九阶段 9A：微信公众号草稿箱写入 dry-run，第 9B-0 阶段：真实浏览器草稿写入 SOP 设计，以及第 9B-1 阶段：真实浏览器自动化骨架和安全闸门。
+负责第九阶段 9A：微信公众号草稿箱写入 mock dry-run，以及第 9C 阶段：微信公众号官方 API 草稿箱写入。
 
-本 skill 只能执行 mock / dry-run。不得调用微信公众号后台，不得启动 Playwright、Puppeteer 或任何浏览器自动化，不得打开 `https://mp.weixin.qq.com`，不得真实登录、上传封面、保存草稿、发布或群发。
+本 skill 默认只能执行 mock / API dry-run。只有在 `WECHAT_API_ENABLE_REAL_DRAFT=true` 且 `WECHAT_DRAFT_ALLOW_REAL_API=true`，并且 `WECHAT_DRAFT_DRY_RUN` 不是 `true` 时，才允许通过微信公众号官方 API 创建草稿箱草稿。
+
+不得启动 Playwright、Puppeteer 或任何浏览器自动化，不得打开 `https://mp.weixin.qq.com`，不得真实登录公众号后台，不得发布或群发。
 
 ## 输入
 
@@ -19,6 +21,9 @@
 
 - `outputs/wechat-draft-result.json`
 - `outputs/wechat-draft-report.md`
+- `outputs/wechat-api-draft-result.json`
+- `outputs/wechat-api-draft-report.md`
+- `outputs/wechat-api-preflight.json`
 
 ## 执行边界
 
@@ -66,6 +71,61 @@
 - `safety.requiresHumanConfirmation=true`
 
 报告必须明确写出：系统不会自动发布，也不会自动群发；需要人工登录微信公众号后台检查草稿预览，确认无误后再手动发布。
+
+## 9C 官方 API 草稿箱写入
+
+9C 只允许调用微信公众号官方草稿箱创建流程：
+
+- 获取接口调用凭据
+- 上传封面素材，仅用于获得 `thumb_media_id`
+- 调用 `/cgi-bin/draft/add` 创建图文草稿
+
+默认 dry-run 只生成请求预览和 preflight，不调用微信 API。
+
+真实写入必须同时满足：
+
+- `WECHAT_API_ENABLE_REAL_DRAFT=true`
+- `WECHAT_DRAFT_ALLOW_REAL_API=true`
+- `WECHAT_DRAFT_DRY_RUN` 不是 `true`
+- `WECHAT_APP_ID` 存在
+- `WECHAT_APP_SECRET` 存在
+- `article-review.json` 的 `passed=true`
+- `cover-review.json` 的 `passed=true`
+- `wechat-layout.json` 的 `allowedNextStage=true`
+- `outputs/wechat.html` 存在且非空
+- `sourceReliability` 不是 `low`
+- `WECHAT_COVER_MEDIA_ID` 存在，或存在真实可上传 JPG/PNG 封面图
+- `forbidWechatPublishApi` 通过 draft-only 自检
+
+封面优先级：
+
+1. `WECHAT_COVER_MEDIA_ID`
+2. `WECHAT_COVER_IMAGE_PATH`
+3. `cover.json` 的 `imagePath`
+
+如果没有 `WECHAT_COVER_MEDIA_ID`，且封面仍是 mock SVG，必须阻断真实 API 调用，并提示需要真实 JPG/PNG 封面图或已上传的 `thumb_media_id`。
+
+9C 输出必须声明：
+
+- `safety.draftOnly=true`
+- `safety.publishApiCalled=false`
+- `safety.massSendApiCalled=false`
+- `safety.requiresHumanConfirmation=true`
+
+严禁：
+
+- 调用发布接口
+- 调用群发接口
+- 调用 preview 群发接口
+- 把 AppSecret 写入 outputs
+- 把完整接口调用凭据写入 outputs 或日志
+- 使用 mock media_id 进入真实草稿创建
+
+报告必须明确：系统只创建草稿，不发布，不群发；最终发布必须人工登录公众号后台完成。
+
+## 9B 历史方案保留说明
+
+9B 浏览器方案仅作为历史文档保留，当前第九阶段不再执行浏览器插件、浏览器自动化、公众号后台页面操作或 Playwright/Puppeteer 方案。
 
 ## 9B-0 SOP 设计边界
 

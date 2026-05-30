@@ -18,11 +18,11 @@ outputs/wechat.html
 
 ## 5. mock draftId
 
-mock-draft-20260529160230487
+mock-draft-20260529171057127
 
 ## 6. mock previewUrl
 
-mock://wechat-draft/mock-draft-20260529160230487/preview
+mock://wechat-draft/mock-draft-20260529171057127/preview
 
 ## 7. 已模拟的安全动作
 

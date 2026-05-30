@@ -10,7 +10,7 @@ import { reviewArticleWithReport } from "./reviewArticle.js";
 import { generateCoverWithReport } from "./generateCover.js";
 import { renderWechatHtmlWithReport } from "./renderWechatHtml.js";
 import { saveWechatDraftWithReport } from "./saveWechatDraft.js";
-import { saveWechatDraftBrowserPlanWithReport } from "./saveWechatDraftBrowser.js";
+import { saveWechatDraftApiWithReport } from "./saveWechatDraftApi.js";
 import type {
   DailyPipelineResult,
   PipelineOutputFiles
@@ -82,7 +82,7 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     "",
     "## Summary",
     "",
-    "- Current phase: wechat browser draft plan only",
+    "- Current phase: wechat official API draft dry-run",
     `- Candidate news: ${artifacts.candidates.length}`,
     `- Shortlisted news: ${artifacts.shortlisted.length}`,
     `- Selected topic: ${selected.title}`,
@@ -110,12 +110,12 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- WeChat mock previewUrl: ${artifacts.wechatDraft.previewUrl}`,
     `- WeChat draft allowedNextStage: ${artifacts.wechatDraft.allowedNextStage ? "yes" : "no"}`,
     `- Human confirmation required: ${artifacts.wechatDraft.safety.requiresHumanConfirmation ? "yes" : "no"}`,
-    `- WeChat browser draft plan mode: ${artifacts.wechatBrowserDraftPlan.mode}`,
-    `- WeChat browser disabled: ${artifacts.wechatBrowserDraftPlan.browserDisabled ? "yes" : "no"}`,
-    `- WeChat browser real enabled: ${artifacts.wechatBrowserDraftPlan.realBrowserEnabled ? "yes" : "no"}`,
-    `- WeChat browser allow save draft: ${artifacts.wechatBrowserDraftPlan.allowSaveDraft ? "yes" : "no"}`,
-    `- WeChat browser allow preview: ${artifacts.wechatBrowserDraftPlan.allowPreview ? "yes" : "no"}`,
-    `- WeChat browser safety passed: ${artifacts.wechatBrowserSafetyCheck.passed ? "yes" : "no"}`,
+    `- WeChat official API draft mode: ${artifacts.wechatApiDraft.mode}`,
+    `- WeChat official API draft status: ${artifacts.wechatApiDraft.status}`,
+    `- WeChat official API preflight passed: ${artifacts.wechatApiPreflight.passed ? "yes" : "no"}`,
+    `- WeChat official API real switches enabled: ${artifacts.wechatApiPreflight.realDraftSwitchEnabled && artifacts.wechatApiPreflight.realApiAllowSwitchEnabled ? "yes" : "no"}`,
+    `- WeChat official API publish called: ${artifacts.wechatApiDraft.safety.publishApiCalled ? "yes" : "no"}`,
+    `- WeChat official API mass send called: ${artifacts.wechatApiDraft.safety.massSendApiCalled ? "yes" : "no"}`,
     `- RSS shortlisted: ${shortlistStats.rssShortlistedCount}`,
     `- global_search shortlisted: ${shortlistStats.globalSearchShortlistedCount}`,
     `- Collection API real call: ${collectionStats.apiRealCall ? "yes" : "no"}`,
@@ -147,24 +147,24 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- wechat-layout-report.md: ${files.wechatLayoutReport}`,
     `- wechat-draft-result.json: ${files.wechatDraftResult}`,
     `- wechat-draft-report.md: ${files.wechatDraftReport}`,
-    `- wechat-browser-draft-plan.json: ${files.wechatBrowserDraftPlan}`,
-    `- wechat-browser-draft-plan.md: ${files.wechatBrowserDraftPlanReport}`,
-    `- wechat-browser-safety-check.json: ${files.wechatBrowserSafetyCheck}`,
+    `- wechat-api-draft-result.json: ${files.wechatApiDraftResult}`,
+    `- wechat-api-draft-report.md: ${files.wechatApiDraftReport}`,
+    `- wechat-api-preflight.json: ${files.wechatApiPreflight}`,
     `- daily-report.md: ${files.dailyReport}`,
     "",
     "## Safety Notes",
     "",
-    "- This run stops after generating the WeChat browser draft plan.",
+    "- This run stops after generating the WeChat official API draft request preview.",
     "- 已完成 mock 草稿写入。",
-    "- 已生成真实浏览器写入计划。",
+    "- 已生成微信公众号官方 API 草稿箱请求预览。",
     "- 未操作真实公众号后台。",
     "- 未打开公众号后台。",
-    "- 未真实保存草稿。",
+    "- 未真实写入草稿，除非显式打开 WECHAT_API_ENABLE_REAL_DRAFT 和 WECHAT_DRAFT_ALLOW_REAL_API。",
     "- 未发布。",
     "- 未群发。",
     "- 需要人工确认。",
-    "- 需要用户显式设置 WECHAT_BROWSER_ENABLE_REAL=true 才能进入真实浏览器测试。",
-    "- No real WeChat backend operation, public send action, mass send action, or browser automation is used.",
+    "- 真实 API 模式也只允许创建草稿箱草稿。",
+    "- No public send action, mass send action, browser automation, or WeChat admin page operation is used.",
     "- APIMart is the only allowed image provider; default mode is mock unless COVER_ENABLE_REAL_API=true and APIMART_API_KEY is present.",
     "- Real APIMart generation is intentionally TODO-gated until the API contract is confirmed.",
     "- Tavily/Exa search summaries are treated as leads only, not factual sources.",
@@ -279,12 +279,13 @@ export async function runDailyPipeline(
   });
 
   logger.info(
-    "10/10 saveWechatDraftBrowser: generating disabled browser draft plan and safety check."
+    "10/10 saveWechatDraftApi: generating WeChat official API draft request preview."
   );
-  const wechatBrowserDraft = await saveWechatDraftBrowserPlanWithReport({
+  const wechatApiDraft = await saveWechatDraftApiWithReport({
     outputDir,
     logger,
     env: options.env,
+    fetchImpl: options.fetchImpl,
     writeOutputs: true,
     now: options.now
   });
@@ -315,10 +316,9 @@ export async function runDailyPipeline(
     wechatLayoutReport: wechatLayout.files.wechatLayoutReport,
     wechatDraftResult: wechatDraft.files.wechatDraftResult,
     wechatDraftReport: wechatDraft.files.wechatDraftReport,
-    wechatBrowserDraftPlan: wechatBrowserDraft.files.wechatBrowserDraftPlan,
-    wechatBrowserDraftPlanReport:
-      wechatBrowserDraft.files.wechatBrowserDraftPlanReport,
-    wechatBrowserSafetyCheck: wechatBrowserDraft.files.wechatBrowserSafetyCheck,
+    wechatApiDraftResult: wechatApiDraft.files.wechatApiDraftResult,
+    wechatApiDraftReport: wechatApiDraft.files.wechatApiDraftReport,
+    wechatApiPreflight: wechatApiDraft.files.wechatApiPreflight,
     dailyReport: join(outputDir, "daily-report.md")
   };
 
@@ -337,8 +337,8 @@ export async function runDailyPipeline(
       coverReview: cover.review,
       wechatLayout: wechatLayout.layout,
       wechatDraft: wechatDraft.result,
-      wechatBrowserDraftPlan: wechatBrowserDraft.plan,
-      wechatBrowserSafetyCheck: wechatBrowserDraft.safetyCheck
+      wechatApiDraft: wechatApiDraft.result,
+      wechatApiPreflight: wechatApiDraft.preflight
     },
     collectionStats: collection.stats,
     shortlistStats: shortlist.stats
@@ -349,7 +349,7 @@ export async function runDailyPipeline(
   const durationMs = Date.now() - startedAt;
   logger.info(`Dry-run completed in ${durationMs}ms.`);
   logger.info(
-    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}; cover review passed=${cover.review.passed}; HTML compatible=${wechatLayout.layout.compatibleWithWechat}; mock draft status=${wechatDraft.result.status}; browser plan mode=${wechatBrowserDraft.plan.mode}.`
+    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}; cover review passed=${cover.review.passed}; HTML compatible=${wechatLayout.layout.compatibleWithWechat}; mock draft status=${wechatDraft.result.status}; API draft mode=${wechatApiDraft.result.mode}.`
   );
 
   return {
