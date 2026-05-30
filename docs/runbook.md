@@ -1,6 +1,6 @@
-# v0.2.0 Runbook
+# v0.3.0 Runbook
 
-本文档用于 v0.2.0 稳定生产版的每日运行、真实草稿写入和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
+本文档用于 v0.3.0 内容质量优化版的每日运行、真实草稿写入和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
 
 ## 1. 环境准备
 
@@ -39,12 +39,14 @@ pnpm run:daily
 
 - 命令退出码为 0。
 - `outputs/daily-report.md` 生成。
+- `outputs/title-candidates.json` 生成 5 个标题候选。
+- `outputs/title-selection-report.md` 记录最终标题选择理由。
 - `outputs/article-review.json` 中 `passed=true`。
 - `outputs/cover-review.json` 中 `passed=true`。
 - `outputs/wechat-layout.json` 中 `compatibleWithWechat=true` 且 `allowedNextStage=true`。
 - `outputs/wechat-draft-result.json` 为 mock 草稿结果。
 - `outputs/wechat-api-preflight.json` 为官方 API 草稿 dry-run 预检结果。
-- 核心产物复制到 `runs/yyyy-mm-dd-HHmmss/`，并生成 `run-manifest.json`。
+- 核心产物复制到 `runs/yyyy-mm-dd-HHmmss/`，并生成 `run-manifest.json` 和 `run-report.md`。
 
 兼容命令：
 
@@ -54,7 +56,84 @@ pnpm dry-run
 
 `pnpm dry-run` 与 `pnpm run:daily` 一样会归档成功运行产物。
 
-## 3. 真实草稿写入流程
+## 3. 内容质量配置
+
+账号写作风格配置在 `config/editorial-style.md`。默认要求：
+
+- 第三视角。
+- 旁观者分析。
+- 通俗但犀利。
+- 不写新闻通稿。
+- 不堆英文术语。
+- 不写营销号腔。
+- 结构为：冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断。
+
+`topic-editor` 和 `article-writer` 会读取该文件；是否读取成功会写入 `outputs/topic-selection-report.md`、`outputs/article-writing-report.md`、`outputs/daily-report.md` 和归档目录里的 `run-report.md`。
+
+标题生成阶段会输出：
+
+- `outputs/title-candidates.json`
+- `outputs/title-selection-report.md`
+
+查看最终标题选择理由：
+
+```bash
+cat outputs/title-selection-report.md
+```
+
+最终标题会同步到 `outputs/article-meta.json`，并在 `outputs/wechat.html` 中使用。标题生成只做内容质量优化，不调用微信 API，不发布，不群发。
+
+## 4. 手动选题
+
+手动选题文件为 `inputs/manual-topic.md`。如果该文件存在且非空，`pnpm run:daily` 会优先使用它。也可以显式指定路径：
+
+```bash
+pnpm run:daily -- --manual-topic inputs/manual-topic.md
+```
+
+推荐格式：
+
+```markdown
+# 今日选题标题
+
+Source URL: https://example.com/source
+Source Name: Example
+Angle: 从冲突、事实边界和行业逻辑分析。
+Thesis: 这条资讯说明某类 AI 工作流正在发生变化。
+```
+
+注意：
+
+- `Source URL` 必填，否则 fact pack 无法运行。
+- 手动选题只覆盖选题入口。
+- 手动选题仍必须经过 fact pack、article writer、article reviewer、cover、layout、mock draft 和官方 API dry-run 预检。
+- 不要把未经核验的判断写成事实；manual-topic 里的内容仍会被 fact pack 和 reviewer 约束。
+
+## 5. 人工反馈
+
+人工反馈模板在 `feedback/template.json`。复制为日期文件，例如：
+
+```bash
+cp feedback/template.json feedback/2026-05-30.json
+```
+
+填写字段：
+
+- `date`
+- `title`
+- `published`
+- `views`
+- `likes`
+- `shares`
+- `myRating`
+- `topicQuality`
+- `titleQuality`
+- `articleProblems`
+- `notes`
+
+流程会读取日期最近的一份 feedback JSON，用于后续选题报告和标题评分参考。没有 feedback 文件时流程不会失败。真实 feedback JSON 默认被 `.gitignore` 忽略，只提交 `feedback/template.json`。
+
+## 6. 真实草稿写入流程
 
 真实写入前，先确认已经完成每日运行：
 
@@ -114,13 +193,15 @@ pnpm wechat:draft:real -- --force
 
 最终发布仍必须由人工登录微信公众号后台完成。
 
-## 4. 异常处理流程
+## 7. 异常处理流程
 
 `pnpm run:daily` 失败：
 
 - 先看终端中失败阶段名称。
 - 检查 `outputs/` 中最后生成的 report。
 - 若采集阶段失败，确认 `SEARCH_ENABLE_REAL_API=false` 时 mock search 可用；真实搜索失败时先回到 mock。
+- 若标题阶段失败，打开 `outputs/title-selection-report.md` 或检查候选标题是否触碰 forbidden terms / fact pack 边界。
+- 若手动选题失败，确认 `inputs/manual-topic.md` 非空且包含 `Source URL`。
 - 若文章、封面或 HTML 审核失败，不要跳过审核，先修复对应 pipeline 输出。
 
 `pnpm preflight:final` 失败：
@@ -139,7 +220,7 @@ pnpm wechat:draft:real -- --force
 - 若微信返回 IP 白名单错误，先到公众号后台配置当前出口 IP，再重新执行最终预检和真实草稿写入。
 - 若已经实际创建过草稿但本地命令失败，先登录公众号后台人工确认草稿箱状态，再决定是否需要 `--force`。
 
-## 5. 验收与发版
+## 8. 验收与发版
 
 每次发版前执行 `docs/release-checklist.md` 中的检查项。最小命令集：
 
@@ -147,6 +228,7 @@ pnpm wechat:draft:real -- --force
 pnpm typecheck
 pnpm test
 pnpm dry-run
+pnpm run:daily
 pnpm wechat:draft:dry-run
 pnpm preflight:final
 ```

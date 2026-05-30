@@ -7,6 +7,9 @@ import type {
 import type { CoverResult, CoverReviewResult } from "./cover.js";
 import type { WechatLayoutResult } from "./layout.js";
 import type { WechatDraftResult } from "./wechatDraft.js";
+import type { EditorialStyleLoadResult, ManualTopicLoadResult } from "./editorial.js";
+import type { EditorialFeedbackLoadResult } from "./feedback.js";
+import type { TitleCandidate, TitleSelectionSummary } from "./title.js";
 import type {
   WechatApiDraftResult,
   WechatApiPreflight
@@ -34,6 +37,8 @@ export interface PipelineOutputFiles {
   article: string;
   articleMeta: string;
   articleWritingReport: string;
+  titleCandidates: string;
+  titleSelectionReport: string;
   articleReview: string;
   articleReviewReport: string;
   cover: string;
@@ -55,9 +60,14 @@ export interface DailyPipelineArtifacts {
   candidates: NormalizedNewsItem[];
   shortlisted: ShortlistedNewsItem[];
   selectedTopic: SelectedTopic;
+  manualTopic: ManualTopicLoadResult;
+  editorialStyle: EditorialStyleLoadResult;
+  editorialFeedback: EditorialFeedbackLoadResult;
   topicFactPack: TopicFactPack;
   article: ArticleDraft;
   articleMeta: ArticleMeta;
+  titleCandidates: TitleCandidate[];
+  titleSelection: TitleSelectionSummary;
   articleReview: ArticleReviewResult;
   cover: CoverResult;
   coverReview: CoverReviewResult;

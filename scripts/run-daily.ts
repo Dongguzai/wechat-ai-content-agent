@@ -4,6 +4,20 @@ import { runDailyPipeline } from "../src/pipeline/runDailyPipeline.js";
 
 await loadDotEnv();
 
+function manualTopicFileFromArgs(args: string[]): string | undefined {
+  const index = args.indexOf("--manual-topic");
+  if (index === -1) {
+    return undefined;
+  }
+
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error("--manual-topic requires a markdown file path.");
+  }
+
+  return value;
+}
+
 const now = new Date();
 const result = await runDailyPipeline({
   env: {
@@ -12,6 +26,7 @@ const result = await runDailyPipeline({
     WECHAT_API_ENABLE_REAL_DRAFT: "false",
     WECHAT_DRAFT_ALLOW_REAL_API: "false"
   },
+  manualTopicFile: manualTopicFileFromArgs(process.argv.slice(2)),
   now
 });
 const archive = await archiveRunOutputs({

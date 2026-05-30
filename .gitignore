@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.DS_Store
 .env
 .env.*
 !.env.example
@@ -8,3 +9,6 @@ outputs/*
 !outputs/.gitkeep
 runs/*
 !runs/.gitkeep
+feedback/*.json
+!feedback/template.json
+inputs/manual-topic.md

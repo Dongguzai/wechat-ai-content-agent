@@ -26,6 +26,16 @@ function isoHoursAgo(now: Date, hoursAgo: number): string {
 
 const mockRssTemplates: MockRssTemplate[] = [
   {
+    id: "rss-claude-code-goose",
+    title: "Claude Code costs up to $200 a month. Goose does the same thing for free.",
+    url: "https://venturebeat.com/infrastructure/claude-code-costs-up-to-usd200-a-month-goose-does-the-same-thing-for-free",
+    sourceName: "VentureBeat AI",
+    snippet:
+      "Claude Code has paid subscription paths while Goose is described as a free open source AI agent, raising developer workflow, cost, and lock-in questions.",
+    hoursAgo: 4,
+    highHeat: true
+  },
+  {
     id: "rss-openai-agent-workbench",
     title: "OpenAI 发布多模态 Agent 工作台，企业内容流程开始重组",
     url: "https://example.com/rss/openai-agent-workbench",

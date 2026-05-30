@@ -11,7 +11,9 @@ import type {
 } from "../types/article.js";
 import type { TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
+import type { EditorialStyleLoadResult } from "../types/editorial.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { loadEditorialStyle } from "./loadEditorialStyle.js";
 
 export interface WriteArticleOptions {
   outputDir?: string;
@@ -23,6 +25,7 @@ export interface WriteArticleOptions {
   topicSelectionReport?: string;
   factPack?: TopicFactPack;
   topicFactPackReport?: string;
+  editorialStyle?: EditorialStyleLoadResult;
   logger?: Logger;
   writeOutputs?: boolean;
   now?: Date;
@@ -122,19 +125,19 @@ function createRiskControls(): string[] {
 function createArticleSections(factPack: TopicFactPack): ArticleSection[] {
   return [
     {
-      heading: "先把这件事说准确",
+      heading: "冲突先摆出来",
       body:
-        "高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。更准确的边界是：外界常说的高价订阅价格，更安全地对应 Claude 的高阶个人订阅方案，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。"
+        "高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。真正值得关注的是，coding agent 正在从聊天框里的能力，变成开发者日常工作流入口。"
     },
     {
-      heading: "真正的冲突不是谁更便宜",
+      heading: "事实先说准确",
       body:
-        "Claude Code 是 Anthropic 面向开发者的编码代理，可在项目中规划、修改代码、运行验证，并连接外部工具。Goose 则把类似工作流拆成开源、本地、可选模型的路径。两者都面向开发者自动化，能覆盖代码理解、文件修改、命令执行或项目级任务的一部分场景；但产品形态、模型后端、权限治理、交互体验和成熟度不同。真正值得关注的是，coding agent 正在从聊天框里的能力，变成开发者日常工作流入口。"
+        "更准确的边界是：外界常说的高价订阅价格，更安全地对应 Claude 的高阶个人订阅方案，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。"
     },
     {
-      heading: "闭源产品和开源基础设施开始正面相遇",
+      heading: "行业逻辑是什么",
       body:
-        "闭源订阅工具的优势，是把模型、交互、上下文、团队治理打包成一个高价值入口。用户买的不只是模型能力，还买稳定体验、默认集成和责任边界。开源工具的反击，则是把这套流程拆出来，让团队能自托管、换模型、接自己的权限系统和工程工具链。价格只是表层，背后是成本结构、可控性和工具锁定的重新计算。"
+        "Claude Code 是 Anthropic 面向开发者的编码代理，可在项目中规划、修改代码、运行验证，并连接外部工具。Goose 则把类似工作流拆成开源、本地、可选模型的路径。两者都面向开发者自动化，能覆盖代码理解、文件修改、命令执行或项目级任务的一部分场景；但产品形态、模型后端、权限治理、交互体验和成熟度不同。闭源订阅工具把模型、交互、上下文和团队治理打包成入口；开源工具则把流程拆出来，让团队能自托管、换模型、接自己的权限系统和工程工具链。价格只是表层，背后是成本结构、可控性和工具锁定的重新计算。"
     },
     {
       heading: "谁会先被影响",
@@ -210,9 +213,20 @@ function createMeta(article: ArticleDraft, generatedAt: string): ArticleMeta {
   };
 }
 
-function createWritingReport(article: ArticleDraft, meta: ArticleMeta): string {
+function createWritingReport(
+  article: ArticleDraft,
+  meta: ArticleMeta,
+  editorialStyle?: EditorialStyleLoadResult
+): string {
   return [
     "# Article Writing Report",
+    "",
+    "## 账号风格配置",
+    "",
+    `- editorialStyleRead: ${editorialStyle?.loaded ? "yes" : "no"}`,
+    `- editorialStyleFile: ${editorialStyle?.path ?? "not loaded"}`,
+    "- appliedStructure: 冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断",
+    "- appliedTone: 第三视角、旁观者分析、通俗但犀利、非通稿、非营销号腔",
     "",
     "## 文章标题",
     "",
@@ -299,6 +313,8 @@ export async function writeArticleWithReport(
     options.topicFactPackReportFile ?? join(outputDir, "topic-fact-pack.md");
   const writeOutputs = options.writeOutputs ?? true;
   const files = createOutputFiles(outputDir);
+  const editorialStyle =
+    options.editorialStyle ?? (await loadEditorialStyle({ logger }));
 
   const topic = options.topic ?? (await readJsonFile<SelectedTopic>(selectedTopicFile));
   const factPack =
@@ -314,7 +330,7 @@ export async function writeArticleWithReport(
 
   const article = writeArticle(topic, factPack, { now: options.now });
   const meta = createMeta(article, article.createdAt);
-  const report = createWritingReport(article, meta);
+  const report = createWritingReport(article, meta, editorialStyle);
 
   if (writeOutputs) {
     await mkdir(outputDir, { recursive: true });

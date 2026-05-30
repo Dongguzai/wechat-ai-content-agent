@@ -20,14 +20,23 @@ import type {
   TopicSelectionResult
 } from "../types/news.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { loadEditorialStyle } from "./loadEditorialStyle.js";
+import type { EditorialStyleLoadResult, ManualTopicLoadResult } from "../types/editorial.js";
+import type { EditorialFeedbackLoadResult } from "../types/feedback.js";
 
 export interface SelectTopicOptions {
   outputDir?: string;
   inputFile?: string;
   shortlisted?: ShortlistedNewsItem[];
+  editorialStyle?: EditorialStyleLoadResult;
+  feedback?: EditorialFeedbackLoadResult;
   logger?: Logger;
   writeOutputs?: boolean;
   now?: Date;
+}
+
+export interface SelectManualTopicOptions extends SelectTopicOptions {
+  manualTopic: ManualTopicLoadResult;
 }
 
 interface RankedTopic {
@@ -586,6 +595,134 @@ function profileFor(item: ShortlistedNewsItem): EditorialProfile {
   };
 }
 
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Manual Topic";
+  }
+}
+
+function textFallback(value: string | undefined, fallback: string): string {
+  const trimmed = trimText(value);
+  return trimmed || fallback;
+}
+
+function createManualShortlistedItem(
+  manualTopic: ManualTopicLoadResult,
+  now: Date
+): ShortlistedNewsItem {
+  const title = textFallback(manualTopic.title, "人工选题");
+  const url = textFallback(manualTopic.sourceUrl, "");
+
+  if (!url) {
+    throw new Error(
+      `Manual topic requires a source URL before fact pack can run: ${manualTopic.filePath}`
+    );
+  }
+
+  const sourceName = textFallback(manualTopic.sourceName, hostFromUrl(url));
+  const topicAngle = textFallback(
+    manualTopic.angle,
+    "从第三视角分析这条 AI 资讯背后的冲突、事实边界、行业逻辑和影响人群。"
+  );
+  const thesis = textFallback(
+    manualTopic.thesis,
+    "人工选题需要被放回工作流、成本结构、工具生态或行业入口变化里判断。"
+  );
+  const fetchedAt = now.toISOString();
+
+  return {
+    id: `manual-${Buffer.from(`${title}:${url}`).toString("base64url").slice(0, 16)}`,
+    title,
+    url,
+    sourceName,
+    sourceType: "manual",
+    provider: "none",
+    fetchedAt,
+    summary: textFallback(
+      manualTopic.content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 4)
+        .join(" "),
+      title
+    ),
+    category: "tooling",
+    evidence: [`manual-topic: ${manualTopic.filePath}`, `url: ${url}`],
+    duplicateKey: `manual:${url}`,
+    scores: {
+      freshness: 90,
+      heat: 80,
+      technicalValue: 82,
+      wechatTopic: 88,
+      businessImpact: 78,
+      controversy: 45,
+      final: 84
+    },
+    duplicateSources: [],
+    tags: ["tooling", "agent", "developer-workflow", "business"],
+    shortlistScore: 88,
+    shortlistMetrics: {
+      technicalValue: 82,
+      wechatTopic: 88,
+      businessImpact: 78,
+      controversy: 45,
+      sourceCredibility: 82,
+      explainability: 86,
+      originality: 90
+    },
+    editorial: {
+      shortlistReason: "人工选题覆盖，优先进入今日主文候选。",
+      audienceFit: "开发者、企业团队、内容创作者和普通 AI 关注者。",
+      topicAngle,
+      riskNote: "人工选题只能改变选题入口，不能绕过 fact pack、文章审核和排版检查。",
+      recommendedUse: "main_topic_candidate"
+    }
+  };
+}
+
+function manualProfileFor(
+  item: ShortlistedNewsItem,
+  manualTopic: ManualTopicLoadResult
+): EditorialProfile {
+  const thesis = textFallback(
+    manualTopic.thesis,
+    "人工选题的价值不在复述新闻，而在解释它暴露出的工作流、成本结构和行业入口变化。"
+  );
+
+  return {
+    selectedReason:
+      "本次运行检测到非空 manual-topic.md，因此按人工选题覆盖今日主选题；覆盖只发生在选题入口，后续 fact pack、文章写作、文章审核、封面、排版和草稿 dry-run 仍按完整链路执行。",
+    whyMostWorthWriting:
+      "人工选题代表编辑已经提前判断它更适合今天账号语境，但系统仍需要用来源 URL、fact pack 和审核报告来约束事实边界。",
+    coreConflict: "人工判断的内容方向和事实核验流程之间需要同时成立。",
+    publicInterest:
+      "读者关心的不是一条资讯本身，而是它会怎样改变普通人、开发者或企业团队的工作方式。",
+    technicalSignificance:
+      "该选题需要被放进 AI 工具、工作流、权限、成本或基础设施变化中解释。",
+    businessImpact:
+      "它可能影响企业采购、开发者选型、内容生产或创业机会判断。",
+    predictedImpact:
+      "更稳妥的趋势判断应来自事实包和文章审核，而不是人工选题本身的直觉。",
+    writingAngle: textFallback(manualTopic.angle, item.editorial.topicAngle),
+    suggestedTitles: [
+      "AI 工具真正改变的，不是功能，而是工作流",
+      "这条 AI 新闻值得写，因为冲突不在表面",
+      "普通人会先感到变化，行业才会重新洗牌",
+      "技术圈争论背后，是一次工作流入口变化",
+      "不要只看新功能，真正变化发生在流程里"
+    ],
+    articleThesis: thesis,
+    riskNotes: [
+      "人工选题必须保留来源 URL，后续 fact pack 不能被跳过。",
+      "不能把 manual-topic.md 中的判断直接写成事实。",
+      "标题和正文仍要避开 fact pack 禁止表达。"
+    ]
+  };
+}
+
 function buildSelection(
   ranked: RankedTopic,
   shortlisted: ShortlistedNewsItem[]
@@ -762,6 +899,52 @@ export function selectTopic(
   };
 }
 
+export function selectManualTopic(
+  manualTopic: ManualTopicLoadResult,
+  shortlisted: ShortlistedNewsItem[] = [],
+  options: Pick<SelectTopicOptions, "now"> = {}
+): SelectedTopic {
+  const now = options.now ?? new Date();
+  const item = createManualShortlistedItem(manualTopic, now);
+  requireSourceUrl(item);
+
+  const selectionProfile = manualProfileFor(item, manualTopic);
+  const selected = {
+    ...item,
+    selection: {
+      ...selectionProfile,
+      sourceReliability: "medium" as const,
+      decisionScore: 90
+    }
+  };
+  const runnerUps = shortlisted
+    .slice(0, runnerUpCount)
+    .map((runner) => ({
+      title: runner.title,
+      url: runner.url,
+      reason: `${runner.editorial.topicAngle} decisionScore ${calculateDecisionScore(
+        scoreTopicDecisionDimensions(runner)
+      ).toFixed(1)}`,
+      whyNotSelected:
+        "本次存在人工选题覆盖，该入围资讯保留为备选，未绕过后续事实核验。"
+    }));
+  const runnerTitles = new Set(runnerUps.map((runner) => runner.title));
+  const rejected = shortlisted
+    .filter((runner) => !runnerTitles.has(runner.title))
+    .map((runner) => ({
+      title: runner.title,
+      url: runner.url,
+      reason: "本次存在人工选题覆盖，未进入今日主文。"
+    }));
+
+  return {
+    selected,
+    runnersUp: runnerUps,
+    rejected,
+    generatedAt: now.toISOString()
+  };
+}
+
 function createOutputFiles(outputDir: string): TopicSelectionOutputFiles {
   return {
     selectedTopic: join(outputDir, "selected-topic.json"),
@@ -788,7 +971,42 @@ function markdownSafe(value: string): string {
   return value.replace(/\|/g, "\\|");
 }
 
-function createTopicSelectionReport(topic: SelectedTopic): string {
+function createFeedbackSummary(feedback: EditorialFeedbackLoadResult | undefined): string[] {
+  if (!feedback?.latest) {
+    return ["- feedbackRead: no"];
+  }
+
+  const latest = feedback.latest;
+  return [
+    "- feedbackRead: yes",
+    `- feedbackFile: ${latest.filePath}`,
+    `- feedbackDate: ${latest.date}`,
+    `- titleQuality: ${latest.titleQuality}`,
+    `- topicQuality: ${latest.topicQuality}`,
+    `- notes: ${latest.notes || "none"}`
+  ];
+}
+
+function createStyleSummary(style: EditorialStyleLoadResult | undefined): string[] {
+  if (!style?.loaded) {
+    return ["- editorialStyleRead: no"];
+  }
+
+  return [
+    "- editorialStyleRead: yes",
+    `- editorialStyleFile: ${style.path}`,
+    "- styleApplied: 第三视角 / 旁观者分析 / 通俗但犀利 / 非通稿 / 非营销号腔"
+  ];
+}
+
+function createTopicSelectionReport(
+  topic: SelectedTopic,
+  context: {
+    editorialStyle?: EditorialStyleLoadResult;
+    feedback?: EditorialFeedbackLoadResult;
+    manualTopic?: ManualTopicLoadResult;
+  } = {}
+): string {
   const { selected, runnersUp, rejected } = topic;
   const selection = selected.selection;
   const titleLines = selection.suggestedTitles.map((title) => `- ${title}`);
@@ -812,6 +1030,15 @@ function createTopicSelectionReport(topic: SelectedTopic): string {
     "# Topic Selection Report",
     "",
     `Generated at: ${topic.generatedAt}`,
+    "",
+    "## v0.3.0 内容质量输入",
+    "",
+    `- manualTopicUsed: ${context.manualTopic?.used ? "yes" : "no"}`,
+    context.manualTopic?.used
+      ? `- manualTopicFile: ${context.manualTopic.filePath}`
+      : "- manualTopicFile: none",
+    ...createStyleSummary(context.editorialStyle),
+    ...createFeedbackSummary(context.feedback),
     "",
     "## 今日主选题标题",
     "",
@@ -882,18 +1109,68 @@ export async function selectTopicWithReport(
   const writeOutputs = options.writeOutputs ?? true;
   const files = createOutputFiles(outputDir);
   const shortlisted = options.shortlisted ?? (await readShortlisted(inputFile));
+  const editorialStyle =
+    options.editorialStyle ?? (await loadEditorialStyle({ logger }));
   const topic = selectTopic(shortlisted, { now: options.now });
 
   if (writeOutputs) {
     await mkdir(outputDir, { recursive: true });
     await writeJson(files.selectedTopic, topic);
-    await writeFile(files.topicSelectionReport, createTopicSelectionReport(topic), "utf8");
+    await writeFile(
+      files.topicSelectionReport,
+      createTopicSelectionReport(topic, {
+        editorialStyle,
+        feedback: options.feedback
+      }),
+      "utf8"
+    );
   }
 
   logger.info(
     `Selected topic: ${topic.selected.title} (decisionScore ${topic.selected.selection.decisionScore.toFixed(
       1
     )}, sourceReliability ${topic.selected.selection.sourceReliability}).`
+  );
+
+  return {
+    outputDir,
+    files,
+    shortlisted,
+    topic
+  };
+}
+
+export async function selectManualTopicWithReport(
+  options: SelectManualTopicOptions
+): Promise<TopicSelectionResult> {
+  const logger = options.logger ?? createLogger("topic-editor");
+  const outputDir = options.outputDir ?? defaultOutputDir;
+  const inputFile = options.inputFile ?? join(outputDir, "shortlisted-news.json");
+  const writeOutputs = options.writeOutputs ?? true;
+  const files = createOutputFiles(outputDir);
+  const shortlisted = options.shortlisted ?? (await readShortlisted(inputFile));
+  const editorialStyle =
+    options.editorialStyle ?? (await loadEditorialStyle({ logger }));
+  const topic = selectManualTopic(options.manualTopic, shortlisted, {
+    now: options.now
+  });
+
+  if (writeOutputs) {
+    await mkdir(outputDir, { recursive: true });
+    await writeJson(files.selectedTopic, topic);
+    await writeFile(
+      files.topicSelectionReport,
+      createTopicSelectionReport(topic, {
+        editorialStyle,
+        feedback: options.feedback,
+        manualTopic: options.manualTopic
+      }),
+      "utf8"
+    );
+  }
+
+  logger.info(
+    `Selected manual topic: ${topic.selected.title} (sourceReliability ${topic.selected.selection.sourceReliability}).`
   );
 
   return {

@@ -1,4 +1,4 @@
-import { access, cp, mkdir, stat, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -35,6 +35,8 @@ export const CORE_OUTPUT_ARCHIVE_PATHS = [
   "article.md",
   "article-meta.json",
   "article-writing-report.md",
+  "title-candidates.json",
+  "title-selection-report.md",
   "article-review.json",
   "article-review-report.md",
   "cover.json",
@@ -98,6 +100,18 @@ export async function archiveRunOutputs(
       archivedPath,
       relativePath,
       kind: sourceStat.isDirectory() ? "directory" : "file"
+    });
+  }
+
+  const dailyReportPath = join(outputDir, "daily-report.md");
+  if (await pathExists(dailyReportPath)) {
+    const runReportPath = join(archiveDir, "run-report.md");
+    await writeFile(runReportPath, await readFile(dailyReportPath, "utf8"), "utf8");
+    entries.push({
+      sourcePath: dailyReportPath,
+      archivedPath: runReportPath,
+      relativePath: "run-report.md",
+      kind: "file"
     });
   }
 

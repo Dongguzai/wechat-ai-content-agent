@@ -1,6 +1,6 @@
 # 公众号 AI 内容生产与草稿发布 Agent
 
-v0.2.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路，并补齐每日稳定运行所需的归档、最终预检和真实草稿运行锁。
+v0.3.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、标题优化、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路，并补齐每日稳定运行所需的归档、最终预检和真实草稿运行锁。
 
 默认运行不会调用真实微信写入接口，不会打开微信公众号后台，不会发布，不会群发。真实创建公众号草稿必须显式打开双开关，并通过官方草稿箱 API 创建草稿，最终发布仍然只能人工完成。
 
@@ -9,12 +9,16 @@ v0.2.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 1. 从 RSS 源采集 AI 资讯，并用 Tavily / Exa global search 线索补充候选。
 2. normalize、hard rejection、去重并生成候选池。
 3. 进行编辑筛选、选题、事实包构建和安全表达约束。
-4. 生成公众号文章、文章审核报告、封面 prompt / mock 封面和封面审核报告。
-5. 渲染公众号兼容 HTML；当前 v0.2.0 默认不在正文插入封面图。
-6. 生成 mock 草稿产物。
-7. 生成微信公众号官方 API 草稿箱请求预检和 dry-run 报告。
-8. 每次 `pnpm dry-run` 或 `pnpm run:daily` 成功后，把核心产物归档到 `runs/yyyy-mm-dd-HHmmss/`。
-9. 在双开关、凭据、封面素材、最终预检和安全检查全部满足时，允许创建公众号草稿箱草稿。
+4. 读取 `config/editorial-style.md`，按账号风格生成文章。
+5. 生成 5 个标题候选、评分并选择最终标题，同步到 `article-meta.json` 和 `wechat.html`。
+6. 可读取 `feedback/*.json` 的最近人工反馈，作为选题和标题评分参考。
+7. 可用 `inputs/manual-topic.md` 或 `--manual-topic` 手动覆盖今日选题，但不能绕过 fact pack 和文章审核。
+8. 生成公众号文章、文章审核报告、封面 prompt / mock 封面和封面审核报告。
+9. 渲染公众号兼容 HTML；当前 v0.3.0 默认不在正文插入封面图。
+10. 生成 mock 草稿产物。
+11. 生成微信公众号官方 API 草稿箱请求预检和 dry-run 报告。
+12. 每次 `pnpm dry-run` 或 `pnpm run:daily` 成功后，把核心产物归档到 `runs/yyyy-mm-dd-HHmmss/`，并写入 `run-report.md`。
+13. 在双开关、凭据、封面素材、最终预检和安全检查全部满足时，允许创建公众号草稿箱草稿。
 
 ## 当前边界
 
@@ -60,6 +64,56 @@ pnpm run:daily
 ```bash
 pnpm dry-run
 ```
+
+如需人工指定今日选题，创建本地文件 `inputs/manual-topic.md`，至少包含标题和来源链接：
+
+```markdown
+# Claude Code 和 Goose 的成本冲突，值得重新写一遍
+
+Source URL: https://example.com/source
+Source Name: Example
+Angle: 从工作流、成本和开源基础设施的角度分析。
+Thesis: 编码代理竞争正在从模型能力转向工作流控制权。
+```
+
+然后运行：
+
+```bash
+pnpm run:daily -- --manual-topic inputs/manual-topic.md
+```
+
+如果 `inputs/manual-topic.md` 存在且非空，`pnpm run:daily` 会默认优先使用它。人工选题只覆盖选题入口，仍然必须经过 fact pack、article writer、article reviewer、cover、layout、mock draft 和官方 API dry-run 预检。
+
+## 内容质量配置
+
+账号风格放在 `config/editorial-style.md`。当前默认风格是第三视角、旁观者分析、通俗但犀利，不写新闻通稿、不堆英文术语、不写营销号腔；文章结构固定为“冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断”。`topic-editor` 和 `article-writer` 会读取该文件，并在报告里记录是否读取成功。
+
+标题生成会输出：
+
+- `outputs/title-candidates.json`
+- `outputs/title-selection-report.md`
+
+每篇文章生成 5 个标题：判断型、反差型、趋势型、普通人影响型、技术圈讨论型。每个标题都有 `spreadScore`、`accuracyScore`、`nonClickbaitScore`、`wechatFitScore`、`thesisMatchScore`、`finalScore`。最终标题会写入 `outputs/article-meta.json`，并由 `outputs/wechat.html` 使用。
+
+人工反馈模板在 `feedback/template.json`。复制为日期文件后填写，例如 `feedback/2026-05-30.json`：
+
+```json
+{
+  "date": "2026-05-30",
+  "title": "文章标题",
+  "published": true,
+  "views": 1200,
+  "likes": 18,
+  "shares": 6,
+  "myRating": 4,
+  "topicQuality": 4,
+  "titleQuality": 3,
+  "articleProblems": ["标题可以更准确"],
+  "notes": "技术圈讨论不错，但普通人影响可以更早出现。"
+}
+```
+
+没有 feedback 文件时流程不会失败；存在多个 feedback JSON 时会读取日期最近的一份。
 
 2. 如需单独重跑官方 API 草稿 dry-run：
 
@@ -140,6 +194,8 @@ pnpm wechat:draft:real -- --force
 - `outputs/article.md`
 - `outputs/article-meta.json`
 - `outputs/article-writing-report.md`
+- `outputs/title-candidates.json`
+- `outputs/title-selection-report.md`
 - `outputs/article-review.json`
 - `outputs/article-review-report.md`
 - `outputs/cover.json`
@@ -156,14 +212,14 @@ pnpm wechat:draft:real -- --force
 - `outputs/wechat-api-draft-report.md`
 - `outputs/daily-report.md`
 
-`pnpm dry-run` 和 `pnpm run:daily` 成功后，还会把核心产物复制到 `runs/yyyy-mm-dd-HHmmss/`，并写入 `run-manifest.json`。`runs/` 业务归档默认被 `.gitignore` 忽略，只保留 `runs/.gitkeep`。
+`pnpm dry-run` 和 `pnpm run:daily` 成功后，还会把核心产物复制到 `runs/yyyy-mm-dd-HHmmss/`，并写入 `run-manifest.json` 和 `run-report.md`。`runs/` 业务归档默认被 `.gitignore` 忽略，只保留 `runs/.gitkeep`。
 
 `outputs/.gitkeep` 只是目录占位文件，不是业务产物。
 
 ## 公众号图片策略
 
 - 公众号封面通过官方草稿接口的 `thumb_media_id` 设置，对应本项目中的 `WECHAT_COVER_MEDIA_ID`。
-- 当前 v0.2.0 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
+- 当前 v0.3.0 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
 - 正文内图片不能使用本地路径、`outputs/covers` 路径或 `/Users/` 这类机器路径。需要先通过微信 `uploadimg` 接口上传，再把正文 HTML 中的图片地址替换为微信返回的 URL。
 
 ## 真实草稿写入
@@ -231,6 +287,9 @@ pnpm env:check
 - `src/types/`：核心类型定义。
 - `src/config/`：采集和评分配置。
 - `src/skills/`：各子任务技能说明。
+- `config/editorial-style.md`：账号写作风格配置。
+- `feedback/template.json`：人工反馈模板；真实反馈 JSON 默认本地忽略。
+- `inputs/manual-topic.md`：可选人工选题文件，默认本地忽略。
 - `scripts/`：命令行运行脚本。
 - `tests/`：Node test 测试。
 - `docs/`：运行、排障和微信草稿风控文档。

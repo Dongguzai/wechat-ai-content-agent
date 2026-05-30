@@ -9,6 +9,14 @@ export { shortlistNews, shortlistNewsWithReport } from "./pipeline/shortlistNews
 export { selectTopic } from "./pipeline/selectTopic.js";
 export { writeArticle, writeArticleWithReport } from "./pipeline/writeArticle.js";
 export {
+  FORBIDDEN_TITLE_TERMS,
+  generateTitleCandidates,
+  generateTitlesWithReport
+} from "./pipeline/generateTitles.js";
+export { loadEditorialFeedback } from "./pipeline/loadEditorialFeedback.js";
+export { loadEditorialStyle } from "./pipeline/loadEditorialStyle.js";
+export { loadManualTopic } from "./pipeline/loadManualTopic.js";
+export {
   reviewArticle,
   reviewArticleWithReport
 } from "./pipeline/reviewArticle.js";
