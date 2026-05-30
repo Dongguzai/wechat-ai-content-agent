@@ -1,4 +1,7 @@
+import { loadDotEnv } from "../src/config/env.js";
 import { saveWechatDraftApiWithReport } from "../src/pipeline/saveWechatDraftApi.js";
+
+await loadDotEnv();
 
 try {
   const realModeRequested = process.argv.includes("--real");

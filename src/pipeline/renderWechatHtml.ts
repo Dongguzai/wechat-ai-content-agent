@@ -48,6 +48,7 @@ interface SanitizedText {
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 const layoutStyle = "stripe-inspired" as const;
+export const INSERT_COVER_IN_CONTENT = false;
 
 const restrictedReplacements: Array<{
   code: string;
@@ -420,7 +421,6 @@ function createWarnings(input: {
   articleReview: ArticleReviewResult;
   coverReview: CoverReviewResult;
   checks: WechatHtmlChecks;
-  includeCoverImage: boolean;
 }): string[] {
   const warnings: string[] = [];
 
@@ -438,10 +438,6 @@ function createWarnings(input: {
 
   if (!input.coverReview.passed) {
     warnings.push("Cover review has not passed; next stage is blocked.");
-  }
-
-  if (!input.includeCoverImage) {
-    warnings.push("Cover image insertion is disabled; coverImagePath is recorded only.");
   }
 
   for (const [key, value] of Object.entries(input.checks)) {
@@ -499,7 +495,6 @@ function createLayoutReport(layout: WechatLayoutResult): string {
     "- p",
     "- strong",
     "- blockquote",
-    "- img",
     "- hr",
     "",
     "## 7. 检查项结果",
@@ -601,7 +596,7 @@ export async function renderWechatHtmlWithReport(
   const coverReviewFile =
     options.coverReviewFile ?? join(outputDir, "cover-review.json");
   const writeOutputs = options.writeOutputs ?? true;
-  const includeCoverImage = options.includeCoverImage ?? true;
+  const includeCoverImage = options.includeCoverImage ?? INSERT_COVER_IN_CONTENT;
   const generatedAt = (options.now ?? new Date()).toISOString();
 
   const articleMarkdown = options.articleMarkdown ?? (await readFile(articleFile, "utf8"));
@@ -638,8 +633,7 @@ export async function renderWechatHtmlWithReport(
     sourceWarningCodes,
     articleReview,
     coverReview,
-    checks,
-    includeCoverImage
+    checks
   });
   const compatibleWithWechat = allChecksPassed(checks);
   const layout: WechatLayoutResult = {

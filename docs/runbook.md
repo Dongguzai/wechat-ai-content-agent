@@ -16,9 +16,18 @@
 ```bash
 pnpm install
 cp .env.example .env
+pnpm env:check
 ```
 
-`.env.example` 的默认值就是安全 dry-run 默认值。真实 API key 和公众号凭据只写入本地 `.env` 或命令行环境变量。
+CLI 入口会自动加载项目根目录的 `.env`，但不会覆盖当前 shell 已设置的同名变量。`.env.example` 的默认值就是安全 dry-run 默认值。真实 API key 和公众号凭据只写入本地 `.env` 或命令行环境变量。
+
+每次调整 `.env` 后建议执行：
+
+```bash
+pnpm env:check
+```
+
+它会检查 `.env` 格式、变量是否都声明在 `.env.example`、`.env.example` 是否覆盖当前代码读取点，以及真实模式所需的 API key、公众号凭据和封面来源是否齐备。
 
 真实草稿写入前，还要在公众号后台完成 IP 白名单配置：把当前机器或部署服务器的出口 IP 加入公众号开发配置。未配置时，获取 access token 或创建草稿通常会被微信拒绝。
 
@@ -214,6 +223,7 @@ v0.1.0 不默认打开微信公众号后台，不保存 cookie/token，不保存
 - README 已反映 v0.1.0 当前能力。
 - `docs/runbook.md` 和 `docs/troubleshooting.md` 存在。
 - `.env.example` 覆盖当前代码读取的环境变量。
+- `pnpm env:check` 通过。
 - `pnpm test` 通过。
 - `pnpm typecheck` 通过。
 - 未修改核心 pipeline、adapter、hook、type 逻辑。

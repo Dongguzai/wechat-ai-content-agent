@@ -1,4 +1,7 @@
+import { loadDotEnv } from "../src/config/env.js";
 import { runDailyPipeline } from "../src/pipeline/runDailyPipeline.js";
+
+await loadDotEnv();
 
 await runDailyPipeline({
   env: {

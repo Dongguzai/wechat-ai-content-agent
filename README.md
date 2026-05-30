@@ -1,6 +1,6 @@
 # 公众号 AI 内容生产与草稿发布 Agent
 
-v0.1.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路。
+v0.1.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路。
 
 默认运行不会调用真实微信写入接口，不会打开微信公众号后台，不会发布，不会群发。真实创建公众号草稿必须显式打开双开关，并通过官方草稿箱 API 创建草稿，最终发布仍然只能人工完成。
 
@@ -10,7 +10,7 @@ v0.1.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 2. normalize、hard rejection、去重并生成候选池。
 3. 进行编辑筛选、选题、事实包构建和安全表达约束。
 4. 生成公众号文章、文章审核报告、封面 prompt / mock 封面和封面审核报告。
-5. 渲染公众号兼容 HTML。
+5. 渲染公众号兼容 HTML；当前 v0.1.1 默认不在正文插入封面图。
 6. 生成 mock 草稿产物。
 7. 生成微信公众号官方 API 草稿箱请求预检和 dry-run 报告。
 8. 在双开关、凭据、封面素材和安全检查全部满足时，允许创建公众号草稿箱草稿。
@@ -33,6 +33,7 @@ v0.1.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 ```bash
 pnpm install
 cp .env.example .env
+pnpm env:check
 pnpm dry-run
 ```
 
@@ -82,6 +83,8 @@ WECHAT_COVER_MEDIA_ID=已上传的thumb_media_id \
 pnpm wechat:draft:real
 ```
 
+公众号封面只通过草稿请求里的 `thumb_media_id` 设置，也就是上一步保存的 `WECHAT_COVER_MEDIA_ID`。它不会再被重复插入正文 HTML。
+
 5. 人工登录公众号后台检查草稿，再由人工决定是否发布。
 
 ## 常用脚本
@@ -89,6 +92,7 @@ pnpm wechat:draft:real
 | command | purpose |
 | --- | --- |
 | `pnpm dev` | 运行入口文件 |
+| `pnpm env:check` | 检查 `.env` 格式、变量漂移和真实模式必填项 |
 | `pnpm dry-run` | 执行完整本地 dry-run 流水线 |
 | `pnpm wechat:upload-cover -- --dry-run` | 演练封面素材上传脚本，不调用真实微信接口 |
 | `pnpm wechat:upload-cover` | 上传真实 JPG/PNG 封面素材并输出 `WECHAT_COVER_MEDIA_ID` |
@@ -133,13 +137,19 @@ pnpm wechat:draft:real
 
 `outputs/.gitkeep` 只是目录占位文件，不是业务产物。
 
+## 公众号图片策略
+
+- 公众号封面通过官方草稿接口的 `thumb_media_id` 设置，对应本项目中的 `WECHAT_COVER_MEDIA_ID`。
+- 当前 v0.1.1 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
+- 正文内图片不能使用本地路径、`outputs/covers` 路径或 `/Users/` 这类机器路径。需要先通过微信 `uploadimg` 接口上传，再把正文 HTML 中的图片地址替换为微信返回的 URL。
+
 ## 真实草稿写入
 
 真实创建公众号草稿前需要：
 
 - 公众号 `AppID` / `AppSecret`
 - 当前机器或服务器 IP 已加入公众号后台 IP 白名单
-- 已上传的 `WECHAT_COVER_MEDIA_ID`，或本地真实 JPG/PNG 封面图片路径
+- 已上传的 `WECHAT_COVER_MEDIA_ID`，或本地真实 JPG/PNG 封面图片路径；最终草稿封面通过 `thumb_media_id` 设置
 - `outputs/article-review.json` 通过
 - `outputs/cover-review.json` 通过
 - `outputs/wechat-layout.json` 显示兼容公众号 HTML
@@ -169,6 +179,14 @@ pnpm wechat:upload-cover
 mock SVG 封面不会进入真实草稿箱写入。
 
 ## 环境变量
+
+CLI 入口会自动加载项目根目录的 `.env`。命令行或 shell 已经设置的同名变量优先级更高，`.env` 不会覆盖它们。可以随时执行：
+
+```bash
+pnpm env:check
+```
+
+检查项包括 `.env` 语法、`.env.example` 是否覆盖当前代码读取点、`.env` 是否有未声明变量、布尔/数字/枚举值是否合法，以及真实搜索、真实封面和真实公众号草稿模式的必填项是否齐备。
 
 `.env.example` 按当前代码读取点分组维护。默认值用于安全 dry-run：
 

@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { loadDotEnv } from "../src/config/env.js";
 import {
   getAccessToken,
   uploadCoverMaterial
@@ -186,5 +187,6 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
+  await loadDotEnv();
   process.exitCode = await uploadWechatCoverCli();
 }

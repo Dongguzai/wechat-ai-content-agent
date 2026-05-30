@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   canEnterWechatDraftStage,
+  INSERT_COVER_IN_CONTENT,
   renderWechatHtmlWithReport,
   reviewWechatHtmlChecks
 } from "../src/pipeline/renderWechatHtml.js";
@@ -155,12 +156,14 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 
 test("renderWechatHtmlWithReport writes WeChat-compatible Stripe-inspired layout outputs", async () => {
   const outputDir = await mkdtemp(join(tmpdir(), "wechat-html-layout-"));
-  const coverPath = join(outputDir, "cover.svg");
+  const coverDir = join(outputDir, "covers");
+  const coverPath = join(coverDir, "cover.svg");
 
   try {
     await writeFile(join(outputDir, "article.md"), articleMarkdownFixture(), "utf8");
     await writeJson(join(outputDir, "article-meta.json"), articleMetaFixture());
     await writeJson(join(outputDir, "article-review.json"), articleReviewFixture());
+    await mkdir(coverDir, { recursive: true });
     await writeFile(coverPath, "<svg />\n", "utf8");
     await writeJson(join(outputDir, "cover.json"), coverFixture(coverPath));
     await writeJson(join(outputDir, "cover-review.json"), coverReviewFixture(coverPath));
@@ -188,7 +191,11 @@ test("renderWechatHtmlWithReport writes WeChat-compatible Stripe-inspired layout
     assert.match(html, /\sstyle="/i);
     assert.match(html, /AI 编码代理真正卷到的，不是价格，而是工作流/);
     assert.match(html, /<h2\b/i);
-    assert.ok(/<img\b/i.test(html) || layout.coverImagePath.length > 0);
+    assert.equal(INSERT_COVER_IN_CONTENT, false);
+    assert.doesNotMatch(html, /<img\b/i);
+    assert.equal(html.includes(coverPath), false);
+    assert.equal(html.includes("outputs/covers"), false);
+    assert.equal(html.includes("/Users/"), false);
 
     for (const term of forbiddenPublishTerms) {
       assert.equal(html.includes(term), false, `forbidden publish term: ${term}`);
@@ -208,6 +215,7 @@ test("renderWechatHtmlWithReport writes WeChat-compatible Stripe-inspired layout
     assert.equal(layout.htmlChecks.hasNoIframe, true);
     assert.equal(layout.htmlChecks.hasInlineStyles, true);
     assert.equal(layout.htmlChecks.hasTitle, true);
+    assert.equal(layout.htmlChecks.hasCoverImage, true);
     assert.equal(layout.htmlChecks.hasHeadings, true);
     assert.equal(layout.htmlChecks.mobileReadable, true);
     assert.equal(layout.allowedNextStage, true);

@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { loadDotEnv } from "./config/env.js";
 import { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 
 export { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
@@ -51,5 +52,6 @@ export {
 } from "./adapters/wechatBrowser.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await loadDotEnv();
   await runDailyPipeline();
 }
