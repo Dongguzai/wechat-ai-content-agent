@@ -6,3 +6,5 @@ dist/
 .local/
 outputs/*
 !outputs/.gitkeep
+runs/*
+!runs/.gitkeep

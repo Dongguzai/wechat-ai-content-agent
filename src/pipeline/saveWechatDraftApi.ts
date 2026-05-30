@@ -25,6 +25,10 @@ import type {
   WechatApiThumbMediaIdSource
 } from "../types/wechatApiDraft.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import {
+  assertWechatDraftRunNotLocked,
+  writeWechatDraftRunLock
+} from "./wechatDraftRunLock.js";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -53,6 +57,8 @@ export interface SaveWechatDraftApiOptions {
   logger?: Logger;
   writeOutputs?: boolean;
   now?: Date;
+  force?: boolean;
+  lockDir?: string;
 }
 
 interface WechatApiRuntimeConfig {
@@ -657,6 +663,12 @@ export async function saveWechatDraftApiWithReport(
     };
   }
 
+  await assertWechatDraftRunNotLocked({
+    lockDir: options.lockDir,
+    now: options.now,
+    force: options.force
+  });
+
   const accessToken = await getAccessToken({
     config: {
       apiBase: config.apiBase,
@@ -706,6 +718,14 @@ export async function saveWechatDraftApiWithReport(
     await writeJson(outputFiles.wechatApiDraftResult, result);
     await writeFile(outputFiles.wechatApiDraftReport, report, "utf8");
   }
+
+  await writeWechatDraftRunLock({
+    lockDir: options.lockDir,
+    now: options.now,
+    mediaId,
+    title: prepared.title,
+    force: options.force
+  });
 
   logger.info("Created WeChat official API draft. Publishing remains manual.");
 

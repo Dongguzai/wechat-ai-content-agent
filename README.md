@@ -1,6 +1,6 @@
 # 公众号 AI 内容生产与草稿发布 Agent
 
-v0.1.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路。
+v0.2.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路，并补齐每日稳定运行所需的归档、最终预检和真实草稿运行锁。
 
 默认运行不会调用真实微信写入接口，不会打开微信公众号后台，不会发布，不会群发。真实创建公众号草稿必须显式打开双开关，并通过官方草稿箱 API 创建草稿，最终发布仍然只能人工完成。
 
@@ -10,15 +10,16 @@ v0.1.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 2. normalize、hard rejection、去重并生成候选池。
 3. 进行编辑筛选、选题、事实包构建和安全表达约束。
 4. 生成公众号文章、文章审核报告、封面 prompt / mock 封面和封面审核报告。
-5. 渲染公众号兼容 HTML；当前 v0.1.1 默认不在正文插入封面图。
+5. 渲染公众号兼容 HTML；当前 v0.2.0 默认不在正文插入封面图。
 6. 生成 mock 草稿产物。
 7. 生成微信公众号官方 API 草稿箱请求预检和 dry-run 报告。
-8. 在双开关、凭据、封面素材和安全检查全部满足时，允许创建公众号草稿箱草稿。
+8. 每次 `pnpm dry-run` 或 `pnpm run:daily` 成功后，把核心产物归档到 `runs/yyyy-mm-dd-HHmmss/`。
+9. 在双开关、凭据、封面素材、最终预检和安全检查全部满足时，允许创建公众号草稿箱草稿。
 
 ## 当前边界
 
 - 默认不调用真实 Tavily / Exa、APIMart 或微信 API。
-- APIMart 真实生图在 v0.1.0 仍是 TODO-gated；默认只生成本地 mock SVG 封面。
+- APIMart 真实生图仍是 TODO-gated；默认只生成本地 mock SVG 封面。
 - 微信真实模式只允许调用官方草稿箱创建接口。
 - 不调用发布接口。
 - 不调用群发接口。
@@ -26,7 +27,7 @@ v0.1.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 - 不默认操作微信公众号后台页面。
 - 不做定时任务。
 - 不接数据库。
-- 所有业务产物写入 `outputs/`。
+- 默认业务产物写入 `outputs/`，成功运行归档写入 `runs/yyyy-mm-dd-HHmmss/`。
 
 ## 快速开始
 
@@ -34,7 +35,7 @@ v0.1.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 pnpm install
 cp .env.example .env
 pnpm env:check
-pnpm dry-run
+pnpm run:daily
 ```
 
 常规验收：
@@ -48,13 +49,19 @@ pnpm typecheck
 
 ## 完整使用流程
 
-1. 生成内容和本地产物：
+1. 每日正式 dry-run，生成内容、本地草稿 dry-run、官方 API 草稿请求预览，并归档本次产物：
+
+```bash
+pnpm run:daily
+```
+
+也可以使用兼容命令：
 
 ```bash
 pnpm dry-run
 ```
 
-2. 预检公众号官方 API 草稿请求，不真实写入：
+2. 如需单独重跑官方 API 草稿 dry-run：
 
 ```bash
 pnpm wechat:draft:dry-run
@@ -71,7 +78,13 @@ pnpm wechat:upload-cover
 
 成功后保存命令输出的 `WECHAT_COVER_MEDIA_ID=...`。
 
-4. 创建公众号草稿箱草稿：
+4. 执行真实草稿写入前最终预检：
+
+```bash
+pnpm preflight:final
+```
+
+5. 创建公众号草稿箱草稿：
 
 ```bash
 WECHAT_API_ENABLE_REAL_DRAFT=true \
@@ -83,9 +96,15 @@ WECHAT_COVER_MEDIA_ID=已上传的thumb_media_id \
 pnpm wechat:draft:real
 ```
 
+如果同一天已经成功创建过真实草稿，`pnpm wechat:draft:real` 会默认阻止重复写入。确认需要覆盖时，显式追加 `--force`：
+
+```bash
+pnpm wechat:draft:real -- --force
+```
+
 公众号封面只通过草稿请求里的 `thumb_media_id` 设置，也就是上一步保存的 `WECHAT_COVER_MEDIA_ID`。它不会再被重复插入正文 HTML。
 
-5. 人工登录公众号后台检查草稿，再由人工决定是否发布。
+6. 人工登录公众号后台检查草稿，再由人工决定是否发布。
 
 ## 常用脚本
 
@@ -94,6 +113,8 @@ pnpm wechat:draft:real
 | `pnpm dev` | 运行入口文件 |
 | `pnpm env:check` | 检查 `.env` 格式、变量漂移和真实模式必填项 |
 | `pnpm dry-run` | 执行完整本地 dry-run 流水线 |
+| `pnpm run:daily` | 执行每日稳定运行流程，默认 dry-run 并归档核心产物 |
+| `pnpm preflight:final` | 检查真实草稿写入前的最终条件，不调用真实微信 API |
 | `pnpm wechat:upload-cover -- --dry-run` | 演练封面素材上传脚本，不调用真实微信接口 |
 | `pnpm wechat:upload-cover` | 上传真实 JPG/PNG 封面素材并输出 `WECHAT_COVER_MEDIA_ID` |
 | `pnpm wechat:draft:dry-run` | 生成官方 API 草稿请求预检，不调用真实微信接口 |
@@ -135,12 +156,14 @@ pnpm wechat:draft:real
 - `outputs/wechat-api-draft-report.md`
 - `outputs/daily-report.md`
 
+`pnpm dry-run` 和 `pnpm run:daily` 成功后，还会把核心产物复制到 `runs/yyyy-mm-dd-HHmmss/`，并写入 `run-manifest.json`。`runs/` 业务归档默认被 `.gitignore` 忽略，只保留 `runs/.gitkeep`。
+
 `outputs/.gitkeep` 只是目录占位文件，不是业务产物。
 
 ## 公众号图片策略
 
 - 公众号封面通过官方草稿接口的 `thumb_media_id` 设置，对应本项目中的 `WECHAT_COVER_MEDIA_ID`。
-- 当前 v0.1.1 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
+- 当前 v0.2.0 默认 `renderWechatHtml.ts` 中 `INSERT_COVER_IN_CONTENT=false`，因此 `outputs/wechat.html` 顶部不会自动插入 `cover.json` 的 `imagePath`。
 - 正文内图片不能使用本地路径、`outputs/covers` 路径或 `/Users/` 这类机器路径。需要先通过微信 `uploadimg` 接口上传，再把正文 HTML 中的图片地址替换为微信返回的 URL。
 
 ## 真实草稿写入
@@ -153,6 +176,7 @@ pnpm wechat:draft:real
 - `outputs/article-review.json` 通过
 - `outputs/cover-review.json` 通过
 - `outputs/wechat-layout.json` 显示兼容公众号 HTML
+- `pnpm preflight:final` 通过
 - 人工确认最终发布只在公众号后台手动完成
 
 真实写入必须显式打开两个开关，并关闭 dry-run：
@@ -166,6 +190,8 @@ WECHAT_APP_SECRET=你的AppSecret \
 WECHAT_COVER_MEDIA_ID=已上传的thumb_media_id \
 pnpm wechat:draft:real
 ```
+
+同一天重复创建真实草稿会被 `.local/wechat-draft-locks/yyyy-mm-dd.json` 阻止；确认需要覆盖时使用 `pnpm wechat:draft:real -- --force`。
 
 如果没有 `WECHAT_COVER_MEDIA_ID`，可以先用真实 JPG/PNG 封面上传素材：
 
@@ -209,6 +235,7 @@ pnpm env:check
 - `tests/`：Node test 测试。
 - `docs/`：运行、排障和微信草稿风控文档。
 - `outputs/`：dry-run 产物目录。
+- `runs/`：成功运行的核心产物归档目录。
 
 ## 安全约束
 

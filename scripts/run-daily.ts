@@ -14,10 +14,10 @@ const result = await runDailyPipeline({
   },
   now
 });
-
 const archive = await archiveRunOutputs({
   outputDir: result.outputDir,
   now
 });
 
-console.log(`[dry-run] archived=${archive.archiveDir}`);
+console.log(`[run:daily] output=${result.outputDir}`);
+console.log(`[run:daily] archived=${archive.archiveDir}`);

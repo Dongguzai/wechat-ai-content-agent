@@ -1,13 +1,15 @@
 {
   "name": "wechat-ai-content-agent",
-  "version": "0.1.1",
-  "description": "Mock dry-run skeleton for a WeChat AI content production agent.",
+  "version": "0.2.0",
+  "description": "Local-first WeChat AI content production agent with dry-run safety gates.",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "tsx src/index.ts",
     "env:check": "node --import tsx scripts/check-env.ts",
     "dry-run": "node --import tsx scripts/dry-run.ts",
+    "run:daily": "node --import tsx scripts/run-daily.ts",
+    "preflight:final": "node --import tsx scripts/preflight-final.ts",
     "wechat:upload-cover": "node --import tsx scripts/upload-wechat-cover.ts",
     "wechat:draft:dry-run": "WECHAT_DRAFT_DRY_RUN=true WECHAT_API_ENABLE_REAL_DRAFT=false WECHAT_DRAFT_ALLOW_REAL_API=false node --import tsx scripts/push-wechat-draft.ts",
     "wechat:draft:real": "WECHAT_DRAFT_DRY_RUN=false node --import tsx scripts/push-wechat-draft.ts --real",

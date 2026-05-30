@@ -406,6 +406,7 @@ test("WECHAT_COVER_MEDIA_ID skips cover upload and creates only a draft", async 
 
     const result = await saveWechatDraftApiWithReport({
       outputDir,
+      lockDir: join(outputDir, "locks"),
       logger: silentLogger,
       env: realEnv(),
       fetchImpl: async (input, init) => {
@@ -445,6 +446,10 @@ test("WECHAT_COVER_MEDIA_ID skips cover upload and creates only a draft", async 
       calls.some((url) => url.includes("/cgi-bin/material/add_material")),
       false
     );
+    assert.equal(
+      calls.some((url) => /freepublish|mass|sendall|publish/i.test(url)),
+      false
+    );
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -458,6 +463,7 @@ test("secrets and access token values are not written to API draft outputs", asy
 
     const result = await saveWechatDraftApiWithReport({
       outputDir,
+      lockDir: join(outputDir, "locks"),
       logger: silentLogger,
       env: realEnv({
         WECHAT_APP_SECRET: "SUPER_SECRET_SHOULD_NOT_APPEAR"
@@ -489,6 +495,124 @@ test("secrets and access token values are not written to API draft outputs", asy
 
     assert.doesNotMatch(outputText, /SUPER_SECRET_SHOULD_NOT_APPEAR/);
     assert.doesNotMatch(outputText, /ACCESS_TOKEN_SHOULD_NOT_APPEAR/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("same-day real draft lock blocks duplicate creation by default", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "wechat-api-lock-"));
+  const lockDir = join(outputDir, "locks");
+  let calls = 0;
+
+  const fetchImpl = async (input: string | URL) => {
+    calls += 1;
+    const url = String(input);
+
+    if (url.includes("/cgi-bin/token")) {
+      return new Response(
+        JSON.stringify({
+          access_token: "ACCESS_TOKEN_VALUE",
+          expires_in: 7200
+        })
+      );
+    }
+
+    if (url.includes("/cgi-bin/draft/add")) {
+      return new Response(
+        JSON.stringify({
+          media_id: `DRAFT_MEDIA_ID_${calls}`
+        })
+      );
+    }
+
+    throw new Error(`unexpected URL ${url}`);
+  };
+
+  try {
+    await writeApiFixture(outputDir);
+
+    await saveWechatDraftApiWithReport({
+      outputDir,
+      lockDir,
+      logger: silentLogger,
+      env: realEnv(),
+      fetchImpl,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    const callsAfterFirstDraft = calls;
+
+    await assert.rejects(
+      () =>
+        saveWechatDraftApiWithReport({
+          outputDir,
+          lockDir,
+          logger: silentLogger,
+          env: realEnv(),
+          fetchImpl,
+          now: new Date("2026-05-29T12:00:00.000Z")
+        }),
+      /already created on/
+    );
+    assert.equal(calls, callsAfterFirstDraft);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("--force overrides the same-day real draft lock", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "wechat-api-force-lock-"));
+  const lockDir = join(outputDir, "locks");
+  let draftAdds = 0;
+
+  const fetchImpl = async (input: string | URL) => {
+    const url = String(input);
+
+    if (url.includes("/cgi-bin/token")) {
+      return new Response(
+        JSON.stringify({
+          access_token: "ACCESS_TOKEN_VALUE",
+          expires_in: 7200
+        })
+      );
+    }
+
+    if (url.includes("/cgi-bin/draft/add")) {
+      draftAdds += 1;
+      return new Response(
+        JSON.stringify({
+          media_id: `DRAFT_MEDIA_ID_${draftAdds}`
+        })
+      );
+    }
+
+    throw new Error(`unexpected URL ${url}`);
+  };
+
+  try {
+    await writeApiFixture(outputDir);
+
+    await saveWechatDraftApiWithReport({
+      outputDir,
+      lockDir,
+      logger: silentLogger,
+      env: realEnv(),
+      fetchImpl,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+    const forced = await saveWechatDraftApiWithReport({
+      outputDir,
+      lockDir,
+      logger: silentLogger,
+      env: realEnv(),
+      fetchImpl,
+      now: new Date("2026-05-29T12:00:00.000Z"),
+      force: true
+    });
+
+    assert.equal(forced.result.mode, "real_api");
+    assert.equal(draftAdds, 2);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
