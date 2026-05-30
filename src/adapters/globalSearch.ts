@@ -16,6 +16,7 @@ export interface GlobalSearchOptions {
   fetchImpl?: FetchLike;
   logger?: Logger;
   now?: Date;
+  allowMockFallback?: boolean;
 }
 
 export interface GlobalSearchResult {
@@ -29,6 +30,7 @@ export async function searchGlobalNews(
 ): Promise<GlobalSearchResult> {
   const { config } = options;
   const now = options.now ?? new Date();
+  const allowMockFallback = options.allowMockFallback ?? true;
   const warnings: CollectionWarning[] = [];
   let apiRealCall = false;
 
@@ -50,8 +52,21 @@ export async function searchGlobalNews(
         logger: options.logger,
         maxResultsPerQuery: config.searchMaxResultsPerQuery,
         lookbackHours: config.searchLookbackHours,
+        timeoutMs: config.searchFetchTimeoutMs,
+        retryCount: config.searchFetchRetry,
         now
       })
+    : !allowMockFallback
+      ? Promise.resolve({
+          items: [],
+          warnings: [
+            {
+              source: "tavily" as const,
+              message:
+                "Real Tavily search is unavailable and mock fallback is disabled."
+            }
+          ]
+        })
     : Promise.resolve({
         items: createMockGlobalSearchNews(
           "tavily",
@@ -75,8 +90,21 @@ export async function searchGlobalNews(
         logger: options.logger,
         maxResultsPerQuery: config.searchMaxResultsPerQuery,
         lookbackHours: config.searchLookbackHours,
+        timeoutMs: config.searchFetchTimeoutMs,
+        retryCount: config.searchFetchRetry,
         now
       })
+    : !allowMockFallback
+      ? Promise.resolve({
+          items: [],
+          warnings: [
+            {
+              source: "exa" as const,
+              message:
+                "Real Exa search is unavailable and mock fallback is disabled."
+            }
+          ]
+        })
     : Promise.resolve({
         items: createMockGlobalSearchNews(
           "exa",

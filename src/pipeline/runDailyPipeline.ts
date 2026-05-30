@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTopicFactPack } from "./buildTopicFactPack.js";
+import { checkSourceHealthWithReport } from "./checkSourceHealth.js";
 import { collectNewsWithReport } from "./collectNews.js";
 import {
   selectManualTopicWithReport,
@@ -83,6 +84,7 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
   const { artifacts, collectionStats, files, outputDir, shortlistStats } = result;
   const selected = artifacts.selectedTopic.selected;
   const finalTitle = artifacts.titleSelection.selectedTitle;
+  const sourceHealth = artifacts.sourceHealth;
 
   return [
     "# Daily AI Content Pipeline Report",
@@ -100,6 +102,11 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- Editorial style file: ${artifacts.editorialStyle.path}`,
     `- Feedback read: ${artifacts.editorialFeedback.feedbackRead ? "yes" : "no"}`,
     `- Feedback file: ${artifacts.editorialFeedback.latest?.filePath ?? "none"}`,
+    `- Source health passed: ${sourceHealth.passed ? "yes" : "no"}`,
+    `- Source health real items: ${sourceHealth.summary.totalRealNewsItems}`,
+    `- Source health RSS items: ${sourceHealth.summary.realRssItems}`,
+    `- Source health search items: ${sourceHealth.summary.realSearchItems}`,
+    `- Source health fallback used: ${sourceHealth.sources.some((source) => source.usedFallback) ? "yes" : "no"}`,
     `- Selected topic: ${selected.title}`,
     `- Selected source reliability: ${selected.selection.sourceReliability}`,
     `- Selected decisionScore: ${selected.selection.decisionScore.toFixed(1)}`,
@@ -141,6 +148,8 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     "## Output Files",
     "",
     `- raw-news.json: ${files.rawNews}`,
+    `- source-health.json: ${files.sourceHealth}`,
+    `- source-health-report.md: ${files.sourceHealthReport}`,
     `- normalized-news.json: ${files.normalizedNews}`,
     `- rejected-news.json: ${files.rejectedNews}`,
     `- candidate-news.json: ${files.candidateNews}`,
@@ -210,7 +219,20 @@ export async function runDailyPipeline(
     logger
   });
 
-  logger.info("1/11 collectNews: building the 20-item candidate pool.");
+  logger.info("1/12 checkSourceHealth: probing real RSS/search source readiness.");
+  const sourceHealth = await checkSourceHealthWithReport({
+    outputDir,
+    logger,
+    fetchImpl: options.fetchImpl,
+    env: options.env,
+    now: options.now
+  });
+
+  if (!sourceHealth.passed) {
+    throw new Error(`Source health blocked: ${sourceHealth.issues.join(" ")}`);
+  }
+
+  logger.info("2/12 collectNews: building the 20-item candidate pool.");
   const collection = await collectNewsWithReport({
     outputDir,
     logger,
@@ -220,7 +242,7 @@ export async function runDailyPipeline(
     useMockRss: options.useMockRss
   });
 
-  logger.info("2/11 shortlistNews: running editorial first-pass selection.");
+  logger.info("3/12 shortlistNews: running editorial first-pass selection.");
   const shortlist = await shortlistNewsWithReport({
     outputDir,
     candidates: collection.candidates,
@@ -228,7 +250,7 @@ export async function runDailyPipeline(
     writeOutputs: true
   });
 
-  logger.info("3/11 selectTopic: choosing today's main editorial topic.");
+  logger.info("4/12 selectTopic: choosing today's main editorial topic.");
   const topicSelection = manualTopic.used
     ? await selectManualTopicWithReport({
         outputDir,
@@ -250,7 +272,7 @@ export async function runDailyPipeline(
         now: options.now
       });
 
-  logger.info("4/11 buildTopicFactPack: verifying key claims for the selected topic.");
+  logger.info("5/12 buildTopicFactPack: verifying key claims for the selected topic.");
   const factPack = await buildTopicFactPack({
     outputDir,
     topic: topicSelection.topic,
@@ -259,7 +281,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("5/11 writeArticle: writing the WeChat article body.");
+  logger.info("6/12 writeArticle: writing the WeChat article body.");
   const article = await writeArticleWithReport({
     outputDir,
     topic: topicSelection.topic,
@@ -270,7 +292,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("6/11 generateTitles: scoring title candidates and selecting final title.");
+  logger.info("7/12 generateTitles: scoring title candidates and selecting final title.");
   const titleGeneration = await generateTitlesWithReport({
     outputDir,
     articleMarkdown: article.article.markdown,
@@ -291,7 +313,7 @@ export async function runDailyPipeline(
   };
   const articleMetaForNextStages = titleGeneration.articleMeta;
 
-  logger.info("7/11 reviewArticle: auditing the article before cover generation.");
+  logger.info("8/12 reviewArticle: auditing the article before cover generation.");
   const articleReview = await reviewArticleWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
@@ -303,7 +325,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("8/11 cover: reusing existing cover artifacts when available.");
+  logger.info("9/12 cover: reusing existing cover artifacts when available.");
   const cover =
     (await reuseExistingCoverIfAvailable(outputDir, logger)) ??
     (await generateCoverWithReport({
@@ -319,7 +341,7 @@ export async function runDailyPipeline(
       now: options.now
     }));
 
-  logger.info("9/11 renderWechatHtml: creating Stripe-inspired WeChat HTML layout.");
+  logger.info("10/12 renderWechatHtml: creating Stripe-inspired WeChat HTML layout.");
   const wechatLayout = await renderWechatHtmlWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
@@ -332,7 +354,7 @@ export async function runDailyPipeline(
     now: options.now
   });
 
-  logger.info("10/11 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
+  logger.info("11/12 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
   const wechatDraft = await saveWechatDraftWithReport({
     outputDir,
     logger,
@@ -341,7 +363,7 @@ export async function runDailyPipeline(
   });
 
   logger.info(
-    "11/11 saveWechatDraftApi: generating WeChat official API draft request preview."
+    "12/12 saveWechatDraftApi: generating WeChat official API draft request preview."
   );
   const wechatApiDraft = await saveWechatDraftApiWithReport({
     outputDir,
@@ -353,6 +375,8 @@ export async function runDailyPipeline(
   });
 
   const files: PipelineOutputFiles = {
+    sourceHealth: sourceHealth.files.result,
+    sourceHealthReport: sourceHealth.files.report,
     rawNews: collection.files.rawNews,
     normalizedNews: collection.files.normalizedNews,
     rejectedNews: collection.files.rejectedNews,
@@ -396,6 +420,7 @@ export async function runDailyPipeline(
       manualTopic,
       editorialStyle,
       editorialFeedback,
+      sourceHealth,
       topicFactPack: factPack.factPack,
       article: articleForNextStages,
       articleMeta: articleMetaForNextStages,

@@ -136,6 +136,9 @@ function coverReviewFixture(imagePath: string): CoverReviewResult {
       coverTextIsChinese: true,
       imageSizeIs900x383: true,
       declares2KQuality: true,
+      usesSafeAnimatedMovieStyle: true,
+      mentionsChineseHeadline: true,
+      mentionsSafeMargins: true,
       hasVisualCenter: true,
       doesNotRequestRealBrandMarks: true,
       doesNotRequestOfficialMarks: true,
@@ -143,6 +146,8 @@ function coverReviewFixture(imagePath: string): CoverReviewResult {
       doesNotIncludeFreeSubstituteSlogan: true,
       doesNotIncludeAbsoluteSubstituteClaim: true,
       doesNotNameSpecificStudios: true,
+      realApiModeProducesRealCover: true,
+      realApiModeDoesNotReturnMockSvg: true,
       imagePathAvailable: true,
       embeddedReviewPassed: true
     },

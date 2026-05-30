@@ -139,3 +139,41 @@ test("env check explains dry-run and real WeChat draft modes", async () => {
   assert.match(realMode.info.join("\n"), /real API draft creation is configured/);
   assert.match(realMode.info.join("\n"), /does not call WeChat API/);
 });
+
+test("env check requires APIMart endpoint for real cover mode", async () => {
+  const missingUrl = await checkEnvironment({
+    projectRoot: process.cwd(),
+    dotenvPath: null,
+    env: {
+      COVER_ENABLE_REAL_API: "true",
+      APIMART_API_KEY: "APIMART_KEY_VALUE",
+      APIMART_IMAGE_MODEL: "gpt-image-2",
+      APIMART_IMAGE_SIZE: "16:9",
+      APIMART_IMAGE_RESOLUTION: "2k",
+      WECHAT_FORBID_PUBLISH: "true",
+      WECHAT_FORBID_MASS_SEND: "true"
+    }
+  });
+  const ready = await checkEnvironment({
+    projectRoot: process.cwd(),
+    dotenvPath: null,
+    env: {
+      COVER_ENABLE_REAL_API: "true",
+      APIMART_API_KEY: "APIMART_KEY_VALUE",
+      APIMART_IMAGE_API_URL: "https://api.apimart.test/images",
+      APIMART_IMAGE_MODEL: "gpt-image-2",
+      APIMART_IMAGE_SIZE: "16:9",
+      APIMART_IMAGE_RESOLUTION: "2k",
+      WECHAT_FORBID_PUBLISH: "true",
+      WECHAT_FORBID_MASS_SEND: "true"
+    }
+  });
+
+  assert.equal(missingUrl.ok, false);
+  assert.ok(
+    missingUrl.errors.some((error) =>
+      error.includes("COVER_ENABLE_REAL_API=true requires APIMART_IMAGE_API_URL")
+    )
+  );
+  assert.deepEqual(ready.errors, []);
+});

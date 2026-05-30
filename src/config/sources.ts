@@ -9,7 +9,11 @@ export interface RssSourceConfig {
 
 export interface CollectionConfig {
   rssEnableRealFetch: boolean;
+  rssFetchTimeoutMs: number;
+  rssFetchRetry: number;
   searchEnableRealApi: boolean;
+  searchFetchTimeoutMs: number;
+  searchFetchRetry: number;
   tavilyApiKey?: string;
   exaApiKey?: string;
   tavilyMaxQueriesPerRun: number;
@@ -19,6 +23,9 @@ export interface CollectionConfig {
   globalSearchMaxCandidates: number;
   rssMinCandidates: number;
   targetCandidateCount: number;
+  minRealNewsItems: number;
+  minRealRssItems: number;
+  minRealSearchItems: number;
 }
 
 export const rssSources: RssSourceConfig[] = [
@@ -116,14 +123,21 @@ export const exaQueries = [
 
 const DEFAULT_CONFIG: CollectionConfig = {
   rssEnableRealFetch: true,
+  rssFetchTimeoutMs: 5_000,
+  rssFetchRetry: 1,
   searchEnableRealApi: false,
+  searchFetchTimeoutMs: 8_000,
+  searchFetchRetry: 1,
   tavilyMaxQueriesPerRun: 6,
   exaMaxQueriesPerRun: 6,
   searchMaxResultsPerQuery: 5,
   searchLookbackHours: 72,
   globalSearchMaxCandidates: 6,
   rssMinCandidates: 14,
-  targetCandidateCount: 20
+  targetCandidateCount: 20,
+  minRealNewsItems: 20,
+  minRealRssItems: 10,
+  minRealSearchItems: 3
 };
 
 function readBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -143,6 +157,15 @@ function readInteger(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readNonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function optionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
@@ -156,9 +179,25 @@ export function readCollectionConfig(
       env.RSS_ENABLE_REAL_FETCH,
       DEFAULT_CONFIG.rssEnableRealFetch
     ),
+    rssFetchTimeoutMs: readInteger(
+      env.RSS_FETCH_TIMEOUT_MS,
+      DEFAULT_CONFIG.rssFetchTimeoutMs
+    ),
+    rssFetchRetry: readNonNegativeInteger(
+      env.RSS_FETCH_RETRY,
+      DEFAULT_CONFIG.rssFetchRetry
+    ),
     searchEnableRealApi: readBoolean(
       env.SEARCH_ENABLE_REAL_API,
       DEFAULT_CONFIG.searchEnableRealApi
+    ),
+    searchFetchTimeoutMs: readInteger(
+      env.SEARCH_FETCH_TIMEOUT_MS,
+      DEFAULT_CONFIG.searchFetchTimeoutMs
+    ),
+    searchFetchRetry: readNonNegativeInteger(
+      env.SEARCH_FETCH_RETRY,
+      DEFAULT_CONFIG.searchFetchRetry
     ),
     tavilyApiKey: optionalString(env.TAVILY_API_KEY),
     exaApiKey: optionalString(env.EXA_API_KEY),
@@ -186,6 +225,18 @@ export function readCollectionConfig(
       env.RSS_MIN_CANDIDATES,
       DEFAULT_CONFIG.rssMinCandidates
     ),
-    targetCandidateCount: DEFAULT_CONFIG.targetCandidateCount
+    targetCandidateCount: DEFAULT_CONFIG.targetCandidateCount,
+    minRealNewsItems: readInteger(
+      env.MIN_REAL_NEWS_ITEMS,
+      DEFAULT_CONFIG.minRealNewsItems
+    ),
+    minRealRssItems: readInteger(
+      env.MIN_REAL_RSS_ITEMS,
+      DEFAULT_CONFIG.minRealRssItems
+    ),
+    minRealSearchItems: readInteger(
+      env.MIN_REAL_SEARCH_ITEMS,
+      DEFAULT_CONFIG.minRealSearchItems
+    )
   };
 }

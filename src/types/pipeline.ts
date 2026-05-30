@@ -21,8 +21,11 @@ import type {
   SelectedTopic,
   ShortlistedNewsItem
 } from "./news.js";
+import type { SourceHealthResult } from "./sourceHealth.js";
 
 export interface PipelineOutputFiles {
+  sourceHealth: string;
+  sourceHealthReport: string;
   rawNews: string;
   normalizedNews: string;
   rejectedNews: string;
@@ -63,6 +66,7 @@ export interface DailyPipelineArtifacts {
   manualTopic: ManualTopicLoadResult;
   editorialStyle: EditorialStyleLoadResult;
   editorialFeedback: EditorialFeedbackLoadResult;
+  sourceHealth: SourceHealthResult;
   topicFactPack: TopicFactPack;
   article: ArticleDraft;
   articleMeta: ArticleMeta;

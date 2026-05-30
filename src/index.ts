@@ -4,6 +4,10 @@ import { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 
 export { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 export { buildTopicFactPack } from "./pipeline/buildTopicFactPack.js";
+export {
+  checkSourceHealth,
+  checkSourceHealthWithReport
+} from "./pipeline/checkSourceHealth.js";
 export { collectNews } from "./pipeline/collectNews.js";
 export { shortlistNews, shortlistNewsWithReport } from "./pipeline/shortlistNews.js";
 export { selectTopic } from "./pipeline/selectTopic.js";

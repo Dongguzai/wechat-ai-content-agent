@@ -38,6 +38,9 @@ export interface CoverReviewChecks {
   coverTextIsChinese: boolean;
   imageSizeIs900x383: boolean;
   declares2KQuality: boolean;
+  usesSafeAnimatedMovieStyle: boolean;
+  mentionsChineseHeadline: boolean;
+  mentionsSafeMargins: boolean;
   hasVisualCenter: boolean;
   doesNotRequestRealBrandMarks: boolean;
   doesNotRequestOfficialMarks: boolean;
@@ -45,6 +48,8 @@ export interface CoverReviewChecks {
   doesNotIncludeFreeSubstituteSlogan: boolean;
   doesNotIncludeAbsoluteSubstituteClaim: boolean;
   doesNotNameSpecificStudios: boolean;
+  realApiModeProducesRealCover: boolean;
+  realApiModeDoesNotReturnMockSvg: boolean;
   imagePathAvailable: boolean;
   embeddedReviewPassed: boolean;
 }

@@ -10,6 +10,7 @@ export interface RssFetchOptions {
   logger?: Logger;
   maxItemsPerSource?: number;
   timeoutMs?: number;
+  retryCount?: number;
   now?: Date;
 }
 
@@ -126,9 +127,38 @@ async function fetchFeedText(
     }
 
     return await response.text();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`RSS fetch timed out after ${timeoutMs}ms`);
+    }
+
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchFeedTextWithRetry(input: {
+  source: RssSourceConfig;
+  fetchImpl: FetchLike;
+  timeoutMs: number;
+  retryCount: number;
+}): Promise<string> {
+  const maxAttempts = Math.max(1, input.retryCount + 1);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchFeedText(input.source, input.fetchImpl, input.timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) {
+        break;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("unknown RSS fetch error");
 }
 
 function parseFeedItems(
@@ -172,6 +202,7 @@ export async function fetchRssNews(
 ): Promise<RssFetchResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 5_000;
+  const retryCount = options.retryCount ?? 1;
   const maxItemsPerSource = options.maxItemsPerSource ?? 8;
   const fetchedAt = (options.now ?? new Date()).toISOString();
   const warnings: CollectionWarning[] = [];
@@ -179,7 +210,12 @@ export async function fetchRssNews(
   const batches = await Promise.all(
     sources.map(async (source) => {
       try {
-        const xml = await fetchFeedText(source, fetchImpl, timeoutMs);
+        const xml = await fetchFeedTextWithRetry({
+          source,
+          fetchImpl,
+          timeoutMs,
+          retryCount
+        });
         return parseFeedItems(source, xml, fetchedAt, maxItemsPerSource);
       } catch (error) {
         const message =

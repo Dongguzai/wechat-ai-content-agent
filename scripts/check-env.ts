@@ -8,7 +8,14 @@ import {
   type DotEnvEntry
 } from "../src/config/env.js";
 
-type EnvValueKind = "boolean" | "integer" | "enum" | "flag" | "url" | "string";
+type EnvValueKind =
+  | "boolean"
+  | "integer"
+  | "nonnegativeInteger"
+  | "enum"
+  | "flag"
+  | "url"
+  | "string";
 
 interface EnvSpec {
   name: string;
@@ -37,7 +44,11 @@ export interface EnvCheckCliOptions extends EnvCheckOptions {
 const envSpecs: EnvSpec[] = [
   { name: "REAL_PRODUCTION_MODE", kind: "boolean" },
   { name: "RSS_ENABLE_REAL_FETCH", kind: "boolean" },
+  { name: "RSS_FETCH_TIMEOUT_MS", kind: "integer" },
+  { name: "RSS_FETCH_RETRY", kind: "nonnegativeInteger" },
   { name: "SEARCH_ENABLE_REAL_API", kind: "boolean" },
+  { name: "SEARCH_FETCH_TIMEOUT_MS", kind: "integer" },
+  { name: "SEARCH_FETCH_RETRY", kind: "nonnegativeInteger" },
   { name: "TAVILY_API_KEY", kind: "string" },
   { name: "EXA_API_KEY", kind: "string" },
   { name: "TAVILY_MAX_QUERIES_PER_RUN", kind: "integer" },
@@ -46,8 +57,16 @@ const envSpecs: EnvSpec[] = [
   { name: "SEARCH_LOOKBACK_HOURS", kind: "integer" },
   { name: "GLOBAL_SEARCH_MAX_CANDIDATES", kind: "integer" },
   { name: "RSS_MIN_CANDIDATES", kind: "integer" },
+  { name: "MIN_REAL_NEWS_ITEMS", kind: "integer" },
+  { name: "MIN_REAL_RSS_ITEMS", kind: "integer" },
+  { name: "MIN_REAL_SEARCH_ITEMS", kind: "integer" },
   { name: "COVER_ENABLE_REAL_API", kind: "boolean" },
   { name: "APIMART_API_KEY", kind: "string" },
+  { name: "APIMART_IMAGE_API_URL", kind: "url" },
+  { name: "APIMART_IMAGE_MODEL", kind: "string" },
+  { name: "APIMART_IMAGE_SIZE", kind: "enum", allowedValues: ["16:9"] },
+  { name: "APIMART_IMAGE_RESOLUTION", kind: "enum", allowedValues: ["2k"] },
+  { name: "APIMART_COVER_STYLE", kind: "string" },
   { name: "COVER_IMAGE_PROVIDER", kind: "enum", allowedValues: ["apimart"] },
   { name: "COVER_IMAGE_SIZE", kind: "enum", allowedValues: ["900x383"] },
   { name: "COVER_OUTPUT_DIR", kind: "string" },
@@ -246,6 +265,11 @@ function validateEnvValue(
     return;
   }
 
+  if (spec.kind === "nonnegativeInteger" && !/^(0|[1-9]\d*)$/.test(value)) {
+    errors.push(`${spec.name} must be a non-negative integer.`);
+    return;
+  }
+
   if (spec.kind === "flag" && value !== "0" && value !== "1") {
     errors.push(`${spec.name} must be either 0 or 1.`);
     return;
@@ -321,8 +345,14 @@ function validateConditionalEnv(
     );
   }
 
-  if (isExplicitTrue(env, "COVER_ENABLE_REAL_API") && !envValue(env, "APIMART_API_KEY")) {
-    errors.push("COVER_ENABLE_REAL_API=true requires APIMART_API_KEY.");
+  if (isExplicitTrue(env, "COVER_ENABLE_REAL_API")) {
+    if (!envValue(env, "APIMART_API_KEY")) {
+      errors.push("COVER_ENABLE_REAL_API=true requires APIMART_API_KEY.");
+    }
+
+    if (!envValue(env, "APIMART_IMAGE_API_URL")) {
+      errors.push("COVER_ENABLE_REAL_API=true requires APIMART_IMAGE_API_URL.");
+    }
   }
 
   const realDraftIntent =

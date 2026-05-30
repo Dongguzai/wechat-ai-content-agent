@@ -36,11 +36,15 @@ export interface GenerateCoverOptions {
   env?: NodeJS.ProcessEnv;
   writeOutputs?: boolean;
   now?: Date;
+  fetchImpl?: typeof fetch;
 }
 
 interface CoverPromptParts {
   articleTitle: string;
   coverText: string;
+  coreViewpoint: string;
+  coverStyle: string;
+  visualConcept: string;
   chineseDesignDescription: string;
   imagePrompt: string;
   negativePrompt: string;
@@ -50,6 +54,8 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 const requiredImageSize: CoverImageSize = "900x383";
 const defaultCoverText = "AI 编码代理\n卷向工作流";
+const defaultApimartCoverStyle =
+  "warm friendly 3D animated movie cover, story-driven, clean composition, clear subject, horizontal 900x383px, prominent Chinese headline inside safe margins";
 
 function createOutputFiles(outputDir: string, coverImageDir: string): CoverOutputFiles {
   return {
@@ -111,42 +117,74 @@ function resolveImageSize(env: NodeJS.ProcessEnv): CoverImageSize {
   return requiredImageSize;
 }
 
+function resolveApimartCoverStyle(env: NodeJS.ProcessEnv): string {
+  return sanitizeCoverStyle(env.APIMART_COVER_STYLE?.trim() || defaultApimartCoverStyle);
+}
+
 function createPromptParts(input: {
   articleMarkdown: string;
   articleMeta: ArticleMeta;
   selectedTopic: SelectedTopic;
   factPack: TopicFactPack;
+  coverStyle: string;
 }): CoverPromptParts {
   const articleTitle =
     input.articleMeta.title ||
     extractMarkdownTitle(input.articleMarkdown) ||
     "AI 编码代理真正卷到的，不是价格，而是工作流";
   const coverText = defaultCoverText;
+  const coreViewpoint = sanitizeCoverContext(
+    input.articleMeta.articleThesis ||
+      input.factPack.recommendedFraming ||
+      input.selectedTopic.selected.selection.articleThesis ||
+      "AI coding agent 的竞争重点正在从模型能力转向工作流控制权。"
+  );
   const safeFraming = sanitizeCoverContext(input.factPack.recommendedFraming);
   const safeCoreConflict = sanitizeCoverContext(
     input.selectedTopic.selected.selection.coreConflict
   );
+  const visualConcept =
+    "A clear central glowing workflow hub, surrounded by abstract code panels and connected tool nodes. The image should feel story-driven, polished, warm, friendly, and professional. Clean composition, clear subject, horizontal 900x383px layout, prominent Chinese headline inside safe margins, 2K quality, crisp details, soft cinematic lighting.";
   const chineseDesignDescription = [
     "封面围绕文章主题：AI coding agent 的竞争重点正在从价格和模型能力，转向开发者工作流入口。",
+    `安全风格方向：${input.coverStyle}`,
     "画面采用 3D 动画电影质感和科技商业杂志封面感，以发光的工作流中枢节点作为视觉中心。",
     "中心主体是一张 3D 代码工作台，抽象代码窗口、节点连线和工具链路径从四周汇入工作流入口。",
     "中文大标题是最重要的视觉元素，居中或偏左居中，粗体、清晰、现代科技感，适合手机端缩略图阅读。",
     "画面只做抽象对比：一侧是闭源订阅入口，一侧是开源工具链路径，不使用真实品牌标识或人物肖像。",
+    `核心观点：${coreViewpoint}`,
     `文章安全表达边界：${safeFraming}`,
     `选题核心冲突：${safeCoreConflict}`
   ].join("\n");
   const imagePrompt = [
-    "Create a 900x383 playful but professional tech magazine cover in high-quality 3D render.",
-    "Use 3D animated movie style, rounded shapes, soft cinematic lighting, expressive objects, polished commercial illustration.",
-    "The central subject is a glowing workflow hub on a 3D code workbench, surrounded by abstract code windows and connected workflow nodes.",
+    "Prompt:",
+    "Create a warm friendly 3D animated movie style technology magazine cover for a Chinese WeChat article.",
+    "",
+    "Article title:",
+    articleTitle,
+    "",
+    "Main Chinese headline:",
+    `「${coverText}」`,
+    "",
+    "Core viewpoint:",
+    coreViewpoint,
+    "",
+    "APIMart cover style:",
+    input.coverStyle,
+    "",
+    "Visual concept:",
+    visualConcept,
     "Build a clear visual center and strong central subject: a visible path flows from scattered coding tools toward a workflow entry gate.",
-    `The primary visual element must be large Chinese headline text: "${coverText}".`,
-    "Place the headline centered or slightly left of center, bold, crisp, modern tech typography, readable in a mobile thumbnail.",
-    "Keep the composition minimal, focused, and editorial, with no crowded small text and no English title replacing the Chinese headline.",
-    "Emphasize 2K quality, ultra-detailed, high-resolution render, crisp details, clean edges.",
-    "Use abstract open toolchain shapes and closed subscription entry shapes only as non-branded symbols.",
-    "Avoid real people, meme styling, real brand marks, official product marks, price tags, and exaggerated winner-takes-all comparison imagery."
-  ].join(" ");
+    "",
+    "Composition:",
+    "Horizontal 900x383px layout. Keep the prominent Chinese headline inside safe margins, centered or slightly left of center, bold, crisp, modern tech typography, readable in a mobile thumbnail.",
+    "",
+    "2K quality:",
+    "High-quality 3D animated movie quality, ultra-detailed, high-resolution render, crisp details, clean edges, rounded shapes, soft cinematic lighting, polished commercial illustration.",
+    "",
+    "Avoid:",
+    "No real brand logos, no official product marks for named coding tools, no specific prices, no concrete price tags, no zero-cost substitute slogans, no absolute replacement claims, no real people, no clutter, no cheap AI-generated look, no specific animation studio name."
+  ].join("\n");
   const negativePrompt = [
     "real brand marks",
     "official product marks",
@@ -168,10 +206,22 @@ function createPromptParts(input: {
   return {
     articleTitle,
     coverText,
+    coreViewpoint,
+    coverStyle: input.coverStyle,
+    visualConcept,
     chineseDesignDescription,
     imagePrompt,
     negativePrompt
   };
+}
+
+export function sanitizeCoverStyle(input: string): string {
+  return input
+    .replace(/Pixar-inspired/gi, "warm friendly 3D animated movie style")
+    .replace(/Pixar/gi, "3D animated movie")
+    .replace(/皮克斯/g, "3D 动画电影质感")
+    .replace(/Disney/gi, "animated family film")
+    .replace(/迪士尼/g, "动画电影质感");
 }
 
 function sanitizeCoverContext(value: string): string {
@@ -229,6 +279,9 @@ function collectReviewIssues(checks: CoverReviewChecks): string[] {
     ["coverTextIsChinese", "coverText must contain Chinese headline text."],
     ["imageSizeIs900x383", "imageSize must be 900x383."],
     ["declares2KQuality", "prompt or visual requirements must declare 2K quality."],
+    ["usesSafeAnimatedMovieStyle", "prompt must include a safe animated movie style description."],
+    ["mentionsChineseHeadline", "prompt must mention Chinese headline requirements."],
+    ["mentionsSafeMargins", "prompt must mention safe margins."],
     ["hasVisualCenter", "prompt must define a clear visual center or central subject."],
     ["doesNotRequestRealBrandMarks", "prompt must not request real brand marks."],
     ["doesNotRequestOfficialMarks", "prompt must not request official product marks."],
@@ -236,6 +289,8 @@ function collectReviewIssues(checks: CoverReviewChecks): string[] {
     ["doesNotIncludeFreeSubstituteSlogan", "prompt must not include a free substitute slogan."],
     ["doesNotIncludeAbsoluteSubstituteClaim", "prompt must not include an absolute substitute claim."],
     ["doesNotNameSpecificStudios", "prompt must not name a specific animation studio."],
+    ["realApiModeProducesRealCover", "COVER_ENABLE_REAL_API=true requires cover.mode=real."],
+    ["realApiModeDoesNotReturnMockSvg", "COVER_ENABLE_REAL_API=true must not return a mock SVG cover."],
     ["imagePathAvailable", "imagePath must exist or provide a mock path."],
     ["embeddedReviewPassed", "cover.review.passed must be true."]
   ];
@@ -255,7 +310,11 @@ function createRiskNotes(cover: CoverResult): string[] {
 
 export function reviewCover(
   cover: CoverResult,
-  options: { imagePathAvailable?: boolean; now?: Date } = {}
+  options: {
+    imagePathAvailable?: boolean;
+    now?: Date;
+    realApiEnabled?: boolean;
+  } = {}
 ): CoverReviewResult {
   const promptForChecks = [
     cover.imagePrompt,
@@ -269,7 +328,13 @@ export function reviewCover(
     coverTextIsChinese: includesChinese(cover.coverText),
     imageSizeIs900x383: cover.imageSize === requiredImageSize,
     declares2KQuality: /2K/.test(promptForChecks),
-    hasVisualCenter: /visual center|central subject|workflow hub|视觉中心|中心主体/i.test(
+    usesSafeAnimatedMovieStyle:
+      /3D animated movie style|3D animated movie quality|3D 动画电影质感|animated family film|动画电影质感/i.test(
+        promptForChecks
+      ),
+    mentionsChineseHeadline: /Chinese headline|中文大标题/i.test(promptForChecks),
+    mentionsSafeMargins: /safe margins|安全边距/i.test(promptForChecks),
+    hasVisualCenter: /visual center|central subject|clear subject|workflow hub|视觉中心|中心主体/i.test(
       promptForChecks
     ),
     doesNotRequestRealBrandMarks: !promptRequestsRealBrandMarks(promptForChecks),
@@ -278,6 +343,10 @@ export function reviewCover(
     doesNotIncludeFreeSubstituteSlogan: !/免费平替/.test(promptForChecks),
     doesNotIncludeAbsoluteSubstituteClaim: !/完全替代/.test(promptForChecks),
     doesNotNameSpecificStudios: !promptNamesSpecificStudios(promptForChecks),
+    realApiModeProducesRealCover: options.realApiEnabled ? cover.mode === "real" : true,
+    realApiModeDoesNotReturnMockSvg: options.realApiEnabled
+      ? cover.mode !== "mock" && !/\.svg$/i.test(cover.imagePath)
+      : true,
     imagePathAvailable:
       options.imagePathAvailable ?? cover.imagePath.startsWith("mock://"),
     embeddedReviewPassed: cover.review.passed === true
@@ -317,6 +386,14 @@ function createCoverPromptMarkdown(input: {
     "## 中文设计说明",
     "",
     input.parts.chineseDesignDescription,
+    "",
+    "## 核心观点",
+    "",
+    input.parts.coreViewpoint,
+    "",
+    "## APIMart Cover Style",
+    "",
+    input.parts.coverStyle,
     "",
     "## English Image Prompt",
     "",
@@ -412,6 +489,8 @@ export async function generateCoverWithReport(
   const generatedAt = (options.now ?? new Date()).toISOString();
   const provider = options.provider ?? env.COVER_IMAGE_PROVIDER ?? "apimart";
   const imageSize = resolveImageSize(env);
+  const coverStyle = resolveApimartCoverStyle(env);
+  const coverRealApiEnabled = env.COVER_ENABLE_REAL_API?.trim().toLowerCase() === "true";
 
   forceApimartImage(provider);
 
@@ -433,7 +512,8 @@ export async function generateCoverWithReport(
     articleMarkdown,
     articleMeta,
     selectedTopic,
-    factPack
+    factPack,
+    coverStyle
   });
   const image = await generateApimartImage({
     provider,
@@ -443,7 +523,8 @@ export async function generateCoverWithReport(
     imageSize,
     outputDir: coverImageDir,
     env,
-    now: options.now
+    now: options.now,
+    fetchImpl: options.fetchImpl
   });
   const placeholderReview: CoverReviewSummary = {
     passed: true,
@@ -465,12 +546,14 @@ export async function generateCoverWithReport(
   };
   const review = reviewCover(cover, {
     imagePathAvailable: await imagePathAvailable(cover.imagePath),
-    now: options.now
+    now: options.now,
+    realApiEnabled: coverRealApiEnabled
   });
   cover.review = reviewSummaryFrom(review);
   const finalReview = reviewCover(cover, {
     imagePathAvailable: await imagePathAvailable(cover.imagePath),
-    now: options.now
+    now: options.now,
+    realApiEnabled: coverRealApiEnabled
   });
   cover.review = reviewSummaryFrom(finalReview);
   const promptMarkdown = createCoverPromptMarkdown({

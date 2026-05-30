@@ -110,6 +110,9 @@ function coverReviewFixture(imagePath: string, passed: boolean): CoverReviewResu
       coverTextIsChinese: true,
       imageSizeIs900x383: true,
       declares2KQuality: true,
+      usesSafeAnimatedMovieStyle: true,
+      mentionsChineseHeadline: true,
+      mentionsSafeMargins: true,
       hasVisualCenter: true,
       doesNotRequestRealBrandMarks: true,
       doesNotRequestOfficialMarks: true,
@@ -117,6 +120,8 @@ function coverReviewFixture(imagePath: string, passed: boolean): CoverReviewResu
       doesNotIncludeFreeSubstituteSlogan: true,
       doesNotIncludeAbsoluteSubstituteClaim: true,
       doesNotNameSpecificStudios: true,
+      realApiModeProducesRealCover: true,
+      realApiModeDoesNotReturnMockSvg: true,
       imagePathAvailable: true,
       embeddedReviewPassed: passed
     },

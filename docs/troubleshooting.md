@@ -121,16 +121,25 @@ EXA_API_KEY=...
 
 ```env
 APIMART_API_KEY=...
+APIMART_IMAGE_API_URL=https://...
 COVER_ENABLE_REAL_API=true
 ```
 
-### `TODO: APIMart real image generation is not implemented yet`
+### `COVER_ENABLE_REAL_API=true requires APIMART_IMAGE_API_URL`
+
+处理：
+
+```env
+APIMART_IMAGE_API_URL=https://...
+COVER_ENABLE_REAL_API=true
+```
 
 说明：
 
-- v0.3.1 尚未接入真实 APIMart 端点。
-- 封板默认应保持 `COVER_ENABLE_REAL_API=false`。
-- 需要真实公众号草稿时，使用人工准备的 JPG/PNG 封面并通过微信素材上传获得 `WECHAT_COVER_MEDIA_ID`。
+- APIMart 真实生图请求体只发送 `model`、`prompt`、`n`、`size`、`resolution`。
+- 当前 `APIMART_IMAGE_SIZE` 固定为 `16:9`，`APIMART_IMAGE_RESOLUTION` 固定为 `2k`。
+- `APIMART_COVER_STYLE` 会保留 warm friendly、story-driven、clean composition、clear subject 等方向，但会把具体工作室名称替换为安全的动画电影质感描述。
+- 真实模式必须返回或下载到 PNG/JPG 图片字节；失败时不会 fallback mock。
 
 ## 5. 微信封面上传
 

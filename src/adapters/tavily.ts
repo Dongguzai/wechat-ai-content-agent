@@ -12,6 +12,8 @@ export interface TavilySearchOptions {
   logger?: Logger;
   maxResultsPerQuery: number;
   lookbackHours: number;
+  timeoutMs?: number;
+  retryCount?: number;
   now?: Date;
 }
 
@@ -90,6 +92,55 @@ function normalizeResult(
   };
 }
 
+async function fetchJsonWithTimeout(input: {
+  fetchImpl: FetchLike;
+  url: string;
+  init: RequestInit;
+  timeoutMs: number;
+}): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), input.timeoutMs);
+
+  try {
+    return await input.fetchImpl(input.url, {
+      ...input.init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Tavily search timed out after ${input.timeoutMs}ms`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchJsonWithRetry(input: {
+  fetchImpl: FetchLike;
+  url: string;
+  init: RequestInit;
+  timeoutMs: number;
+  retryCount: number;
+}): Promise<Response> {
+  const maxAttempts = Math.max(1, input.retryCount + 1);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchJsonWithTimeout(input);
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) {
+        break;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("unknown Tavily API error");
+}
+
 export async function searchTavily(
   queries: string[],
   options: TavilySearchOptions
@@ -108,25 +159,33 @@ export async function searchTavily(
 
   const apiKey = options.apiKey;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 8_000;
+  const retryCount = options.retryCount ?? 1;
   const fetchedAt = (options.now ?? new Date()).toISOString();
   const days = Math.max(1, Math.ceil(options.lookbackHours / 24));
   const batches = await Promise.all(
     queries.map(async (query) => {
       try {
-        const response = await fetchImpl("https://api.tavily.com/search", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${apiKey}`,
-            "content-type": "application/json"
-          },
-          body: JSON.stringify({
-            query,
-            max_results: options.maxResultsPerQuery,
-            search_depth: "advanced",
-            include_answer: false,
-            include_raw_content: false,
-            days
-          })
+        const response = await fetchJsonWithRetry({
+          fetchImpl,
+          url: "https://api.tavily.com/search",
+          timeoutMs,
+          retryCount,
+          init: {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${apiKey}`,
+              "content-type": "application/json"
+            },
+            body: JSON.stringify({
+              query,
+              max_results: options.maxResultsPerQuery,
+              search_depth: "advanced",
+              include_answer: false,
+              include_raw_content: false,
+              days
+            })
+          }
         });
 
         if (!response.ok) {

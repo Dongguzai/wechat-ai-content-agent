@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { forceApimartImage } from "../hooks/forceApimartImage.js";
@@ -16,6 +17,7 @@ export interface GenerateApimartImageOptions {
   outputDir: string;
   env?: NodeJS.ProcessEnv;
   now?: Date;
+  fetchImpl?: typeof fetch;
 }
 
 export interface ApimartImageResult {
@@ -25,8 +27,40 @@ export interface ApimartImageResult {
   realApiCalled: boolean;
 }
 
+interface ApimartImageConfig {
+  apiKey: string;
+  apiUrl: string;
+  model: string;
+  size: string;
+  resolution: string;
+}
+
+interface ApimartImageRequestBody {
+  model: string;
+  prompt: string;
+  n: 1;
+  size: string;
+  resolution: string;
+}
+
+type ImageFormat = "png" | "jpg";
+
+interface ImageBytes {
+  bytes: Buffer;
+  format: ImageFormat;
+}
+
+const defaultImageModel = "gpt-image-2";
+const requiredApiSize = "16:9";
+const requiredApiResolution = "2k";
+
 function realApiEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.COVER_ENABLE_REAL_API?.trim().toLowerCase() === "true";
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value ? value : undefined;
 }
 
 function timestampForFile(now: Date): string {
@@ -96,10 +130,62 @@ async function createMockApimartImage(
 async function createRealApimartImage(
   options: GenerateApimartImageOptions
 ): Promise<ApimartImageResult> {
-  void options;
-  throw new Error(
-    "TODO: APIMart real image generation is not implemented yet. Confirm APIMart endpoint, request schema, authentication, and image response handling before enabling real calls. No fallback image provider is allowed."
+  const env = options.env ?? process.env;
+  const config = resolveApimartImageConfig(env);
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+
+  if (!fetchImpl) {
+    throw new Error("COVER_ENABLE_REAL_API=true requires a runtime with fetch support.");
+  }
+
+  const requestBody: ApimartImageRequestBody = {
+    model: config.model,
+    prompt: createApimartPrompt(options),
+    n: 1,
+    size: config.size,
+    resolution: config.resolution
+  };
+  const response = await fetchImpl(config.apiUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, image/png, image/jpeg"
+    },
+    body: JSON.stringify(requestBody)
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  const responseBytes = Buffer.from(await response.arrayBuffer());
+
+  if (!response.ok) {
+    throw new Error(
+      `APIMart image API request failed with HTTP ${response.status}${formatStatusText(
+        response.statusText
+      )}.${formatResponsePreview(responseBytes, contentType, [config.apiKey])}`
+    );
+  }
+
+  const image = await extractImageFromApimartResponse({
+    bytes: responseBytes,
+    contentType,
+    fetchImpl,
+    apiKey: config.apiKey
+  });
+
+  await mkdir(options.outputDir, { recursive: true });
+
+  const imagePath = join(
+    options.outputDir,
+    `cover-apimart-real-${timestampForFile(options.now ?? new Date())}.${image.format}`
   );
+  await writeFile(imagePath, image.bytes);
+
+  return {
+    provider: "apimart",
+    mode: "real",
+    imagePath,
+    realApiCalled: true
+  };
 }
 
 export async function generateApimartImage(
@@ -117,11 +203,349 @@ export async function generateApimartImage(
     return createMockApimartImage(options);
   }
 
-  if (!env.APIMART_API_KEY?.trim()) {
+  return createRealApimartImage(options);
+}
+
+function resolveApimartImageConfig(env: NodeJS.ProcessEnv): ApimartImageConfig {
+  const apiKey = envValue(env, "APIMART_API_KEY");
+  const apiUrl = envValue(env, "APIMART_IMAGE_API_URL");
+  const model = envValue(env, "APIMART_IMAGE_MODEL") ?? defaultImageModel;
+  const size = envValue(env, "APIMART_IMAGE_SIZE") ?? requiredApiSize;
+  const resolution =
+    envValue(env, "APIMART_IMAGE_RESOLUTION") ?? requiredApiResolution;
+
+  if (!apiKey) {
+    throw new Error("COVER_ENABLE_REAL_API=true requires APIMART_API_KEY.");
+  }
+
+  if (!apiUrl) {
+    throw new Error("COVER_ENABLE_REAL_API=true requires APIMART_IMAGE_API_URL.");
+  }
+
+  if (size !== requiredApiSize) {
     throw new Error(
-      "COVER_ENABLE_REAL_API=true requires APIMART_API_KEY. APIMart real image generation also remains blocked until the endpoint, request schema, authentication, and image response handling are confirmed."
+      `APIMART_IMAGE_SIZE must be ${requiredApiSize}; received ${size}.`
     );
   }
 
-  return createRealApimartImage(options);
+  if (resolution !== requiredApiResolution) {
+    throw new Error(
+      `APIMART_IMAGE_RESOLUTION must be ${requiredApiResolution}; received ${resolution}.`
+    );
+  }
+
+  try {
+    const url = new URL(apiUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      throw new Error("invalid protocol");
+    }
+  } catch {
+    throw new Error("APIMART_IMAGE_API_URL must be a valid http(s) URL.");
+  }
+
+  return {
+    apiKey,
+    apiUrl,
+    model,
+    size,
+    resolution
+  };
+}
+
+function createApimartPrompt(options: GenerateApimartImageOptions): string {
+  return options.imagePrompt;
+}
+
+function formatStatusText(statusText: string): string {
+  return statusText.trim() ? ` ${statusText.trim()}` : "";
+}
+
+function formatResponsePreview(
+  bytes: Buffer,
+  contentType: string,
+  secrets: string[]
+): string {
+  if (bytes.length === 0 || detectImageFormat(bytes, contentType, false)) {
+    return "";
+  }
+
+  const compactText = redactSecrets(
+    bytes.toString("utf8").replace(/\s+/g, " ").trim(),
+    secrets
+  );
+
+  return compactText ? ` Response body: ${compactText.slice(0, 300)}` : "";
+}
+
+function redactSecrets(value: string, secrets: string[]): string {
+  return secrets.reduce(
+    (current, secret) => current.replaceAll(secret, "[redacted]"),
+    value
+  );
+}
+
+async function extractImageFromApimartResponse(input: {
+  bytes: Buffer;
+  contentType: string;
+  fetchImpl: typeof fetch;
+  apiKey: string;
+}): Promise<ImageBytes> {
+  const inlineImageFormat = detectImageFormat(input.bytes, input.contentType);
+
+  if (inlineImageFormat) {
+    return {
+      bytes: input.bytes,
+      format: inlineImageFormat
+    };
+  }
+
+  if (!looksLikeJson(input.bytes, input.contentType)) {
+    throw new Error(
+      "APIMart image API returned neither supported JSON nor PNG/JPG image bytes."
+    );
+  }
+
+  const json = parseJsonResponse(input.bytes, [input.apiKey]);
+  const base64Image = extractBase64Image(json);
+
+  if (base64Image) {
+    return decodeBase64Image(base64Image);
+  }
+
+  const imageUrl = extractImageUrl(json);
+
+  if (imageUrl) {
+    return fetchImageUrl(imageUrl, input.fetchImpl, input.apiKey);
+  }
+
+  throw new Error(
+    "APIMart image API response did not include data[0].url, data[0].b64_json, image_url, url, or binary PNG/JPG image bytes."
+  );
+}
+
+function looksLikeJson(bytes: Buffer, contentType: string): boolean {
+  if (contentType.toLowerCase().includes("json")) {
+    return true;
+  }
+
+  const trimmed = bytes.toString("utf8").trimStart();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
+function parseJsonResponse(bytes: Buffer, secrets: string[]): unknown {
+  const text = bytes.toString("utf8");
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      `APIMart image API returned invalid JSON.${formatResponsePreview(
+        bytes,
+        "application/json",
+        secrets
+      )}`
+    );
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function firstDataRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const data = value.data;
+
+  if (Array.isArray(data) && isRecord(data[0])) {
+    return data[0];
+  }
+
+  if (isRecord(data)) {
+    return data;
+  }
+
+  return undefined;
+}
+
+function extractBase64Image(value: unknown): string | undefined {
+  const dataRecord = firstDataRecord(value);
+
+  if (dataRecord && typeof dataRecord.b64_json === "string") {
+    return dataRecord.b64_json;
+  }
+
+  if (isRecord(value) && typeof value.b64_json === "string") {
+    return value.b64_json;
+  }
+
+  return undefined;
+}
+
+function extractImageUrl(value: unknown): string | undefined {
+  const dataRecord = firstDataRecord(value);
+
+  if (dataRecord && typeof dataRecord.url === "string") {
+    return dataRecord.url;
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (typeof value.image_url === "string") {
+    return value.image_url;
+  }
+
+  if (isRecord(value.image_url) && typeof value.image_url.url === "string") {
+    return value.image_url.url;
+  }
+
+  if (typeof value.url === "string") {
+    return value.url;
+  }
+
+  return undefined;
+}
+
+async function fetchImageUrl(
+  imageUrl: string,
+  fetchImpl: typeof fetch,
+  apiKey: string
+): Promise<ImageBytes> {
+  const decodedDataUrl = decodeDataUrlImage(imageUrl);
+
+  if (decodedDataUrl) {
+    return decodedDataUrl;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(imageUrl);
+  } catch {
+    throw new Error("APIMart image URL must be a valid URL.");
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("APIMart image URL must use http(s).");
+  }
+
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers: {
+      Accept: "image/png, image/jpeg"
+    }
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  const bytes = Buffer.from(await response.arrayBuffer());
+
+  if (!response.ok) {
+    throw new Error(
+      `APIMart image URL fetch failed with HTTP ${response.status}${formatStatusText(
+        response.statusText
+      )}.${formatResponsePreview(bytes, contentType, [apiKey])}`
+    );
+  }
+
+  const format = detectImageFormat(bytes, contentType);
+  if (!format) {
+    throw new Error("APIMart image URL did not return PNG/JPG image bytes.");
+  }
+
+  return {
+    bytes,
+    format
+  };
+}
+
+function decodeBase64Image(base64Value: string): ImageBytes {
+  const dataUrlImage = decodeDataUrlImage(base64Value);
+  if (dataUrlImage) {
+    return dataUrlImage;
+  }
+
+  const compactBase64 = base64Value.replace(/\s+/g, "");
+
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compactBase64)) {
+    throw new Error("APIMart b64_json image is not valid base64.");
+  }
+
+  const bytes = Buffer.from(compactBase64, "base64");
+  const format = detectImageFormat(bytes, "");
+
+  if (!format) {
+    throw new Error("APIMart b64_json image did not decode to PNG/JPG image bytes.");
+  }
+
+  return {
+    bytes,
+    format
+  };
+}
+
+function decodeDataUrlImage(value: string): ImageBytes | undefined {
+  const match = /^data:(image\/(?:png|jpe?g));base64,(.+)$/is.exec(value.trim());
+
+  if (!match) {
+    return undefined;
+  }
+
+  const bytes = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+  const format = detectImageFormat(bytes, match[1]);
+
+  if (!format) {
+    throw new Error("APIMart data URL image did not decode to PNG/JPG image bytes.");
+  }
+
+  return {
+    bytes,
+    format
+  };
+}
+
+function detectImageFormat(
+  bytes: Buffer,
+  contentType: string,
+  strictDeclaredContentType = true
+): ImageFormat | undefined {
+  if (
+    bytes.length >= 24 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a &&
+    bytes.toString("ascii", 12, 16) === "IHDR"
+  ) {
+    return "png";
+  }
+
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff &&
+    bytes[bytes.length - 2] === 0xff &&
+    bytes[bytes.length - 1] === 0xd9
+  ) {
+    return "jpg";
+  }
+
+  const normalizedContentType = contentType.toLowerCase();
+  if (
+    strictDeclaredContentType &&
+    bytes.length > 0 &&
+    (normalizedContentType.includes("image/png") ||
+      normalizedContentType.includes("image/jpeg") ||
+      normalizedContentType.includes("image/jpg"))
+  ) {
+    throw new Error("APIMart response declared PNG/JPG but did not contain valid image bytes.");
+  }
+
+  return undefined;
 }

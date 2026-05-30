@@ -21,8 +21,9 @@
 
 - 只允许 `apimart`。
 - 默认 mock，不调用真实外部 API。
-- 只有 `COVER_ENABLE_REAL_API=true` 且存在 `APIMART_API_KEY` 时，才允许进入真实 APIMart 分支。
-- 真实 APIMart API 细节未确认前，真实分支必须抛出明确 TODO 错误，不能伪造成功。
+- 只有 `COVER_ENABLE_REAL_API=true` 且存在 `APIMART_API_KEY` 和 `APIMART_IMAGE_API_URL` 时，才允许进入真实 APIMart 分支。
+- 真实 APIMart 分支必须拿到并保存 PNG/JPG 图片字节后才算成功，不能伪造成功，也不能 fallback 到 mock。
+- `APIMART_COVER_STYLE` 可配置封面风格，但必须先替换具体工作室名称，再写入 `imagePrompt`、`cover-prompt.md` 或 APIMart 请求。
 - 不允许 fallback 到 OpenAI、Midjourney、Replicate、Stable Diffusion 或任何其他生图服务。
 
 ## 视觉要求

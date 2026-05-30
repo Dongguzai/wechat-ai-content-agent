@@ -21,6 +21,8 @@ const defaultOutputDir = join(projectRoot, "outputs");
 const defaultRunsDir = join(projectRoot, "runs");
 
 export const CORE_OUTPUT_ARCHIVE_PATHS = [
+  "source-health.json",
+  "source-health-report.md",
   "raw-news.json",
   "normalized-news.json",
   "rejected-news.json",

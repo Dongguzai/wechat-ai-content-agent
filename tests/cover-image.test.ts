@@ -25,10 +25,58 @@ const bannedPromptTerms = [
   "免费平替",
   "完全替代",
   "Pixar",
+  "pixar",
   "皮克斯",
   "Disney",
+  "disney",
   "迪士尼"
 ];
+
+const onePixelPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lw5uWQAAAABJRU5ErkJggg==",
+  "base64"
+);
+
+function apimartRealEnv(
+  overrides: NodeJS.ProcessEnv = {}
+): NodeJS.ProcessEnv {
+  return {
+    COVER_ENABLE_REAL_API: "true",
+    APIMART_API_KEY: "real-key-placeholder",
+    APIMART_IMAGE_API_URL: "https://api.apimart.test/images",
+    APIMART_IMAGE_MODEL: "gpt-image-2",
+    APIMART_IMAGE_SIZE: "16:9",
+    APIMART_IMAGE_RESOLUTION: "2k",
+    COVER_IMAGE_PROVIDER: "apimart",
+    COVER_IMAGE_SIZE: "900x383",
+    COVER_OUTPUT_DIR: "outputs/covers",
+    ...overrides
+  };
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: {
+      "content-type": "application/json"
+    }
+  });
+}
+
+function pngResponse(): Response {
+  return new Response(onePixelPng, {
+    status: 200,
+    headers: {
+      "content-type": "image/png"
+    }
+  });
+}
+
+function assertNoBannedPromptTerms(value: string): void {
+  for (const term of bannedPromptTerms) {
+    assert.equal(value.includes(term), false, `forbidden prompt term: ${term}`);
+  }
+}
 
 function articleMarkdownFixture(): string {
   return [
@@ -253,17 +301,20 @@ test("generateCoverWithReport writes APIMart mock cover outputs and review artif
     assert.match(cover.imagePrompt, /central subject/i);
     assert.equal(cover.review.passed, true);
 
-    for (const term of bannedPromptTerms) {
-      assert.equal(generatedPrompt.includes(term), false, `forbidden prompt term: ${term}`);
-      assert.equal(promptMarkdown.includes(term), false, `forbidden prompt doc term: ${term}`);
-    }
+    assertNoBannedPromptTerms(generatedPrompt);
+    assertNoBannedPromptTerms(promptMarkdown);
 
     assert.equal(review.passed, true);
     assert.equal(review.checks.coverTextIsChinese, true);
     assert.equal(review.checks.hasVisualCenter, true);
     assert.equal(review.checks.imageSizeIs900x383, true);
     assert.equal(review.checks.declares2KQuality, true);
+    assert.equal(review.checks.usesSafeAnimatedMovieStyle, true);
+    assert.equal(review.checks.mentionsChineseHeadline, true);
+    assert.equal(review.checks.mentionsSafeMargins, true);
     assert.equal(review.checks.providerIsApimart, true);
+    assert.equal(review.checks.realApiModeProducesRealCover, true);
+    assert.equal(review.checks.realApiModeDoesNotReturnMockSvg, true);
     assert.equal(review.checks.imagePathAvailable, true);
     assert.equal(review.checks.embeddedReviewPassed, true);
 
@@ -279,6 +330,136 @@ test("generateCoverWithReport writes APIMart mock cover outputs and review artif
     assert.match(promptMarkdown, /禁止元素/);
     assert.match(promptMarkdown, /provider: apimart/);
     assert.match(promptMarkdown, /mode: mock/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("generateCoverWithReport sanitizes APIMART_COVER_STYLE studio names while preserving style intent", async () => {
+  const cases: Array<[string, string]> = [
+    [
+      "Pixar-inspired warm friendly story-driven cover, clean composition, clear subject, horizontal 900x383px, prominent Chinese headline inside safe margins",
+      "warm friendly 3D animated movie style warm friendly story-driven cover"
+    ],
+    [
+      "皮克斯 warm friendly story-driven cover, clean composition, clear subject, horizontal 900x383px, prominent Chinese headline inside safe margins",
+      "3D 动画电影质感 warm friendly story-driven cover"
+    ],
+    [
+      "Disney disney 迪士尼 warm friendly story-driven cover, clean composition, clear subject, horizontal 900x383px, prominent Chinese headline inside safe margins",
+      "animated family film animated family film 动画电影质感 warm friendly story-driven cover"
+    ]
+  ];
+
+  for (const [style, expectedSanitizedFragment] of cases) {
+    const outputDir = await mkdtemp(join(tmpdir(), "cover-image-style-"));
+
+    try {
+      await writeCoverInputFiles(outputDir);
+
+      const result = await generateCoverWithReport({
+        outputDir,
+        logger: silentLogger,
+        env: {
+          COVER_ENABLE_REAL_API: "false",
+          COVER_IMAGE_PROVIDER: "apimart",
+          COVER_IMAGE_SIZE: "900x383",
+          COVER_OUTPUT_DIR: "outputs/covers",
+          APIMART_COVER_STYLE: style
+        },
+        now: new Date("2026-05-29T00:00:00.000Z")
+      });
+      const cover = JSON.parse(await readFile(result.files.cover, "utf8")) as CoverResult;
+      const promptMarkdown = await readFile(result.files.coverPrompt, "utf8");
+      const generatedPrompt = `${cover.imagePrompt}\n${cover.negativePrompt}\n${promptMarkdown}`;
+
+      assertNoBannedPromptTerms(generatedPrompt);
+      assert.match(cover.imagePrompt, /3D animated movie style/i);
+      assert.match(cover.imagePrompt, /warm friendly/i);
+      assert.match(cover.imagePrompt, /story-driven/i);
+      assert.match(cover.imagePrompt, /clean composition/i);
+      assert.match(cover.imagePrompt, /clear subject/i);
+      assert.match(cover.imagePrompt, /horizontal 900x383px/i);
+      assert.match(cover.imagePrompt, /prominent Chinese headline/i);
+      assert.match(cover.imagePrompt, /safe margins/i);
+      assert.match(cover.imagePrompt, new RegExp(expectedSanitizedFragment));
+      assert.equal(result.review.passed, true);
+      assert.equal(result.review.checks.doesNotNameSpecificStudios, true);
+      assert.equal(result.review.checks.usesSafeAnimatedMovieStyle, true);
+      assert.equal(result.review.checks.mentionsSafeMargins, true);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("generateCoverWithReport writes real APIMart cover outputs when real API returns b64_json", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-report-"));
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    fetchCalls.push({
+      input: input.toString(),
+      init
+    });
+
+    return jsonResponse({
+      data: [
+        {
+          b64_json: onePixelPng.toString("base64")
+        }
+      ]
+    });
+  };
+
+  try {
+    await writeCoverInputFiles(outputDir);
+
+    const result = await generateCoverWithReport({
+      outputDir,
+      logger: silentLogger,
+      env: apimartRealEnv(),
+      now: new Date("2026-05-29T00:00:00.000Z"),
+      fetchImpl
+    });
+
+    await access(result.cover.imagePath);
+
+    const cover = JSON.parse(await readFile(result.files.cover, "utf8")) as CoverResult;
+    const savedBytes = await readFile(result.cover.imagePath);
+    const requestBody = JSON.parse(
+      fetchCalls[0]?.init?.body?.toString() ?? "{}"
+    ) as Record<string, unknown>;
+    const requestHeaders = new Headers(fetchCalls[0]?.init?.headers);
+
+    assert.equal(result.cover.provider, "apimart");
+    assert.equal(result.cover.mode, "real");
+    assert.equal(cover.mode, "real");
+    assert.match(result.cover.imagePath, /\/covers\/cover-apimart-real-.*\.png$/);
+    assert.deepEqual(savedBytes, onePixelPng);
+    assert.equal(fetchCalls.length, 1);
+    assert.deepEqual(Object.keys(requestBody).sort(), [
+      "model",
+      "n",
+      "prompt",
+      "resolution",
+      "size"
+    ]);
+    assert.equal(requestBody.model, "gpt-image-2");
+    assert.equal(requestBody.n, 1);
+    assert.equal(requestBody.size, "16:9");
+    assert.equal(requestBody.resolution, "2k");
+    assert.match(String(requestBody.prompt), /900x383/);
+    assert.match(String(requestBody.prompt), /3D animated movie quality/i);
+    assert.match(String(requestBody.prompt), /2K/);
+    assert.match(String(requestBody.prompt), /AI 编码代理/);
+    assert.match(String(requestBody.prompt), /Article title/);
+    assert.match(String(requestBody.prompt), /Core viewpoint/);
+    assert.match(String(requestBody.prompt), /safe margins/);
+    assert.equal(requestHeaders.get("authorization"), "Bearer real-key-placeholder");
+
+    assertNoBannedPromptTerms(String(requestBody.prompt));
+    assert.equal(result.review.checks.realApiModeProducesRealCover, true);
+    assert.equal(result.review.checks.realApiModeDoesNotReturnMockSvg, true);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -316,28 +497,76 @@ test("generateCoverWithReport rejects non-APIMart provider configuration", async
   }
 });
 
-test("generateApimartImage real mode is TODO-gated until API contract is known", async () => {
-  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-"));
+test("generateApimartImage real mode accepts APIMart data[0].url, image_url, and url responses", async () => {
+  const responseCases: Array<[string, unknown]> = [
+    ["data[0].url", { data: [{ url: "https://cdn.apimart.test/data-url.png" }] }],
+    ["image_url", { image_url: "https://cdn.apimart.test/image-url.png" }],
+    ["url", { url: "https://cdn.apimart.test/top-url.png" }]
+  ];
+
+  for (const [caseName, payload] of responseCases) {
+    const outputDir = await mkdtemp(join(tmpdir(), `cover-image-real-${caseName}-`));
+    const fetchCalls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      fetchCalls.push(input.toString());
+
+      if (fetchCalls.length === 1) {
+        return jsonResponse(payload);
+      }
+
+      return pngResponse();
+    };
+
+    try {
+      const result = await generateApimartImage({
+        provider: "apimart",
+        imagePrompt:
+          "Create a 900x383 cover with clear visual center, central subject, Chinese headline, and 2K quality.",
+        negativePrompt: "real brand marks, official product marks, price labels",
+        coverText: "AI 编码代理\n卷向工作流",
+        imageSize: "900x383",
+        outputDir,
+        env: apimartRealEnv(),
+        now: new Date("2026-05-29T00:00:00.000Z"),
+        fetchImpl
+      });
+      const savedBytes = await readFile(result.imagePath);
+
+      assert.equal(result.provider, "apimart", caseName);
+      assert.equal(result.mode, "real", caseName);
+      assert.equal(result.realApiCalled, true, caseName);
+      assert.match(result.imagePath, /\.png$/, caseName);
+      assert.deepEqual(savedBytes, onePixelPng, caseName);
+      assert.equal(fetchCalls.length, 2, caseName);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("generateApimartImage real mode accepts a binary PNG image response", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-binary-"));
+  const fetchImpl: typeof fetch = async () => pngResponse();
 
   try {
-    await assert.rejects(
-      () =>
-        generateApimartImage({
-          provider: "apimart",
-          imagePrompt:
-            "Create a 900x383 cover with clear visual center, central subject, Chinese headline, and 2K quality.",
-          negativePrompt: "real brand marks, official product marks, price labels",
-          coverText: "AI 编码代理\n卷向工作流",
-          imageSize: "900x383",
-          outputDir,
-          env: {
-            COVER_ENABLE_REAL_API: "true",
-            APIMART_API_KEY: "real-key-placeholder"
-          },
-          now: new Date("2026-05-29T00:00:00.000Z")
-        }),
-      /TODO: APIMart real image generation is not implemented yet/
-    );
+    const result = await generateApimartImage({
+      provider: "apimart",
+      imagePrompt:
+        "Create a 900x383 cover with clear visual center, central subject, Chinese headline, and 2K quality.",
+      negativePrompt: "real brand marks, official product marks, price labels",
+      coverText: "AI 编码代理\n卷向工作流",
+      imageSize: "900x383",
+      outputDir,
+      env: apimartRealEnv(),
+      now: new Date("2026-05-29T00:00:00.000Z"),
+      fetchImpl
+    });
+    const savedBytes = await readFile(result.imagePath);
+
+    assert.equal(result.mode, "real");
+    assert.equal(result.realApiCalled, true);
+    assert.match(result.imagePath, /\.png$/);
+    assert.deepEqual(savedBytes, onePixelPng);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -357,13 +586,63 @@ test("generateApimartImage real mode blocks when APIMART_API_KEY is missing", as
           coverText: "AI 编码代理\n卷向工作流",
           imageSize: "900x383",
           outputDir,
-          env: {
-            COVER_ENABLE_REAL_API: "true",
-            APIMART_API_KEY: ""
-          },
+          env: apimartRealEnv({ APIMART_API_KEY: "" }),
           now: new Date("2026-05-29T00:00:00.000Z")
         }),
       /COVER_ENABLE_REAL_API=true requires APIMART_API_KEY/
+    );
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("generateApimartImage real mode blocks when APIMART_IMAGE_API_URL is missing", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-no-url-"));
+
+  try {
+    await assert.rejects(
+      () =>
+        generateApimartImage({
+          provider: "apimart",
+          imagePrompt:
+            "Create a 900x383 cover with clear visual center, central subject, Chinese headline, and 2K quality.",
+          negativePrompt: "real brand marks, official product marks, price labels",
+          coverText: "AI 编码代理\n卷向工作流",
+          imageSize: "900x383",
+          outputDir,
+          env: apimartRealEnv({ APIMART_IMAGE_API_URL: "" }),
+          now: new Date("2026-05-29T00:00:00.000Z")
+        }),
+      /COVER_ENABLE_REAL_API=true requires APIMART_IMAGE_API_URL/
+    );
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("generateApimartImage real mode does not fallback to mock when APIMart response lacks image data", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-no-fallback-"));
+  const fetchImpl: typeof fetch = async () => jsonResponse({ data: [{}] });
+
+  try {
+    await assert.rejects(
+      () =>
+        generateApimartImage({
+          provider: "apimart",
+          imagePrompt:
+            "Create a 900x383 cover with clear visual center, central subject, Chinese headline, safe margins, and 2K quality.",
+          negativePrompt: "real brand marks, official product marks, price labels",
+          coverText: "AI 编码代理\n卷向工作流",
+          imageSize: "900x383",
+          outputDir,
+          env: apimartRealEnv(),
+          now: new Date("2026-05-29T00:00:00.000Z"),
+          fetchImpl
+        }),
+      /did not include data\[0\]\.url/
+    );
+    await assertFileMissing(
+      join(outputDir, "cover-apimart-mock-2026-05-29T00-00-00-000Z.svg")
     );
   } finally {
     await rm(outputDir, { recursive: true, force: true });

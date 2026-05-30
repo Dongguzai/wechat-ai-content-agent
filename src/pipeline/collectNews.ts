@@ -628,19 +628,32 @@ async function collectRawNews(
           }
         ]
       }
-    : await fetchRssNews(options.rssSourceList ?? rssSources, {
-        fetchImpl: options.fetchImpl,
-        logger,
-        now,
-        maxItemsPerSource: 8,
-        timeoutMs: 5_000
-      });
+    : !config.rssEnableRealFetch
+      ? {
+          items: [],
+          warnings: [
+            {
+              source: "rss" as const,
+              message: "Real RSS fetch is disabled and mock fallback is disabled."
+            }
+          ]
+        }
+      : await fetchRssNews(options.rssSourceList ?? rssSources, {
+          fetchImpl: options.fetchImpl,
+          logger,
+          now,
+          maxItemsPerSource: 8,
+          timeoutMs: config.rssFetchTimeoutMs,
+          retryCount: config.rssFetchRetry
+        });
 
   const globalSearchResult = await searchGlobalNews({
     config,
     fetchImpl: options.fetchImpl,
     logger,
-    now
+    now,
+    allowMockFallback:
+      options.env?.REAL_PRODUCTION_MODE?.trim().toLowerCase() !== "true"
   });
 
   return {
@@ -662,7 +675,11 @@ export async function collectNewsWithReport(
   const realProductionMode =
     options.env?.REAL_PRODUCTION_MODE?.trim().toLowerCase() === "true";
   const allowMockRssFallback = options.allowMockRssFallback ?? !realProductionMode;
-  const useMockRss = options.useMockRss ?? !config.rssEnableRealFetch;
+  if (realProductionMode && options.useMockRss === true) {
+    throw new Error("REAL_PRODUCTION_MODE=true forbids mock RSS fallback.");
+  }
+
+  const useMockRss = options.useMockRss ?? (!config.rssEnableRealFetch && !realProductionMode);
 
   logger.info("Collecting RSS and global search AI news candidates.");
   const rawCollection = await collectRawNews(
