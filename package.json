@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "dry-run": "node --import tsx scripts/dry-run.ts",
+    "wechat:upload-cover": "node --import tsx scripts/upload-wechat-cover.ts",
     "wechat:draft:dry-run": "WECHAT_DRAFT_DRY_RUN=true WECHAT_API_ENABLE_REAL_DRAFT=false WECHAT_DRAFT_ALLOW_REAL_API=false node --import tsx scripts/push-wechat-draft.ts",
     "wechat:draft:real": "WECHAT_DRAFT_DRY_RUN=false node --import tsx scripts/push-wechat-draft.ts --real",
     "test": "node --import tsx --test tests/*.test.ts",
