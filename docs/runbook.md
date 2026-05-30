@@ -1,6 +1,6 @@
-# v0.3.1 Runbook
+# v0.4.0 Runbook
 
-本文档用于 v0.3.1 内容质量优化版的每日运行、真实草稿写入和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
+本文档用于 v0.4.0 每日自动草稿版的每日运行、真实草稿写入、定时任务和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
 
 ## 1. 环境准备
 
@@ -9,7 +9,7 @@
 - Node.js >= 20
 - pnpm >= 9
 - 不提交 `.env`
-- 不提交 `outputs/` 或 `runs/` 业务产物
+- 不提交 `outputs/`、`runs/` 或 `logs/` 业务产物
 
 首次准备：
 
@@ -193,7 +193,54 @@ pnpm wechat:draft:real -- --force
 
 最终发布仍必须由人工登录微信公众号后台完成。
 
-## 7. 异常处理流程
+## 7. 每日定时运行
+
+每日自动草稿任务使用：
+
+```bash
+pnpm run:daily:auto
+```
+
+它按固定顺序执行：
+
+1. `pnpm run:daily`
+2. `pnpm wechat:draft:dry-run`
+3. `pnpm preflight:final`
+4. `pnpm wechat:draft:real`
+
+要求 `.env` 或当前 shell 中已经配置：
+
+- `WECHAT_APP_ID`
+- `WECHAT_APP_SECRET`
+- `WECHAT_COVER_MEDIA_ID`
+- `WECHAT_API_ENABLE_REAL_DRAFT=true`
+- `WECHAT_DRAFT_ALLOW_REAL_API=true`
+
+脚本会自动加载 `.env`，真实草稿阶段会确保 `WECHAT_DRAFT_DRY_RUN=false`。任意一步失败都会停止，后续步骤会在 `outputs/daily-auto-result.json` 中标记为 `skipped`。日志写入 `logs/daily-auto.log`，总结写入 `outputs/daily-auto-report.md`。
+
+macOS cron 示例：
+
+```bash
+crontab -e
+```
+
+每天早上 9 点运行：
+
+```cron
+0 9 * * * cd /Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent && pnpm run:daily:auto >> logs/daily-auto.log 2>&1
+```
+
+安全边界：
+
+- cron 不会发布文章。
+- cron 不会群发文章。
+- cron 只会创建公众号草稿箱草稿。
+- 最终发布需要人工进入公众号后台确认。
+- 如果同一天已经创建草稿，任务会被 same-day lock 阻止。
+- 如果要手动重复测试，才使用 `pnpm run:daily:auto -- --force`。
+- 不要把 `.env` 提交到 git，也不要提交真实凭据、token、`outputs/`、`runs/` 或 `logs/daily-auto.log`。
+
+## 8. 异常处理流程
 
 `pnpm run:daily` 失败：
 
@@ -220,7 +267,15 @@ pnpm wechat:draft:real -- --force
 - 若微信返回 IP 白名单错误，先到公众号后台配置当前出口 IP，再重新执行最终预检和真实草稿写入。
 - 若已经实际创建过草稿但本地命令失败，先登录公众号后台人工确认草稿箱状态，再决定是否需要 `--force`。
 
-## 8. 验收与发版
+`pnpm run:daily:auto` 失败：
+
+- 打开 `outputs/daily-auto-report.md` 查看失败步骤。
+- 打开 `logs/daily-auto.log` 查看分步日志。
+- 如果失败原因是 same-day lock，说明今天已经创建过真实草稿；不要自动重跑，只有手动重复测试才使用 `--force`。
+- 如果失败发生在 `preflight:final`，先按 `outputs/final-preflight-report.md` 修复，不要跳过文章审核、封面审核或 HTML 排版检查。
+- 如果失败发生在 `wechat:draft:real`，不要改用发布或群发接口，只排查凭据、IP 白名单、封面素材和微信官方草稿箱 API 返回。
+
+## 9. 验收与发版
 
 每次发版前执行 `docs/release-checklist.md` 中的检查项。最小命令集：
 

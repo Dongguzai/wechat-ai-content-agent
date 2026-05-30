@@ -9,6 +9,8 @@ outputs/*
 !outputs/.gitkeep
 runs/*
 !runs/.gitkeep
+logs/*
+!logs/.gitkeep
 feedback/*.json
 !feedback/template.json
 inputs/manual-topic.md

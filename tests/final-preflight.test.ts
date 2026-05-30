@@ -64,6 +64,100 @@ async function writeFinalPreflightFixture(outputDir: string): Promise<void> {
   );
 }
 
+async function writeProductionPreflightFixture(
+  outputDir: string,
+  options: {
+    coverMode?: "real" | "mock";
+    coverFileName?: string;
+  } = {}
+): Promise<void> {
+  await writeFinalPreflightFixture(outputDir);
+
+  const coverMode = options.coverMode ?? "real";
+  const coverFileName = options.coverFileName ?? "cover.png";
+  const coverDir = join(outputDir, "covers");
+  const coverPath = join(coverDir, coverFileName);
+
+  await mkdir(coverDir, { recursive: true });
+  await writeFile(coverPath, coverFileName.endsWith(".svg") ? "<svg />\n" : "png\n", "utf8");
+  await writeJson(join(outputDir, "cover.json"), {
+    provider: "apimart",
+    mode: coverMode,
+    title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+    coverText: "AI 编码代理\n卷向工作流",
+    imagePrompt: "Real cover prompt.",
+    negativePrompt: "No brand marks.",
+    imageSize: "900x383",
+    imagePath: coverPath,
+    visualRequirements: {
+      style: "3D animated movie quality, not specific studio imitation",
+      size: "900x383",
+      quality: "2K render quality",
+      language: "Chinese",
+      mainTextRequired: true,
+      visualCenterRequired: true
+    },
+    review: {
+      passed: true,
+      issues: [],
+      riskNotes: []
+    },
+    generatedAt: "2026-05-29T00:00:00.000Z"
+  });
+  await writeJson(join(outputDir, "cover-review.json"), {
+    provider: "apimart",
+    mode: coverMode,
+    imageSize: "900x383",
+    imagePath: coverPath,
+    passed: true,
+    issues: [],
+    riskNotes: [],
+    checks: {
+      providerIsApimart: true,
+      coverTextIsChinese: true,
+      imageSizeIs900x383: true,
+      declares2KQuality: true,
+      hasVisualCenter: true,
+      doesNotRequestRealBrandMarks: true,
+      doesNotRequestOfficialMarks: true,
+      doesNotIncludeSpecificPrice: true,
+      doesNotIncludeFreeSubstituteSlogan: true,
+      doesNotIncludeAbsoluteSubstituteClaim: true,
+      doesNotNameSpecificStudios: true,
+      imagePathAvailable: true,
+      embeddedReviewPassed: true
+    },
+    generatedAt: "2026-05-29T00:00:00.000Z"
+  });
+  await writeJson(join(outputDir, "real-data-audit.json"), {
+    passed: true,
+    realProductionMode: true,
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    outputDir,
+    checks: [],
+    issues: [],
+    warnings: [],
+    summary: {
+      candidateCount: 1,
+      shortlistedCount: 1,
+      realRssCandidateCount: 1,
+      realTavilyCandidateCount: 0,
+      realExaCandidateCount: 0,
+      mockCandidateCount: 0,
+      mockShortlistedCount: 0,
+      mockSearchCandidateCount: 0,
+      mockRssCandidateCount: 0,
+      mockFallbackDetected: false,
+      coverMode,
+      coverImagePath: coverPath
+    },
+    files: {
+      result: join(outputDir, "real-data-audit.json"),
+      report: join(outputDir, "real-data-audit-report.md")
+    }
+  });
+}
+
 test("final preflight passes when all real-draft prerequisites are satisfied", async () => {
   const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-pass-"));
 
@@ -297,5 +391,57 @@ test("final preflight reports blocking conditions", async () => {
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }
+  }
+});
+
+test("REAL_PRODUCTION_MODE=true blocks mock cover mode in final preflight", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-prod-mock-cover-"));
+
+  try {
+    await writeProductionPreflightFixture(outputDir, {
+      coverMode: "mock",
+      coverFileName: "cover.png"
+    });
+
+    const result = await runFinalPreflight({
+      outputDir,
+      lockDir: join(outputDir, "locks"),
+      env: {
+        REAL_PRODUCTION_MODE: "true",
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
+      },
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.issues.join("\n"), /production cover mode is real/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("REAL_PRODUCTION_MODE=true blocks svg cover imagePath in final preflight", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-prod-svg-cover-"));
+
+  try {
+    await writeProductionPreflightFixture(outputDir, {
+      coverMode: "real",
+      coverFileName: "cover.svg"
+    });
+
+    const result = await runFinalPreflight({
+      outputDir,
+      lockDir: join(outputDir, "locks"),
+      env: {
+        REAL_PRODUCTION_MODE: "true",
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
+      },
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.issues.join("\n"), /production cover image is jpg or png|mock svg/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
   }
 });

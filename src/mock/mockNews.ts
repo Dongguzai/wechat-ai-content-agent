@@ -298,6 +298,9 @@ export function createMockRssNews(now = new Date()): RawNewsItem[] {
 
   return mockRssTemplates.map((item) => ({
     id: item.id,
+    dataMode: "mock",
+    mock: true,
+    mockReason: "mock_rss",
     sourceType: "rss",
     provider: "none",
     title: item.title,
@@ -325,6 +328,9 @@ export function createMockGlobalSearchNews(
     templates.slice(0, Math.min(maxResultsPerQuery, templates.length)).map(
       (template, resultIndex) => ({
         id: `mock-${provider}-${queryIndex + 1}-${resultIndex + 1}`,
+        dataMode: "mock",
+        mock: true,
+        mockReason: "mock_search",
         sourceType: "global_search" as const,
         provider,
         query,

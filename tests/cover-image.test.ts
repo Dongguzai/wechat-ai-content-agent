@@ -342,3 +342,30 @@ test("generateApimartImage real mode is TODO-gated until API contract is known",
     await rm(outputDir, { recursive: true, force: true });
   }
 });
+
+test("generateApimartImage real mode blocks when APIMART_API_KEY is missing", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "cover-image-real-no-key-"));
+
+  try {
+    await assert.rejects(
+      () =>
+        generateApimartImage({
+          provider: "apimart",
+          imagePrompt:
+            "Create a 900x383 cover with clear visual center, central subject, Chinese headline, and 2K quality.",
+          negativePrompt: "real brand marks, official product marks, price labels",
+          coverText: "AI 编码代理\n卷向工作流",
+          imageSize: "900x383",
+          outputDir,
+          env: {
+            COVER_ENABLE_REAL_API: "true",
+            APIMART_API_KEY: ""
+          },
+          now: new Date("2026-05-29T00:00:00.000Z")
+        }),
+      /COVER_ENABLE_REAL_API=true requires APIMART_API_KEY/
+    );
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});

@@ -8,6 +8,7 @@ export interface RssSourceConfig {
 }
 
 export interface CollectionConfig {
+  rssEnableRealFetch: boolean;
   searchEnableRealApi: boolean;
   tavilyApiKey?: string;
   exaApiKey?: string;
@@ -114,6 +115,7 @@ export const exaQueries = [
 ];
 
 const DEFAULT_CONFIG: CollectionConfig = {
+  rssEnableRealFetch: true,
   searchEnableRealApi: false,
   tavilyMaxQueriesPerRun: 6,
   exaMaxQueriesPerRun: 6,
@@ -150,6 +152,10 @@ export function readCollectionConfig(
   env: NodeJS.ProcessEnv = process.env
 ): CollectionConfig {
   return {
+    rssEnableRealFetch: readBoolean(
+      env.RSS_ENABLE_REAL_FETCH,
+      DEFAULT_CONFIG.rssEnableRealFetch
+    ),
     searchEnableRealApi: readBoolean(
       env.SEARCH_ENABLE_REAL_API,
       DEFAULT_CONFIG.searchEnableRealApi

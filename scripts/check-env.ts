@@ -35,6 +35,8 @@ export interface EnvCheckCliOptions extends EnvCheckOptions {
 }
 
 const envSpecs: EnvSpec[] = [
+  { name: "REAL_PRODUCTION_MODE", kind: "boolean" },
+  { name: "RSS_ENABLE_REAL_FETCH", kind: "boolean" },
   { name: "SEARCH_ENABLE_REAL_API", kind: "boolean" },
   { name: "TAVILY_API_KEY", kind: "string" },
   { name: "EXA_API_KEY", kind: "string" },
@@ -275,14 +277,30 @@ function validateConditionalEnv(
   errors: string[],
   warnings: string[]
 ): void {
+  const realProductionMode = isExplicitTrue(env, "REAL_PRODUCTION_MODE");
+
+  if (realProductionMode) {
+    if (!isExplicitTrue(env, "RSS_ENABLE_REAL_FETCH")) {
+      errors.push("REAL_PRODUCTION_MODE=true requires RSS_ENABLE_REAL_FETCH=true.");
+    }
+
+    if (!isExplicitTrue(env, "SEARCH_ENABLE_REAL_API")) {
+      errors.push("REAL_PRODUCTION_MODE=true requires SEARCH_ENABLE_REAL_API=true.");
+    }
+  }
+
   if (isExplicitTrue(env, "SEARCH_ENABLE_REAL_API")) {
     const hasTavilyKey = Boolean(envValue(env, "TAVILY_API_KEY"));
     const hasExaKey = Boolean(envValue(env, "EXA_API_KEY"));
 
     if (!hasTavilyKey && !hasExaKey) {
-      errors.push(
-        "SEARCH_ENABLE_REAL_API=true requires TAVILY_API_KEY or EXA_API_KEY."
-      );
+      const message =
+        "SEARCH_ENABLE_REAL_API=true requires TAVILY_API_KEY or EXA_API_KEY for real search.";
+      if (realProductionMode) {
+        errors.push(message);
+      } else {
+        warnings.push(`${message} Development mode will use mock search.`);
+      }
     } else {
       if (!hasTavilyKey) {
         warnings.push("TAVILY_API_KEY is empty; Tavily will use mock search.");
@@ -292,6 +310,15 @@ function validateConditionalEnv(
         warnings.push("EXA_API_KEY is empty; Exa will use mock search.");
       }
     }
+  }
+
+  if (
+    realProductionMode &&
+    isExplicitFalse(env, "COVER_ENABLE_REAL_API")
+  ) {
+    warnings.push(
+      "REAL_PRODUCTION_MODE=true requires a real cover artifact before final preflight; COVER_ENABLE_REAL_API=false will keep generated covers in mock mode unless a real cover is supplied."
+    );
   }
 
   if (isExplicitTrue(env, "COVER_ENABLE_REAL_API") && !envValue(env, "APIMART_API_KEY")) {

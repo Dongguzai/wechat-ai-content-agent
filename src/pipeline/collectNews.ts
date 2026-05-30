@@ -350,6 +350,9 @@ function normalizeRawItem(raw: RawNewsItem, now: Date): NormalizedNewsItem {
     : `title:${titleFingerprint(title)}`;
   const normalizedBase: Omit<NormalizedNewsItem, "rejection"> = {
     id: raw.id,
+    dataMode: raw.dataMode ?? (raw.mock ? "mock" : "real"),
+    mock: raw.mock === true || raw.dataMode === "mock",
+    mockReason: raw.mockReason,
     title,
     url,
     sourceName: trimText(raw.sourceName) || "Unknown source",
@@ -656,10 +659,21 @@ export async function collectNewsWithReport(
   const now = options.now ?? new Date();
   const config = readCollectionConfig(options.env);
   const writeOutputs = options.writeOutputs ?? true;
-  const allowMockRssFallback = options.allowMockRssFallback ?? true;
+  const realProductionMode =
+    options.env?.REAL_PRODUCTION_MODE?.trim().toLowerCase() === "true";
+  const allowMockRssFallback = options.allowMockRssFallback ?? !realProductionMode;
+  const useMockRss = options.useMockRss ?? !config.rssEnableRealFetch;
 
   logger.info("Collecting RSS and global search AI news candidates.");
-  const rawCollection = await collectRawNews(options, config, now, logger);
+  const rawCollection = await collectRawNews(
+    {
+      ...options,
+      useMockRss
+    },
+    config,
+    now,
+    logger
+  );
 
   let collection = buildCollection({
     ...rawCollection,
@@ -684,7 +698,12 @@ export async function collectNewsWithReport(
     const existingKeys = new Set(rawCollection.rawItems.map((item) => item.id));
     const mockFallback = createMockRssNews(now).filter(
       (item) => !existingKeys.has(item.id)
-    );
+    ).map((item) => ({
+      ...item,
+      dataMode: "mock" as const,
+      mock: true,
+      mockReason: "rss_fallback"
+    }));
 
     collection = buildCollection({
       rawItems: [...rawCollection.rawItems, ...mockFallback],

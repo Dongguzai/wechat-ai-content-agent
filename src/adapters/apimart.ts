@@ -119,7 +119,7 @@ export async function generateApimartImage(
 
   if (!env.APIMART_API_KEY?.trim()) {
     throw new Error(
-      "COVER_ENABLE_REAL_API=true requires APIMART_API_KEY. Refusing to call APIMart without credentials."
+      "COVER_ENABLE_REAL_API=true requires APIMART_API_KEY. APIMart real image generation also remains blocked until the endpoint, request schema, authentication, and image response handling are confirmed."
     );
   }
 

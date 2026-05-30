@@ -75,6 +75,7 @@ interface WechatApiRuntimeConfig {
   realApiAllowSwitchEnabled: boolean;
   explicitDryRun: boolean;
   realApiRequested: boolean;
+  realProductionMode: boolean;
   forbidPublishEnvEnabled: boolean;
   forbidMassSendEnvEnabled: boolean;
 }
@@ -194,6 +195,7 @@ function createRuntimeConfig(
     realApiAllowSwitchEnabled,
     explicitDryRun,
     realApiRequested,
+    realProductionMode: parseBoolean(env.REAL_PRODUCTION_MODE),
     forbidPublishEnvEnabled: env.WECHAT_FORBID_PUBLISH !== "false",
     forbidMassSendEnvEnabled: env.WECHAT_FORBID_MASS_SEND !== "false"
   };
@@ -404,6 +406,20 @@ async function createPreflight(input: {
       issues.push(
         "A real draft requires WECHAT_COVER_MEDIA_ID or an uploadable local JPG/PNG cover image."
       );
+    }
+
+    if (input.config.realProductionMode) {
+      if (input.artifacts.cover?.mode !== "real") {
+        issues.push("REAL_PRODUCTION_MODE=true requires cover.mode=real before creating a real WeChat draft.");
+      }
+
+      if (!input.artifacts.cover?.imagePath || !/\.(?:jpe?g|png)$/i.test(input.artifacts.cover.imagePath)) {
+        issues.push("REAL_PRODUCTION_MODE=true requires cover.imagePath to be a real JPG/PNG file.");
+      }
+
+      if (coverIsMockSvg) {
+        issues.push("REAL_PRODUCTION_MODE=true forbids mock SVG cover artifacts.");
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 # 公众号 AI 内容生产与草稿发布 Agent
 
-v0.3.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、标题优化、审核、封面、公众号 HTML 排版，到草稿箱请求预检的完整链路，并补齐每日稳定运行所需的归档、最终预检和真实草稿运行锁。
+v0.4.0 是一个本地优先、默认 dry-run、支持每日自动草稿箱写入的公众号 AI 内容生产流水线。它已经串起从 AI 资讯采集、选题、事实包、文章、标题优化、审核、封面、公众号 HTML 排版、最终预检，到微信公众号官方 API 草稿箱写入的完整链路，并保留真实草稿 same-day 运行锁。
 
 默认运行不会调用真实微信写入接口，不会打开微信公众号后台，不会发布，不会群发。真实创建公众号草稿必须显式打开双开关，并通过官方草稿箱 API 创建草稿，最终发布仍然只能人工完成。
 
@@ -19,6 +19,7 @@ v0.3.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 11. 生成微信公众号官方 API 草稿箱请求预检和 dry-run 报告。
 12. 每次 `pnpm dry-run` 或 `pnpm run:daily` 成功后，把核心产物归档到 `runs/yyyy-mm-dd-HHmmss/`，并写入 `run-report.md`。
 13. 在双开关、凭据、封面素材、最终预检和安全检查全部满足时，允许创建公众号草稿箱草稿。
+14. `pnpm run:daily:auto` 可串联每日生产、mock 草稿、官方 API dry-run、最终预检和真实草稿箱写入，并输出 `outputs/daily-auto-report.md`、`outputs/daily-auto-result.json` 与 `logs/daily-auto.log`。
 
 ## 当前边界
 
@@ -29,7 +30,7 @@ v0.3.1 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 - 不调用群发接口。
 - 不自动点击“发布”“群发”“确认发送”“立即发送”。
 - 不默认操作微信公众号后台页面。
-- 不做定时任务。
+- 不内置常驻定时服务；如需定时运行，只通过系统 cron 调用 `pnpm run:daily:auto`。
 - 不接数据库。
 - 默认业务产物写入 `outputs/`，成功运行归档写入 `runs/yyyy-mm-dd-HHmmss/`。
 
@@ -160,6 +161,43 @@ pnpm wechat:draft:real -- --force
 
 6. 人工登录公众号后台检查草稿，再由人工决定是否发布。
 
+## 每日定时运行
+
+`pnpm run:daily:auto` 会按顺序执行：
+
+1. `pnpm run:daily`
+2. `pnpm wechat:draft:dry-run`
+3. `pnpm preflight:final`
+4. `pnpm wechat:draft:real`
+
+脚本会自动加载 `.env`，要求 `WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_COVER_MEDIA_ID` 存在，并要求 `WECHAT_API_ENABLE_REAL_DRAFT=true`、`WECHAT_DRAFT_ALLOW_REAL_API=true`。真实草稿阶段会确保 `WECHAT_DRAFT_DRY_RUN=false`。任意一步失败都会立即停止，后续步骤标记为 skipped，不会自动追加 `--force`。
+
+手动运行：
+
+```bash
+pnpm run:daily:auto
+```
+
+如果同一天已经创建过真实草稿，任务会被 same-day lock 阻止。只有手动重复测试且明确接受重复草稿时，才使用：
+
+```bash
+pnpm run:daily:auto -- --force
+```
+
+macOS cron 示例：
+
+```bash
+crontab -e
+```
+
+每天早上 9 点运行：
+
+```cron
+0 9 * * * cd /Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent && pnpm run:daily:auto >> logs/daily-auto.log 2>&1
+```
+
+cron 不会发布文章，也不会群发文章；它只会在全部审核和最终预检通过后创建公众号草稿箱草稿。最终发布仍需要人工进入公众号后台确认。如果同一天已经创建草稿，任务会被 same-day lock 阻止。不要把 `.env`、真实凭据、token、`outputs/` 业务产物或 `logs/daily-auto.log` 提交到 git。
+
 ## 常用脚本
 
 | command | purpose |
@@ -168,6 +206,7 @@ pnpm wechat:draft:real -- --force
 | `pnpm env:check` | 检查 `.env` 格式、变量漂移、当前草稿模式和真实模式必填项 |
 | `pnpm dry-run` | 执行完整本地 dry-run 流水线 |
 | `pnpm run:daily` | 执行每日稳定运行流程，默认 dry-run 并归档核心产物 |
+| `pnpm run:daily:auto` | 每日自动生产内容并在最终预检通过后写入公众号草稿箱 |
 | `pnpm preflight:final` | 检查真实草稿写入前的最终条件，不调用真实微信 API |
 | `pnpm wechat:upload-cover -- --dry-run` | 演练封面素材上传脚本，不调用真实微信接口 |
 | `pnpm wechat:upload-cover` | 上传真实 JPG/PNG 封面素材并输出 `WECHAT_COVER_MEDIA_ID` |

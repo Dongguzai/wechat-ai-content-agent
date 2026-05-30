@@ -1,18 +1,19 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, extname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   FORBIDDEN_WECHAT_PUBLISH_API_TERMS,
   verifyWechatDraftOnlyApiGuard
 } from "../hooks/forbidWechatPublishApi.js";
 import type { ArticleReviewResult } from "../types/article.js";
-import type { CoverReviewResult } from "../types/cover.js";
+import type { CoverResult, CoverReviewResult } from "../types/cover.js";
 import type {
   FinalPreflightCheck,
   FinalPreflightOutputFiles,
   FinalPreflightResult
 } from "../types/finalPreflight.js";
 import type { WechatLayoutResult } from "../types/layout.js";
+import type { RealDataAuditResult } from "../types/realDataAudit.js";
 import type {
   WechatApiDraftResult,
   WechatApiPreflight
@@ -49,6 +50,14 @@ function createOutputFiles(outputDir: string): FinalPreflightOutputFiles {
 async function readJsonFile<T>(path: string): Promise<T> {
   const content = await readFile(path, "utf8");
   return JSON.parse(content) as T;
+}
+
+async function readOptionalJsonFile<T>(path: string): Promise<T | undefined> {
+  try {
+    return await readJsonFile<T>(path);
+  } catch {
+    return undefined;
+  }
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -130,6 +139,100 @@ function findForbiddenTerms(html: string): string[] {
   return FORBIDDEN_WECHAT_PUBLISH_API_TERMS.filter((term) =>
     lowerHtml.includes(term.toLowerCase())
   );
+}
+
+function isRealProductionMode(env: NodeJS.ProcessEnv): boolean {
+  return env.REAL_PRODUCTION_MODE?.trim().toLowerCase() === "true";
+}
+
+function isPngOrJpegPath(path: string | undefined): boolean {
+  return Boolean(path && /\.(?:png|jpe?g)$/i.test(path));
+}
+
+function isMockSvgPath(path: string | undefined): boolean {
+  return Boolean(
+    path &&
+      (/\.svg(?:[?#].*)?$/i.test(path) || /\bmock\b/i.test(basename(path)))
+  );
+}
+
+function productionChecks(input: {
+  realProductionMode: boolean;
+  realDataAudit?: RealDataAuditResult;
+  cover?: CoverResult;
+  coverReview: CoverReviewResult;
+  dangerousApis: string[];
+  lockStateLocked: boolean;
+  force: boolean;
+}): FinalPreflightCheck[] {
+  if (!input.realProductionMode) {
+    return [];
+  }
+
+  const coverImagePath =
+    input.cover?.imagePath || input.coverReview.imagePath || "";
+  const mockSummary = input.realDataAudit?.summary;
+  const mockDetails = mockSummary
+    ? [
+        `mockCandidateCount=${mockSummary.mockCandidateCount}`,
+        `mockShortlistedCount=${mockSummary.mockShortlistedCount}`,
+        `mockSearchCandidateCount=${mockSummary.mockSearchCandidateCount}`,
+        `mockRssCandidateCount=${mockSummary.mockRssCandidateCount}`,
+        `mockFallbackDetected=${mockSummary.mockFallbackDetected}`,
+        `coverMode=${mockSummary.coverMode}`
+      ]
+    : ["real-data-audit.json is missing."];
+
+  return [
+    makeCheck(
+      "real-data-audit passed",
+      input.realDataAudit?.passed === true,
+      "REAL_PRODUCTION_MODE=true requires real-data-audit.passed=true.",
+      input.realDataAudit?.issues ?? ["real-data-audit.json is missing."]
+    ),
+    makeCheck(
+      "production cover mode is real",
+      input.cover?.mode === "real",
+      "REAL_PRODUCTION_MODE=true requires cover.mode=real.",
+      [`cover.mode=${input.cover?.mode ?? "missing"}`]
+    ),
+    makeCheck(
+      "production cover image is jpg or png",
+      isPngOrJpegPath(coverImagePath),
+      "REAL_PRODUCTION_MODE=true requires cover.imagePath to be a JPG, JPEG, or PNG.",
+      [coverImagePath || "cover.imagePath missing"]
+    ),
+    makeCheck(
+      "production cover is not mock svg",
+      !isMockSvgPath(coverImagePath) && input.cover?.mode !== "mock",
+      "REAL_PRODUCTION_MODE=true forbids mock SVG covers.",
+      [coverImagePath || "cover.imagePath missing"]
+    ),
+    makeCheck(
+      "production mock fallback absent",
+      input.realDataAudit?.passed === true &&
+        (mockSummary?.mockCandidateCount ?? 0) === 0 &&
+        (mockSummary?.mockShortlistedCount ?? 0) === 0 &&
+        (mockSummary?.mockFallbackDetected ?? false) === false &&
+        (mockSummary?.coverMode ?? "missing") === "real",
+      "REAL_PRODUCTION_MODE=true forbids mock news, mock search, mock cover, and fallback mock artifacts.",
+      mockDetails
+    ),
+    makeCheck(
+      "production has no publish api terms",
+      input.dangerousApis.length === 0,
+      "No publish/freepublish/mass/sendall interface may be used in production mode.",
+      input.dangerousApis
+    ),
+    makeCheck(
+      "production same-day lock clear or forced",
+      !input.lockStateLocked || input.force,
+      "REAL_PRODUCTION_MODE=true requires same-day lock clear or explicit --force.",
+      input.lockStateLocked
+        ? ["same-day real draft lock exists and --force was not provided."]
+        : []
+    )
+  ];
 }
 
 function resultUsesDraftOnlyEndpoint(result: WechatApiDraftResult): boolean {
@@ -265,12 +368,17 @@ export async function runFinalPreflight(
   const now = options.now ?? new Date();
   const generatedAt = now.toISOString();
   const force = options.force === true;
+  const realProductionMode = isRealProductionMode(env);
   const files = createOutputFiles(outputDir);
   const articleReview = await readJsonFile<ArticleReviewResult>(
     join(outputDir, "article-review.json")
   );
+  const cover = await readOptionalJsonFile<CoverResult>(join(outputDir, "cover.json"));
   const coverReview = await readJsonFile<CoverReviewResult>(
     join(outputDir, "cover-review.json")
+  );
+  const realDataAudit = await readOptionalJsonFile<RealDataAuditResult>(
+    join(outputDir, "real-data-audit.json")
   );
   const layout = await readJsonFile<WechatLayoutResult>(
     join(outputDir, "wechat-layout.json")
@@ -359,7 +467,16 @@ export async function runFinalPreflight(
         force
       }),
       lockState.locked ? [lockState.lockFile] : []
-    )
+    ),
+    ...productionChecks({
+      realProductionMode,
+      realDataAudit,
+      cover,
+      coverReview,
+      dangerousApis,
+      lockStateLocked: lockState.locked,
+      force
+    })
   ];
   const issues = checks
     .filter((check) => !check.passed)

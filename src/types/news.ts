@@ -10,6 +10,8 @@ export type NewsSourceType = "rss" | "global_search" | "manual";
 
 export type SearchProvider = "tavily" | "exa" | "none";
 
+export type NewsDataMode = "real" | "mock";
+
 export type NewsTag =
   | "tooling"
   | "open-source"
@@ -34,6 +36,9 @@ export interface NewsScores {
 
 export interface RawNewsItem {
   id: string;
+  dataMode?: NewsDataMode;
+  mock?: boolean;
+  mockReason?: string;
   sourceType: NewsSourceType;
   provider?: SearchProvider;
   query?: string;
@@ -66,6 +71,9 @@ export interface NewsRejection {
 
 export interface NormalizedNewsItem {
   id: string;
+  dataMode?: NewsDataMode;
+  mock?: boolean;
+  mockReason?: string;
   title: string;
   url: string;
   sourceName: string;
