@@ -22,6 +22,7 @@ interface TempAutoRun {
   outputDir: string;
   logFile: string;
   lockDir: string;
+  runsDir: string;
 }
 
 async function createTempAutoRun(prefix: string): Promise<TempAutoRun> {
@@ -31,7 +32,8 @@ async function createTempAutoRun(prefix: string): Promise<TempAutoRun> {
     root,
     outputDir: join(root, "outputs"),
     logFile: join(root, "logs", "daily-auto.log"),
-    lockDir: join(root, "locks")
+    lockDir: join(root, "locks"),
+    runsDir: join(root, "runs")
   };
 }
 
@@ -41,6 +43,13 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 
 function completeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
+    REAL_PRODUCTION_MODE: "true",
+    RSS_ENABLE_REAL_FETCH: "true",
+    SEARCH_ENABLE_REAL_API: "true",
+    TAVILY_API_KEY: "TAVILY_KEY_VALUE",
+    COVER_ENABLE_REAL_API: "true",
+    APIMART_API_KEY: "APIMART_KEY_VALUE",
+    APIMART_IMAGE_API_URL: "https://api.apimart.test/images",
     WECHAT_API_ENABLE_REAL_DRAFT: "true",
     WECHAT_DRAFT_ALLOW_REAL_API: "true",
     WECHAT_DRAFT_DRY_RUN: "true",
@@ -457,6 +466,12 @@ function successHandlers(
         message: "daily ok"
       };
     },
+    "real-data-audit": async () => {
+      calls.push("real-data-audit");
+      return {
+        message: "real data audit ok"
+      };
+    },
     "wechat:draft:dry-run": async () => {
       calls.push("wechat:draft:dry-run");
       return {
@@ -488,7 +503,8 @@ async function runTempAuto(
     outputDir: temp.outputDir,
     logFile: temp.logFile,
     lockDir: temp.lockDir,
-    now: new Date("2026-05-29T09:00:00.000Z"),
+    runsDir: temp.runsDir,
+    now: new Date(2026, 4, 29, 9, 0, 0),
     env: completeEnv(),
     loadEnv: false,
     consoleOutput: false,
@@ -547,17 +563,37 @@ test("run:daily:auto blocks when WECHAT_APP_SECRET is missing", async () => {
   }
 });
 
-test("run:daily:auto blocks when WECHAT_COVER_MEDIA_ID is missing", async () => {
-  const temp = await createTempAutoRun("daily-auto-no-cover-media-");
+test("run:daily:auto blocks when REAL_PRODUCTION_MODE=true is missing", async () => {
+  const temp = await createTempAutoRun("daily-auto-no-real-production-mode-");
 
   try {
     const result = await runTempAuto(temp, {
-      env: completeEnv({ WECHAT_COVER_MEDIA_ID: "" }),
+      env: completeEnv({ REAL_PRODUCTION_MODE: "false" }),
       stepHandlers: successHandlers()
     });
 
     assert.equal(result.status, "failed");
-    assert.match(result.error ?? "", /WECHAT_COVER_MEDIA_ID/);
+    assert.match(result.error ?? "", /REAL_PRODUCTION_MODE/);
+    assert.equal(
+      result.steps.find((step) => step.name === "run:daily")?.status,
+      "skipped"
+    );
+  } finally {
+    await rm(temp.root, { recursive: true, force: true });
+  }
+});
+
+test("run:daily:auto blocks when APIMART_API_KEY is missing", async () => {
+  const temp = await createTempAutoRun("daily-auto-no-apimart-key-");
+
+  try {
+    const result = await runTempAuto(temp, {
+      env: completeEnv({ APIMART_API_KEY: "" }),
+      stepHandlers: successHandlers()
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.error ?? "", /APIMART_API_KEY/);
     assert.equal(
       result.steps.find((step) => step.name === "run:daily")?.status,
       "skipped"
@@ -578,10 +614,10 @@ test("run:daily:auto writes draft only and does not expose secrets or credential
       }),
       stepHandlers: {
         "run:daily": async () => {
-          await writeDraftFixture(temp.outputDir);
+          await writeProductionDraftFixture(temp.outputDir);
           return {
-            selectedTitle: "AI 编码代理真正卷到的，不是价格，而是工作流",
-            message: "fixture daily output ready"
+            selectedTitle: "AI Agent 工作流进入真实生产",
+            message: "production fixture daily output ready"
           };
         }
       },
@@ -618,10 +654,19 @@ test("run:daily:auto writes draft only and does not expose secrets or credential
 
     assert.equal(result.status, "success");
     assert.equal(saved.status, "success");
+    assert.equal(saved.mode, "daily_auto");
+    assert.equal(typeof saved.startedAt, "string");
+    assert.equal(typeof saved.finishedAt, "string");
+    assert.equal(typeof saved.durationMs, "number");
     assert.equal(saved.draftOnly, true);
     assert.equal(saved.publishApiCalled, false);
     assert.equal(saved.massSendApiCalled, false);
     assert.equal(saved.requiresHumanConfirmation, true);
+    assert.equal(
+      saved.selectedTopicUrl,
+      "https://openai.com/news/real-ai-agent-workflow"
+    );
+    assert.match(saved.coverImagePath ?? "", /cover\.png$/);
     assert.equal(saved.draftMediaId, "DRAFT_MEDIA_ID_VALUE");
     assert.equal(
       calls.some((url) => /freepublish|mass|sendall|publish/i.test(url)),
@@ -632,6 +677,7 @@ test("run:daily:auto writes draft only and does not expose secrets or credential
     assert.doesNotMatch(outputText, /\baccess_token\b/i);
     await access(join(temp.outputDir, "daily-auto-result.json"));
     await access(join(temp.outputDir, "daily-auto-report.md"));
+    await access(join(temp.root, "runs", "2026-05-29-090000", "run-report.md"));
   } finally {
     await rm(temp.root, { recursive: true, force: true });
   }
@@ -646,6 +692,9 @@ test("run:daily:auto marks later steps skipped after a step failure", async () =
         "run:daily": async () => ({
           selectedTitle: "自动选题标题",
           message: "daily ok"
+        }),
+        "real-data-audit": async () => ({
+          message: "real data audit ok"
         }),
         "wechat:draft:dry-run": async () => {
           throw new Error("dry-run failed intentionally");
@@ -686,7 +735,7 @@ test("same-day draft lock blocks run:daily:auto by default", async () => {
       lockDir: temp.lockDir,
       mediaId: "EXISTING_DRAFT_MEDIA_ID",
       title: "已有草稿标题",
-      now: new Date("2026-05-29T08:00:00.000Z")
+      now: new Date(2026, 4, 29, 8, 0, 0)
     });
 
     const result = await runTempAuto(temp, {
@@ -704,7 +753,7 @@ test("same-day draft lock blocks run:daily:auto by default", async () => {
       result.steps.find((step) => step.name === "same-day draft lock")?.status,
       "failed"
     );
-    assert.match(report, /stoppedBySameDayDraftLock: yes/);
+    assert.match(report, /是否被同日真实草稿锁阻断: 是/);
   } finally {
     await rm(temp.root, { recursive: true, force: true });
   }
@@ -719,7 +768,7 @@ test("--force allows run:daily:auto to bypass same-day draft lock", async () => 
       lockDir: temp.lockDir,
       mediaId: "EXISTING_DRAFT_MEDIA_ID",
       title: "已有草稿标题",
-      now: new Date("2026-05-29T08:00:00.000Z")
+      now: new Date(2026, 4, 29, 8, 0, 0)
     });
 
     const result = await runTempAuto(temp, {
@@ -731,6 +780,7 @@ test("--force allows run:daily:auto to bypass same-day draft lock", async () => 
     assert.equal(result.draftMediaId, "DRAFT_MEDIA_ID_VALUE");
     assert.deepEqual(calls, [
       "run:daily",
+      "real-data-audit",
       "wechat:draft:dry-run",
       "preflight:final",
       "wechat:draft:real"
@@ -755,7 +805,7 @@ test("REAL_PRODUCTION_MODE=true runs real-data-audit and does not call publish A
         RSS_ENABLE_REAL_FETCH: "true",
         SEARCH_ENABLE_REAL_API: "true",
         TAVILY_API_KEY: "TAVILY_KEY_VALUE",
-        COVER_ENABLE_REAL_API: "false"
+        COVER_ENABLE_REAL_API: "true"
       }),
       stepHandlers: {
         "run:daily": async () => {

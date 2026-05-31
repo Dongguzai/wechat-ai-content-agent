@@ -88,7 +88,13 @@ const envSpecs: EnvSpec[] = [
   { name: "WECHAT_COVER_MEDIA_ID", kind: "string" },
   { name: "WECHAT_COVER_IMAGE_PATH", kind: "string" },
   { name: "WECHAT_NEED_OPEN_COMMENT", kind: "flag" },
-  { name: "WECHAT_ONLY_FANS_CAN_COMMENT", kind: "flag" }
+  { name: "WECHAT_ONLY_FANS_CAN_COMMENT", kind: "flag" },
+  { name: "NOTIFY_ENABLE", kind: "boolean" },
+  { name: "NOTIFY_METHOD", kind: "enum", allowedValues: ["console", "webhook"] },
+  { name: "NOTIFY_WEBHOOK_URL", kind: "url" },
+  { name: "NOTIFY_EMAIL_TO", kind: "string" },
+  { name: "NOTIFY_ON_SUCCESS", kind: "boolean" },
+  { name: "NOTIFY_ON_FAILURE", kind: "boolean" }
 ];
 
 const envSpecByName = new Map(envSpecs.map((spec) => [spec.name, spec]));

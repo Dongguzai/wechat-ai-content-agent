@@ -1,6 +1,6 @@
-# v0.4.0 Runbook
+# v0.6.0 Runbook
 
-本文档用于 v0.4.0 每日自动草稿版的每日运行、真实草稿写入、定时任务和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
+本文档用于 v0.6.0 每日自动草稿版的每日运行、真实草稿写入、8 点定时任务、失败通知和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
 
 ## 1. 环境准备
 
@@ -142,7 +142,7 @@ pnpm run:daily
 pnpm wechat:draft:dry-run
 ```
 
-准备封面素材。真实草稿必须有 `WECHAT_COVER_MEDIA_ID`：
+准备封面素材。真实草稿需要 `WECHAT_COVER_MEDIA_ID`，或可上传的真实 JPG/PNG/JPEG 封面图片路径：
 
 ```bash
 WECHAT_APP_ID=你的AppID \
@@ -165,7 +165,7 @@ pnpm preflight:final
 - 封面审核通过。
 - 公众号 HTML 排版允许进入下一阶段。
 - 官方 API 草稿 dry-run 通过。
-- `WECHAT_COVER_MEDIA_ID` 存在。
+- `WECHAT_COVER_MEDIA_ID` 存在，或存在可上传的真实 JPG/PNG/JPEG 封面图片。
 - HTML 不包含本地图片路径。
 - HTML 不包含发布或群发风险词。
 - 只存在草稿箱创建接口，不存在 publish、freepublish、mass、sendall 等接口路径。
@@ -204,30 +204,56 @@ pnpm run:daily:auto
 它按固定顺序执行：
 
 1. `pnpm run:daily`
-2. `pnpm wechat:draft:dry-run`
-3. `pnpm preflight:final`
-4. `pnpm wechat:draft:real`
+2. `real-data-audit`
+3. `pnpm wechat:draft:dry-run`
+4. `pnpm preflight:final`
+5. `pnpm wechat:draft:real`
 
 要求 `.env` 或当前 shell 中已经配置：
 
+- `REAL_PRODUCTION_MODE=true`
+- `RSS_ENABLE_REAL_FETCH=true`
+- `SEARCH_ENABLE_REAL_API=true`
+- `COVER_ENABLE_REAL_API=true`
+- `APIMART_API_KEY`
+- `APIMART_IMAGE_API_URL`
 - `WECHAT_APP_ID`
 - `WECHAT_APP_SECRET`
-- `WECHAT_COVER_MEDIA_ID`
 - `WECHAT_API_ENABLE_REAL_DRAFT=true`
 - `WECHAT_DRAFT_ALLOW_REAL_API=true`
 
-脚本会自动加载 `.env`，真实草稿阶段会确保 `WECHAT_DRAFT_DRY_RUN=false`。任意一步失败都会停止，后续步骤会在 `outputs/daily-auto-result.json` 中标记为 `skipped`。日志写入 `logs/daily-auto.log`，总结写入 `outputs/daily-auto-report.md`。
+脚本会自动加载 `.env`，真实草稿阶段会确保 `WECHAT_DRAFT_DRY_RUN=false`。任意一步失败都会停止，后续步骤会在 `outputs/daily-auto-result.json` 中标记为 `skipped`。日志写入 `logs/daily-auto.log`，总结写入 `outputs/daily-auto-report.md`，本次运行报告写入 `runs/yyyy-mm-dd-HHmmss/run-report.md`。
 
-macOS cron 示例：
+安装每天早上 8 点运行的项目 cron：
 
 ```bash
-crontab -e
+pnpm scheduler:install
 ```
 
-每天早上 9 点运行：
+查看当前项目相关 cron：
+
+```bash
+pnpm scheduler:show
+```
+
+取消项目 cron：
+
+```bash
+pnpm scheduler:uninstall
+```
+
+安装后的 cron 块：
 
 ```cron
-0 9 * * * cd /Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent && pnpm run:daily:auto >> logs/daily-auto.log 2>&1
+# wechat-ai-content-agent daily auto start
+0 8 * * * cd /Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent && pnpm run:daily:auto >> logs/daily-auto.log 2>&1
+# wechat-ai-content-agent daily auto end
+```
+
+查看日志：
+
+```bash
+tail -f logs/daily-auto.log
 ```
 
 安全边界：
@@ -239,6 +265,18 @@ crontab -e
 - 如果同一天已经创建草稿，任务会被 same-day lock 阻止。
 - 如果要手动重复测试，才使用 `pnpm run:daily:auto -- --force`。
 - 不要把 `.env` 提交到 git，也不要提交真实凭据、token、`outputs/`、`runs/` 或 `logs/daily-auto.log`。
+
+轻量通知默认关闭。开启失败通知示例：
+
+```bash
+NOTIFY_ENABLE=true
+NOTIFY_METHOD=webhook
+NOTIFY_WEBHOOK_URL=https://example.com/webhook
+NOTIFY_ON_FAILURE=true
+NOTIFY_ON_SUCCESS=false
+```
+
+通知 payload 只包含运行状态、标题、摘要、文章标题、草稿 media_id、报告路径和人工确认要求，不写入 AppSecret、access token 或 APIMart key。webhook 发送失败只记录 warning，不回滚已经完成的草稿创建逻辑。
 
 ## 8. 异常处理流程
 
@@ -256,7 +294,7 @@ crontab -e
 - 打开 `outputs/final-preflight-report.md`。
 - 按 Blocking Issues 逐项处理。
 - 若提示本地图片路径，先把正文图片上传到微信图床或移除正文图片引用。
-- 若提示 `WECHAT_COVER_MEDIA_ID` 缺失，先上传真实 JPG/PNG/JPEG 封面素材。
+- 若提示封面素材缺失，先上传真实 JPG/PNG/JPEG 封面素材，或确认 `WECHAT_COVER_IMAGE_PATH` / APIMart 真实封面产物可上传。
 - 若提示同日锁存在，确认不是重复写入；只有明确需要第二个真实草稿时才使用 `--force`。
 
 `pnpm wechat:draft:real` 失败：
@@ -271,6 +309,7 @@ crontab -e
 
 - 打开 `outputs/daily-auto-report.md` 查看失败步骤。
 - 打开 `logs/daily-auto.log` 查看分步日志。
+- 打开 `runs/yyyy-mm-dd-HHmmss/run-report.md` 查看本次自动运行报告。
 - 如果失败原因是 same-day lock，说明今天已经创建过真实草稿；不要自动重跑，只有手动重复测试才使用 `--force`。
 - 如果失败发生在 `preflight:final`，先按 `outputs/final-preflight-report.md` 修复，不要跳过文章审核、封面审核或 HTML 排版检查。
 - 如果失败发生在 `wechat:draft:real`，不要改用发布或群发接口，只排查凭据、IP 白名单、封面素材和微信官方草稿箱 API 返回。

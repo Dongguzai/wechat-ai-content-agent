@@ -1,7 +1,11 @@
 import { appendFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createNotificationConfig,
+  sendNotification
+} from "../src/adapters/notification.js";
 import { loadDotEnv, projectRoot } from "../src/config/env.js";
 import { verifyWechatDraftOnlyApiGuard } from "../src/hooks/forbidWechatPublishApi.js";
 import { archiveRunOutputs } from "../src/pipeline/archiveRun.js";
@@ -16,6 +20,10 @@ import type {
   DailyAutoStepName,
   DailyAutoStepResult
 } from "../src/types/dailyAuto.js";
+import type { CoverResult } from "../src/types/cover.js";
+import type { ArticleMeta } from "../src/types/article.js";
+import type { SelectedTopic } from "../src/types/news.js";
+import { formatRunArchiveTimestamp } from "../src/utils/dateFormat.js";
 import type { Logger } from "../src/utils/logger.js";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -33,6 +41,8 @@ export interface DailyAutoStepHandlerContext {
 export interface DailyAutoStepHandlerResult {
   message?: string;
   selectedTitle?: string;
+  selectedTopicUrl?: string | null;
+  coverImagePath?: string | null;
   draftMediaId?: string | null;
 }
 
@@ -54,7 +64,9 @@ export interface RunDailyAutoOptions {
   now?: Date;
   force?: boolean;
   lockDir?: string;
+  runsDir?: string;
   fetchImpl?: FetchLike;
+  notifyFetchImpl?: FetchLike;
   stepHandlers?: Partial<Record<DailyAutoExecutableStepName, DailyAutoStepHandler>>;
   archiveRuns?: boolean;
   loadEnv?: boolean;
@@ -64,6 +76,7 @@ export interface RunDailyAutoOptions {
 
 const outputDirDefault = join(projectRoot, "outputs");
 const logFileDefault = join(projectRoot, "logs", "daily-auto.log");
+const runsDirDefault = join(projectRoot, "runs");
 const executableStepNames: DailyAutoExecutableStepName[] = [
   "run:daily",
   "real-data-audit",
@@ -87,6 +100,7 @@ function createInitialSteps(): DailyAutoStepResult[] {
     status: "skipped",
     startedAt: "",
     finishedAt: "",
+    durationMs: 0,
     message: "Not started."
   }));
 }
@@ -100,8 +114,18 @@ function isRealProductionMode(env: NodeJS.ProcessEnv): boolean {
 }
 
 function redactSensitiveText(text: string, env: NodeJS.ProcessEnv): string {
-  const secret = trimEnv(env.WECHAT_APP_SECRET);
-  let redacted = secret ? text.split(secret).join("[redacted]") : text;
+  const sensitiveValues = [
+    env.WECHAT_APP_SECRET,
+    env.APIMART_API_KEY,
+    env.NOTIFY_WEBHOOK_URL
+  ]
+    .map(trimEnv)
+    .filter(Boolean);
+  let redacted = text;
+
+  for (const value of sensitiveValues) {
+    redacted = redacted.split(value).join("[redacted]");
+  }
 
   redacted = redacted.replace(/access_token\s*=\s*[^&\s]+/gi, "credential=[redacted]");
   redacted = redacted.replace(
@@ -109,6 +133,11 @@ function redactSensitiveText(text: string, env: NodeJS.ProcessEnv): string {
     '"credential":"[redacted]"'
   );
   redacted = redacted.replace(/\baccess_token\b/gi, "credential");
+  redacted = redacted.replace(/appsecret\s*=\s*[^&\s]+/gi, "credential=[redacted]");
+  redacted = redacted.replace(
+    /"appsecret"\s*:\s*"[^"]*"/gi,
+    '"credential":"[redacted]"'
+  );
 
   return redacted;
 }
@@ -121,11 +150,13 @@ function errorMessage(error: unknown, env: NodeJS.ProcessEnv): string {
 function createOutputFiles(input: {
   outputDir: string;
   logFile: string;
+  runReport: string;
 }): DailyAutoOutputFiles {
   return {
     log: input.logFile,
     report: join(input.outputDir, "daily-auto-report.md"),
-    result: join(input.outputDir, "daily-auto-result.json")
+    result: join(input.outputDir, "daily-auto-result.json"),
+    runReport: input.runReport
   };
 }
 
@@ -168,9 +199,10 @@ function createFileLogger(input: {
 
 function assertRequiredEnv(env: NodeJS.ProcessEnv): string {
   const requiredValues: Array<[string, string]> = [
+    ["APIMART_API_KEY", trimEnv(env.APIMART_API_KEY)],
+    ["APIMART_IMAGE_API_URL", trimEnv(env.APIMART_IMAGE_API_URL)],
     ["WECHAT_APP_ID", trimEnv(env.WECHAT_APP_ID)],
-    ["WECHAT_APP_SECRET", trimEnv(env.WECHAT_APP_SECRET)],
-    ["WECHAT_COVER_MEDIA_ID", trimEnv(env.WECHAT_COVER_MEDIA_ID)]
+    ["WECHAT_APP_SECRET", trimEnv(env.WECHAT_APP_SECRET)]
   ];
   const missing = requiredValues.filter(([, value]) => !value).map(([key]) => key);
 
@@ -179,6 +211,10 @@ function assertRequiredEnv(env: NodeJS.ProcessEnv): string {
   }
 
   const switchValues: Array<[string, string | undefined, string]> = [
+    ["REAL_PRODUCTION_MODE", env.REAL_PRODUCTION_MODE, "true"],
+    ["RSS_ENABLE_REAL_FETCH", env.RSS_ENABLE_REAL_FETCH, "true"],
+    ["SEARCH_ENABLE_REAL_API", env.SEARCH_ENABLE_REAL_API, "true"],
+    ["COVER_ENABLE_REAL_API", env.COVER_ENABLE_REAL_API, "true"],
     ["WECHAT_API_ENABLE_REAL_DRAFT", env.WECHAT_API_ENABLE_REAL_DRAFT, "true"],
     ["WECHAT_DRAFT_ALLOW_REAL_API", env.WECHAT_DRAFT_ALLOW_REAL_API, "true"]
   ];
@@ -194,25 +230,15 @@ function assertRequiredEnv(env: NodeJS.ProcessEnv): string {
     throw new Error("WeChat draft-only API guard is not active.");
   }
 
-  if (isRealProductionMode(env)) {
-    if (env.RSS_ENABLE_REAL_FETCH !== "true") {
-      throw new Error("REAL_PRODUCTION_MODE=true requires RSS_ENABLE_REAL_FETCH=true.");
-    }
-
-    if (env.SEARCH_ENABLE_REAL_API !== "true") {
-      throw new Error("REAL_PRODUCTION_MODE=true requires SEARCH_ENABLE_REAL_API=true.");
-    }
-
-    if (!trimEnv(env.TAVILY_API_KEY) && !trimEnv(env.EXA_API_KEY)) {
-      throw new Error(
-        "REAL_PRODUCTION_MODE=true requires TAVILY_API_KEY or EXA_API_KEY so mock search cannot enter production."
-      );
-    }
+  if (!trimEnv(env.TAVILY_API_KEY) && !trimEnv(env.EXA_API_KEY)) {
+    throw new Error(
+      "REAL_PRODUCTION_MODE=true requires TAVILY_API_KEY or EXA_API_KEY so mock search cannot enter production."
+    );
   }
 
   return env.WECHAT_DRAFT_DRY_RUN === "false"
     ? "Required real-draft environment is present; WECHAT_DRAFT_DRY_RUN=false."
-    : "Required real-draft environment is present; real draft stage will force WECHAT_DRAFT_DRY_RUN=false.";
+    : "Required production environment is present; real draft stage will force WECHAT_DRAFT_DRY_RUN=false.";
 }
 
 async function defaultRealDataAudit(
@@ -260,6 +286,8 @@ async function defaultRunDaily(
 
   return {
     selectedTitle: result.artifacts.titleSelection.selectedTitle,
+    selectedTopicUrl: result.artifacts.selectedTopic.selected.url,
+    coverImagePath: result.artifacts.cover.imagePath,
     message: archive
       ? `Daily pipeline completed; output=${result.outputDir}; archived=${archive.archiveDir}.`
       : `Daily pipeline completed; output=${result.outputDir}.`
@@ -340,8 +368,49 @@ async function defaultWechatDraftReal(
 
   return {
     selectedTitle: result.result.title,
+    coverImagePath: result.result.coverImagePath || null,
     draftMediaId: result.result.mediaId,
     message: `WeChat official API draft created; mediaId=${result.result.mediaId}.`
+  };
+}
+
+async function readOptionalJsonFile<T>(path: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readSummaryArtifacts(outputDir: string): Promise<{
+  articleTitle: string | null;
+  selectedTopicTitle: string | null;
+  selectedTopicUrl: string | null;
+  coverImagePath: string | null;
+  draftMediaId: string | null;
+}> {
+  const [articleMeta, selectedTopic, cover, draftResult] = await Promise.all([
+    readOptionalJsonFile<ArticleMeta>(join(outputDir, "article-meta.json")),
+    readOptionalJsonFile<SelectedTopic>(join(outputDir, "selected-topic.json")),
+    readOptionalJsonFile<CoverResult>(join(outputDir, "cover.json")),
+    readOptionalJsonFile<{ mediaId?: string; title?: string; coverImagePath?: string }>(
+      join(outputDir, "wechat-api-draft-result.json")
+    )
+  ]);
+
+  return {
+    articleTitle:
+      draftResult?.title?.trim() ||
+      articleMeta?.title?.trim() ||
+      selectedTopic?.selected.title?.trim() ||
+      null,
+    selectedTopicTitle: selectedTopic?.selected.title?.trim() || null,
+    selectedTopicUrl: selectedTopic?.selected.url?.trim() || null,
+    coverImagePath:
+      draftResult?.coverImagePath?.trim() ||
+      cover?.imagePath?.trim() ||
+      null,
+    draftMediaId: draftResult?.mediaId?.trim() || null
   };
 }
 
@@ -358,44 +427,74 @@ function createReport(input: {
     /same-day|同日|lock/i.test(sameDayLockStep.message);
   const stepLines = input.result.steps.map(
     (step) =>
-      `- ${step.status}: ${step.name} - ${step.message || "No message."}`
+      `- ${step.status}: ${step.name} (${step.durationMs}ms) - ${step.message || "No message."}`
   );
+  const statusText = input.result.status === "success" ? "成功" : "失败";
+  const failureAdvice =
+    input.result.status === "failed"
+      ? [
+          "",
+          "## 失败原因与建议处理方式",
+          "",
+          `- 失败原因: ${input.result.error ?? "未记录具体错误。"}`,
+          stoppedBySameDayLock
+            ? "- 建议处理: 今日已经创建过真实草稿。默认不要重复运行；如确需手动重跑，只能人工执行 `pnpm run:daily:auto -- --force`。"
+            : "- 建议处理: 先查看本报告和 `logs/daily-auto.log`，修复失败步骤对应的配置、数据源或审核产物后再手动重跑。"
+        ]
+      : [];
 
   return [
-    "# Daily Auto Draft Report",
+    "# 每日自动草稿运行报告",
     "",
-    "## Result",
+    "## 今日运行状态",
     "",
+    `- 今日运行状态: ${statusText}`,
     `- mode: ${input.result.mode}`,
-    `- status: ${input.result.status}`,
-    `- generatedAt: ${input.result.generatedAt}`,
-    `- force: ${input.force}`,
-    `- selectedTitle: ${input.result.selectedTitle || "none"}`,
-    `- draftMediaId: ${input.result.draftMediaId ?? "none"}`,
-    `- stoppedBySameDayDraftLock: ${stoppedBySameDayLock ? "yes" : "no"}`,
-    `- error: ${input.result.error ?? "none"}`,
+    `- 运行开始时间: ${input.result.startedAt}`,
+    `- 运行结束时间: ${input.result.finishedAt}`,
+    `- 运行耗时: ${input.result.durationMs}ms`,
+    `- 生成时间: ${input.result.generatedAt}`,
+    `- 是否手动 --force: ${input.force ? "是" : "否"}`,
+    `- 是否被同日真实草稿锁阻断: ${stoppedBySameDayLock ? "是" : "否"}`,
     "",
-    "## Steps",
+    "## 今日内容",
+    "",
+    `- 今日主选题: ${input.result.selectedTitle ?? "无"}`,
+    `- 主选题 URL: ${input.result.selectedTopicUrl ?? "无"}`,
+    `- 文章标题: ${input.result.selectedTitle ?? "无"}`,
+    `- 封面图路径: ${input.result.coverImagePath ?? "无"}`,
+    `- 微信草稿 media_id: ${input.result.draftMediaId ?? "无"}`,
+    "",
+    "## 安全确认",
+    "",
+    `- 是否只创建草稿: ${input.result.draftOnly ? "是" : "否"}`,
+    `- 是否发布: ${input.result.publishApiCalled ? "是" : "否"}`,
+    `- 是否群发: ${input.result.massSendApiCalled ? "是" : "否"}`,
+    `- 是否需要人工确认: ${input.result.requiresHumanConfirmation ? "是" : "否"}`,
+    "",
+    "## 每一步执行结果",
     "",
     ...stepLines,
+    ...failureAdvice,
     "",
-    "## Safety Boundary",
+    "## 安全边界",
     "",
-    "- This automation only creates WeChat official API draft-box drafts.",
-    "- It does not publish articles.",
-    "- It does not mass send articles.",
-    "- It does not call publish, freepublish, mass, or sendall interfaces.",
-    "- It does not open or operate the WeChat admin console.",
-    "- REAL_PRODUCTION_MODE=true runs real-data-audit immediately after run:daily and stops on any mock/fallback production artifact.",
-    "- article-review, cover-review, wechat-layout, and preflight:final remain mandatory gates.",
-    "- same-day real draft lock remains active by default; use --force only for an explicit manual repeat test.",
-    "- Final publishing still requires human confirmation in the official WeChat admin console.",
-    "- AppSecret and credential values are not written to this report.",
+    "- 系统只允许创建微信公众号官方 API 草稿箱草稿。",
+    "- 系统不会自动发布。",
+    "- 系统不会自动群发。",
+    "- 系统禁止调用 publish、freepublish、mass、sendall 等发布或群发接口。",
+    "- 系统不会打开或操作微信公众号后台。",
+    "- REAL_PRODUCTION_MODE=true 时，真实数据审计会阻断 mock news / mock search / mock cover / fallback mock 进入草稿。",
+    "- article-review、cover-review、wechat-layout、preflight:final 仍是必经闸门。",
+    "- 同日真实草稿锁默认生效；`--force` 只能由人工显式手动执行。",
+    "- 最终发布仍必须由人工登录微信公众号后台确认。",
+    "- AppSecret、access token、APIMart key 不会写入本报告。",
     "",
-    "## Output Files",
+    "## 输出文件",
     "",
     `- result: ${input.files.result}`,
     `- report: ${input.files.report}`,
+    `- runReport: ${input.files.runReport}`,
     `- log: ${input.files.log}`,
     ""
   ].join("\n");
@@ -403,21 +502,31 @@ function createReport(input: {
 
 function buildResult(input: {
   status: "success" | "failed";
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
   steps: DailyAutoStepResult[];
-  selectedTitle: string;
+  selectedTitle: string | null;
+  selectedTopicUrl: string | null;
+  coverImagePath: string | null;
   draftMediaId: string | null;
   error: string | null;
 }): DailyAutoResult {
   return {
     mode: "daily_auto",
     status: input.status,
-    steps: input.steps,
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt,
+    durationMs: input.durationMs,
     selectedTitle: input.selectedTitle,
+    selectedTopicUrl: input.selectedTopicUrl,
+    coverImagePath: input.coverImagePath,
     draftMediaId: input.draftMediaId,
     draftOnly: true,
     publishApiCalled: false,
     massSendApiCalled: false,
     requiresHumanConfirmation: true,
+    steps: input.steps,
     error: input.error,
     generatedAt: nowIso()
   };
@@ -433,6 +542,10 @@ function markSkippedAfterFailure(input: {
 
   input.steps.slice(failedIndex + 1).forEach((step) => {
     if (step.status === "skipped") {
+      const skippedAt = nowIso();
+      step.startedAt = step.startedAt || skippedAt;
+      step.finishedAt = step.finishedAt || skippedAt;
+      step.durationMs = 0;
       step.message = `Skipped because ${input.failedStepName} failed.`;
     }
   });
@@ -441,15 +554,23 @@ function markSkippedAfterFailure(input: {
 export async function runDailyAuto(
   options: RunDailyAutoOptions = {}
 ): Promise<DailyAutoResult> {
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   const outputDir = options.outputDir ?? outputDirDefault;
   const logFile = options.logFile ?? logFileDefault;
+  const runsDir = options.runsDir ?? runsDirDefault;
   const env = options.env ?? process.env;
   const now = options.now ?? new Date();
   const force = options.force === true;
   const archiveRuns = options.archiveRuns ?? true;
   const writeOutputs = options.writeOutputs ?? true;
   const consoleOutput = options.consoleOutput ?? true;
-  const files = createOutputFiles({ outputDir, logFile });
+  const runDir = join(runsDir, formatRunArchiveTimestamp(now));
+  const files = createOutputFiles({
+    outputDir,
+    logFile,
+    runReport: join(runDir, "run-report.md")
+  });
   const steps = createInitialSteps();
   const logger = createFileLogger({ logFile, env, consoleOutput });
   const context: DailyAutoStepHandlerContext = {
@@ -461,13 +582,16 @@ export async function runDailyAuto(
     fetchImpl: options.fetchImpl,
     logger
   };
-  let selectedTitle = "";
+  let selectedTitle: string | null = null;
+  let selectedTopicUrl: string | null = null;
+  let coverImagePath: string | null = null;
   let draftMediaId: string | null = null;
   let status: "success" | "failed" = "failed";
   let error: string | null = null;
 
   await mkdir(outputDir, { recursive: true });
   await mkdir(dirname(logFile), { recursive: true });
+  await mkdir(runDir, { recursive: true });
   await writeFile(logFile, "", { flag: "a" });
 
   const runStep = async (
@@ -481,6 +605,7 @@ export async function runDailyAuto(
 
     step.status = "failed";
     step.startedAt = nowIso();
+    const stepStartedAtMs = Date.now();
     step.message = "Started.";
     appendLog({
       logFile,
@@ -496,6 +621,14 @@ export async function runDailyAuto(
         selectedTitle = result.selectedTitle;
       }
 
+      if (result?.selectedTopicUrl !== undefined) {
+        selectedTopicUrl = result.selectedTopicUrl;
+      }
+
+      if (result?.coverImagePath !== undefined) {
+        coverImagePath = result.coverImagePath;
+      }
+
       if (result?.draftMediaId !== undefined) {
         draftMediaId = result.draftMediaId;
       }
@@ -503,6 +636,7 @@ export async function runDailyAuto(
       step.status = "success";
       step.message = redactSensitiveText(result?.message ?? "Completed.", env);
       step.finishedAt = nowIso();
+      step.durationMs = Date.now() - stepStartedAtMs;
       appendLog({
         logFile,
         env,
@@ -513,6 +647,7 @@ export async function runDailyAuto(
       step.status = "failed";
       step.message = errorMessage(caught, env);
       step.finishedAt = nowIso();
+      step.durationMs = Date.now() - stepStartedAtMs;
       appendLog({
         logFile,
         env,
@@ -565,6 +700,7 @@ export async function runDailyAuto(
           step.status = "skipped";
           step.startedAt = nowIso();
           step.finishedAt = step.startedAt;
+          step.durationMs = 0;
           step.message = "Skipped because REAL_PRODUCTION_MODE=false.";
         }
         continue;
@@ -599,10 +735,29 @@ export async function runDailyAuto(
     }
   }
 
+  const currentRunHasArtifacts = steps.some(
+    (step) =>
+      step.status === "success" &&
+      (step.name === "run:daily" || step.name === "wechat:draft:real")
+  );
+  if (currentRunHasArtifacts) {
+    const summary = await readSummaryArtifacts(outputDir);
+    selectedTitle = selectedTitle ?? summary.articleTitle;
+    selectedTopicUrl = selectedTopicUrl ?? summary.selectedTopicUrl;
+    coverImagePath = coverImagePath ?? summary.coverImagePath;
+    draftMediaId = draftMediaId ?? summary.draftMediaId;
+  }
+  const finishedAtMs = Date.now();
+  const finishedAt = new Date(finishedAtMs).toISOString();
   const result = buildResult({
     status,
+    startedAt,
+    finishedAt,
+    durationMs: finishedAtMs - startedAtMs,
     steps,
     selectedTitle,
+    selectedTopicUrl,
+    coverImagePath,
     draftMediaId,
     error
   });
@@ -611,6 +766,47 @@ export async function runDailyAuto(
   if (writeOutputs) {
     await writeJson(files.result, result);
     await writeFile(files.report, report, "utf8");
+    await writeFile(files.runReport, report, "utf8");
+  }
+
+  const notificationConfig = createNotificationConfig(env);
+  const notificationTitle =
+    result.status === "success"
+      ? "每日自动草稿创建成功"
+      : "每日自动草稿创建失败";
+  const notificationMessage =
+    result.status === "success"
+      ? "每日生产流程已完成，微信公众号草稿箱已创建草稿，仍需人工确认后发布。"
+      : "每日生产流程失败，草稿创建未完成或被安全闸门阻断，请查看运行报告。";
+  const notificationResult = await sendNotification({
+    config: notificationConfig,
+    fetchImpl: options.notifyFetchImpl ?? options.fetchImpl,
+    payload: {
+      status: result.status,
+      title: notificationTitle,
+      message: notificationMessage,
+      selectedTitle: result.selectedTitle,
+      draftMediaId: result.draftMediaId,
+      reportPath: files.report,
+      requiresHumanConfirmation: true,
+      generatedAt: result.generatedAt
+    },
+    consoleNotify: (message) =>
+      appendLog({
+        logFile,
+        env,
+        consoleOutput,
+        line: `[${nowIso()}] [daily-auto] [notify] ${message}`
+      })
+  });
+
+  if (notificationResult.warning) {
+    appendLog({
+      logFile,
+      env,
+      consoleOutput,
+      line: `[${nowIso()}] [daily-auto] [warn] ${notificationResult.warning}`
+    });
   }
 
   return result;

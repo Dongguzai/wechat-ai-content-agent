@@ -395,6 +395,14 @@ export async function runFinalPreflight(
     now
   });
   const coverMediaId = env.WECHAT_COVER_MEDIA_ID?.trim() ?? "";
+  const uploadableCoverPath =
+    env.WECHAT_COVER_IMAGE_PATH?.trim() ||
+    cover?.imagePath?.trim() ||
+    coverReview.imagePath?.trim() ||
+    "";
+  const coverInputPresent =
+    coverMediaId.length > 0 ||
+    (coverMediaId.length === 0 && isPngOrJpegPath(uploadableCoverPath) && !isMockSvgPath(uploadableCoverPath));
   const localImagePaths = findLocalImagePaths(html);
   const forbiddenTerms = findForbiddenTerms(html);
   const dangerousApis = dangerousApiDetails({
@@ -431,9 +439,13 @@ export async function runFinalPreflight(
       "wechat-api dry-run preflight and request preview must both pass."
     ),
     makeCheck(
-      "cover media id present",
-      coverMediaId.length > 0,
-      "WECHAT_COVER_MEDIA_ID must be present before final real-draft preflight."
+      "cover media id present or uploadable cover present",
+      coverInputPresent,
+      "WECHAT_COVER_MEDIA_ID or an uploadable JPG/PNG cover image must be present before final real-draft preflight.",
+      [
+        coverMediaId ? "WECHAT_COVER_MEDIA_ID is present." : "WECHAT_COVER_MEDIA_ID is missing.",
+        uploadableCoverPath || "cover image path is missing."
+      ]
     ),
     makeCheck(
       "html has no local image paths",

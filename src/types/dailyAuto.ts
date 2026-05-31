@@ -18,19 +18,25 @@ export interface DailyAutoStepResult {
   status: DailyAutoStepStatus;
   startedAt: string;
   finishedAt: string;
+  durationMs: number;
   message: string;
 }
 
 export interface DailyAutoResult {
   mode: DailyAutoMode;
   status: DailyAutoStatus;
-  steps: DailyAutoStepResult[];
-  selectedTitle: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  selectedTitle: string | null;
+  selectedTopicUrl: string | null;
+  coverImagePath: string | null;
   draftMediaId: string | null;
   draftOnly: true;
   publishApiCalled: false;
   massSendApiCalled: false;
   requiresHumanConfirmation: true;
+  steps: DailyAutoStepResult[];
   error: string | null;
   generatedAt: string;
 }
@@ -39,4 +45,5 @@ export interface DailyAutoOutputFiles {
   log: string;
   report: string;
   result: string;
+  runReport: string;
 }
