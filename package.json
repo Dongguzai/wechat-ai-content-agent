@@ -14,6 +14,7 @@
     "scheduler:uninstall": "node --import tsx scripts/uninstall-cron.ts",
     "scheduler:show": "node --import tsx scripts/show-cron.ts",
     "preflight:final": "node --import tsx scripts/preflight-final.ts",
+    "llm:minimax:smoke": "node --import tsx scripts/minimax-smoke.ts",
     "wechat:upload-cover": "node --import tsx scripts/upload-wechat-cover.ts",
     "wechat:draft:dry-run": "WECHAT_DRAFT_DRY_RUN=true WECHAT_API_ENABLE_REAL_DRAFT=false WECHAT_DRAFT_ALLOW_REAL_API=false node --import tsx scripts/push-wechat-draft.ts",
     "wechat:draft:real": "WECHAT_DRAFT_DRY_RUN=false node --import tsx scripts/push-wechat-draft.ts --real",
