@@ -12,8 +12,16 @@
 ## 输出
 
 - `article.md`：1500 字以内中文公众号正文，第一行是标题，小标题使用二级标题。
-- `article-meta.json`：标题、字数、来源选题、中心论点、使用的 claims、风险控制、生成时间。
+- `article-meta.json`：标题、字数、来源选题、中心论点、使用的 claims、风险控制、LLM 元信息、生成时间。
 - `article-writing-report.md`：写作报告，说明标题、字数、使用的 fact pack claim、规避的高风险表达和阶段边界。
+
+## MiniMax LLM
+
+- 默认 `LLM_ENABLE_REAL_API=false`、`LLM_DRY_RUN=true`，保持 deterministic/mock 写作，不调用 MiniMax。
+- 真实写作必须显式设置 `LLM_ENABLE_REAL_API=true`、`LLM_DRY_RUN=false`、`ARTICLE_WRITER_PROVIDER=minimax`，并从环境变量读取 `MINIMAX_API_KEY`。
+- MiniMax 只用于正文文字生成，不生成封面、不排版 HTML、不操作微信草稿。
+- `article-meta.json.llm` 必须记录 `provider`、`model`、`mode` 和 token usage。
+- MiniMax 原始响应不得完整落盘；只保留正文、必要元信息和脱敏后的 usage。
 
 ## 写作边界
 

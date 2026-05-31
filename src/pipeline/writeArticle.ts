@@ -1,6 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createChatCompletion } from "../adapters/minimax.js";
+import {
+  formatLlmUsage,
+  mockLlmMetadata,
+  realLlmMetadata,
+  resolveLlmStageConfig
+} from "../adapters/llm.js";
 import type {
   ArticleDraft,
   ArticleMeta,
@@ -12,6 +19,12 @@ import type {
 import type { TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
 import type { EditorialStyleLoadResult } from "../types/editorial.js";
+import type {
+  LlmChatCompletionClient,
+  LlmChatCompletionResult,
+  LlmFetch,
+  LlmRunMetadata
+} from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 import { loadEditorialStyle } from "./loadEditorialStyle.js";
 
@@ -27,6 +40,9 @@ export interface WriteArticleOptions {
   topicFactPackReport?: string;
   editorialStyle?: EditorialStyleLoadResult;
   logger?: Logger;
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: LlmFetch;
+  chatCompletion?: LlmChatCompletionClient;
   writeOutputs?: boolean;
   now?: Date;
 }
@@ -65,6 +81,14 @@ async function readJsonFile<T>(path: string): Promise<T> {
 
 async function readRequiredText(path: string): Promise<string> {
   return readFile(path, "utf8");
+}
+
+async function readOptionalText(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -201,7 +225,11 @@ function validateArticle(article: ArticleDraft, meta: ArticleMeta): void {
   }
 }
 
-function createMeta(article: ArticleDraft, generatedAt: string): ArticleMeta {
+function createMeta(
+  article: ArticleDraft,
+  generatedAt: string,
+  llm: LlmRunMetadata
+): ArticleMeta {
   return {
     title: article.title,
     wordCount: article.wordCount,
@@ -209,6 +237,7 @@ function createMeta(article: ArticleDraft, generatedAt: string): ArticleMeta {
     articleThesis: article.articleThesis,
     usedClaims: article.usedClaims,
     riskControls: article.riskControls,
+    llm,
     generatedAt
   };
 }
@@ -235,6 +264,13 @@ function createWritingReport(
     "## 字数",
     "",
     `${article.wordCount} 字`,
+    "",
+    "## LLM",
+    "",
+    `- provider: ${meta.llm?.provider ?? "minimax"}`,
+    `- model: ${meta.llm?.model ?? "unknown"}`,
+    `- mode: ${meta.llm?.mode ?? "mock"}`,
+    `- usage: ${meta.llm ? formatLlmUsage(meta.llm.usage) : "unknown"}`,
     "",
     "## 使用的 fact pack claim",
     "",
@@ -292,10 +328,175 @@ export function writeArticle(
     riskControls,
     createdAt: (options.now ?? new Date()).toISOString()
   };
-  const meta = createMeta(article, article.createdAt);
+  const meta = createMeta(
+    article,
+    article.createdAt,
+    mockLlmMetadata(resolveLlmStageConfig("article-writer", {}))
+  );
 
   validateArticle(article, meta);
   return article;
+}
+
+function parseJsonContent<T>(completion: LlmChatCompletionResult): T {
+  try {
+    return JSON.parse(completion.content) as T;
+  } catch {
+    throw new Error("MiniMax article-writer response was not valid JSON.");
+  }
+}
+
+function asString(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`MiniMax article-writer response is missing ${label}.`);
+  }
+
+  return value.trim();
+}
+
+function parseArticleSections(value: unknown): ArticleSection[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("MiniMax article-writer response must include sections.");
+  }
+
+  return value.map((section, index) => {
+    if (typeof section !== "object" || section === null || Array.isArray(section)) {
+      throw new Error(`MiniMax article-writer section ${index + 1} is invalid.`);
+    }
+
+    const record = section as Record<string, unknown>;
+    return {
+      heading: asString(record.heading, `sections[${index}].heading`),
+      body: asString(record.body, `sections[${index}].body`)
+    };
+  });
+}
+
+function createArticleWriterSystemPrompt(): string {
+  return [
+    "你是公众号文章写作者，只能基于 fact pack 的 safeWording 写作。",
+    "输出必须是 JSON object，不要输出 Markdown 围栏。",
+    "不得编造事实，不得把搜索摘要当确定性事实。",
+    "保持第三视角、非通稿、1500 字以内。",
+    "禁止写发布、群发、确认发送、立即发送等公众号操作内容。"
+  ].join("\n");
+}
+
+function createArticleWriterUserPrompt(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  topicSelectionReport: string;
+  topicFactPackReport: string;
+  editorialStyle?: EditorialStyleLoadResult;
+  titleContext?: string;
+}): string {
+  return [
+    "请生成一篇中文公众号正文，返回 JSON：",
+    "",
+    JSON.stringify(
+      {
+        title: "文章标题",
+        subtitle: "一句副标题",
+        articleThesis: "中心论点",
+        sections: [
+          {
+            heading: "小标题",
+            body: "段落正文"
+          }
+        ],
+        riskControls: ["规避的风险表达"]
+      },
+      null,
+      2
+    ),
+    "",
+    "硬性要求：",
+    "- 正文必须使用 fact pack safeWritingBoundary 和 verifiedClaims.safeWording。",
+    "- 不得写 forbidden terms 或 unsafeComparisonClaims。",
+    "- 必须解释开源、工作流、成本、工具锁定中的至少 3 个主题。",
+    "- 结尾保留原始选题线索 URL。",
+    "",
+    "selected-topic.json:",
+    JSON.stringify(input.topic, null, 2),
+    "",
+    "topic-fact-pack.json:",
+    JSON.stringify(input.factPack, null, 2),
+    "",
+    "topic-selection-report.md:",
+    input.topicSelectionReport,
+    "",
+    "topic-fact-pack.md:",
+    input.topicFactPackReport,
+    "",
+    "editorial-style.md:",
+    input.editorialStyle?.content ?? "not loaded",
+    "",
+    "title-candidates or selected title if present:",
+    input.titleContext ?? "not available"
+  ].join("\n");
+}
+
+async function writeArticleWithMiniMax(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  topicSelectionReport: string;
+  topicFactPackReport: string;
+  editorialStyle?: EditorialStyleLoadResult;
+  titleContext?: string;
+  env: NodeJS.ProcessEnv;
+  fetchImpl?: LlmFetch;
+  chatCompletion: LlmChatCompletionClient;
+  now?: Date;
+}): Promise<{ article: ArticleDraft; llm: LlmRunMetadata }> {
+  const config = resolveLlmStageConfig("article-writer", input.env);
+  const completion = await input.chatCompletion({
+    model: config.model,
+    systemPrompt: createArticleWriterSystemPrompt(),
+    userPrompt: createArticleWriterUserPrompt(input),
+    temperature: config.temperature,
+    maxCompletionTokens: config.maxCompletionTokens,
+    responseFormat: "json_object",
+    env: input.env,
+    fetchImpl: input.fetchImpl
+  });
+  const payload = parseJsonContent<Record<string, unknown>>(completion);
+  const sections = parseArticleSections(payload.sections);
+  const title = asString(payload.title, "title");
+  const markdown = createArticleMarkdown(title, sections, input.topic.selected.url);
+  const wordCount = countArticleChars(markdown);
+  const usedClaims = usedClaimsFromFactPack(input.factPack);
+  const riskControlsFromModel = Array.isArray(payload.riskControls)
+    ? payload.riskControls.filter((value): value is string => typeof value === "string")
+    : [];
+  const riskControls = [
+    ...new Set([...riskControlsFromModel, ...createRiskControls()])
+  ];
+  const article: ArticleDraft = {
+    title,
+    subtitle:
+      typeof payload.subtitle === "string" && payload.subtitle.trim()
+        ? payload.subtitle.trim()
+        : "这不是简单的价格对比，而是 coding agent 工作流入口之争。",
+    sourceTitle: input.topic.selected.title,
+    sourceUrl: input.topic.selected.url,
+    sourceName: input.topic.selected.sourceName,
+    sourceTopic: sanitizeFactPackTextForHtmlSafety(input.topic.selected.title),
+    articleThesis:
+      typeof payload.articleThesis === "string" && payload.articleThesis.trim()
+        ? payload.articleThesis.trim()
+        : input.topic.selected.selection.articleThesis,
+    markdown,
+    sections,
+    wordCount,
+    usedClaims,
+    riskControls,
+    createdAt: (input.now ?? new Date()).toISOString()
+  };
+  const llm = realLlmMetadata(completion, "real");
+  const meta = createMeta(article, article.createdAt, llm);
+
+  validateArticle(article, meta);
+  return { article, llm };
 }
 
 export async function writeArticleWithReport(
@@ -315,21 +516,38 @@ export async function writeArticleWithReport(
   const files = createOutputFiles(outputDir);
   const editorialStyle =
     options.editorialStyle ?? (await loadEditorialStyle({ logger }));
+  const env = options.env ?? process.env;
+  const llmConfig = resolveLlmStageConfig("article-writer", env);
+  const chatCompletion = options.chatCompletion ?? createChatCompletion;
 
   const topic = options.topic ?? (await readJsonFile<SelectedTopic>(selectedTopicFile));
   const factPack =
     options.factPack ?? (await readJsonFile<TopicFactPack>(topicFactPackFile));
 
-  if (!options.topicSelectionReport) {
-    await readRequiredText(topicSelectionReportFile);
-  }
-
-  if (!options.topicFactPackReport) {
-    await readRequiredText(topicFactPackReportFile);
-  }
-
-  const article = writeArticle(topic, factPack, { now: options.now });
-  const meta = createMeta(article, article.createdAt);
+  const topicSelectionReport =
+    options.topicSelectionReport ?? (await readRequiredText(topicSelectionReportFile));
+  const topicFactPackReport =
+    options.topicFactPackReport ?? (await readRequiredText(topicFactPackReportFile));
+  const titleContext = await readOptionalText(join(outputDir, "title-candidates.json"));
+  const { article, llm } =
+    llmConfig.mode === "real"
+      ? await writeArticleWithMiniMax({
+          topic,
+          factPack,
+          topicSelectionReport,
+          topicFactPackReport,
+          editorialStyle,
+          titleContext,
+          env,
+          fetchImpl: options.fetchImpl,
+          chatCompletion,
+          now: options.now
+        })
+      : {
+          article: writeArticle(topic, factPack, { now: options.now }),
+          llm: mockLlmMetadata(llmConfig)
+        };
+  const meta = createMeta(article, article.createdAt, llm);
   const report = createWritingReport(article, meta, editorialStyle);
 
   if (writeOutputs) {

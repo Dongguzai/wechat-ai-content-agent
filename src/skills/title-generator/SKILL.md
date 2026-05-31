@@ -42,6 +42,14 @@
 - 不写“免费平替”“完全替代”“能力相同”“零成本”等未经核验或过度绝对表达。
 - 不新增任何发布、群发、公众号后台或真实微信 API 能力。
 
+## MiniMax LLM
+
+- 默认 `LLM_ENABLE_REAL_API=false`、`LLM_DRY_RUN=true`，继续使用 deterministic/mock 标题候选，不调用 MiniMax。
+- 真实标题生成必须显式设置 `LLM_ENABLE_REAL_API=true`、`LLM_DRY_RUN=false`、`TITLE_GENERATOR_PROVIDER=minimax`，并从环境变量读取 `MINIMAX_API_KEY`。
+- MiniMax 只负责提出 5 个候选标题；本地评分、forbidden terms 检查和最终选择仍必须执行。
+- `title-candidates.json` 记录 `candidates`、`selectedTitle`、`forbiddenTerms` 和 `llm` 元信息。
+- MiniMax 原始响应不得完整落盘；只保留候选标题、评分、必要元信息和脱敏后的 usage。
+
 ## 输出
 
 - `outputs/title-candidates.json`

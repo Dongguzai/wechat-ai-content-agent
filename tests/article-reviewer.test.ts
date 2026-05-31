@@ -11,6 +11,7 @@ import {
 import { writeArticleWithReport } from "../src/pipeline/writeArticle.js";
 import type { ArticleMeta, ArticleReviewResult } from "../src/types/article.js";
 import type { TopicFactPack } from "../src/types/factPack.js";
+import type { LlmChatCompletionInput } from "../src/types/llm.js";
 import type { SelectedTopic } from "../src/types/news.js";
 import type { Logger } from "../src/utils/logger.js";
 
@@ -119,6 +120,8 @@ test("reviewArticleWithReport writes review JSON and Markdown report", async () 
       await readFile(result.files.articleReview, "utf8")
     ) as ArticleReviewResult;
     assertReviewContract(writtenReview);
+    assert.equal(writtenReview.llm?.provider, "minimax");
+    assert.equal(writtenReview.llm?.mode, "mock");
 
     const report = await readFile(result.files.articleReviewReport, "utf8");
     assert.match(report, /审核结论/);
@@ -130,6 +133,69 @@ test("reviewArticleWithReport writes review JSON and Markdown report", async () 
     assert.match(report, /可选优化建议/);
     assert.match(report, /fact pack 边界检查结果/);
     assert.match(report, /是否允许进入下一阶段/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("reviewArticleWithReport real mode calls MiniMax but hard rules still block forbidden terms", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-reviewer-real-"));
+  let called = 0;
+
+  try {
+    const fixture = await createReviewFixture(outputDir);
+    const result = await reviewArticleWithReport({
+      outputDir,
+      articleMarkdown: `${fixture.articleMarkdown}\n\nGoose 完全替代 Claude Code。`,
+      articleMeta: fixture.articleMeta,
+      factPack: fixture.factPack,
+      selectedTopic: fixture.topic,
+      topicFactPackReport: "# Topic Fact Pack",
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        ARTICLE_REVIEWER_PROVIDER: "minimax",
+        ARTICLE_REVIEWER_MODEL: "MiniMax-M2.7"
+      },
+      chatCompletion: async (input: LlmChatCompletionInput) => {
+        called += 1;
+        assert.equal(input.model, "MiniMax-M2.7");
+        assert.match(input.userPrompt ?? "", /article-meta\.json/);
+        return {
+          provider: "minimax",
+          model: "MiniMax-M2.7",
+          content: JSON.stringify({
+            passed: true,
+            score: 99,
+            summary: "MiniMax auxiliary review passed.",
+            issues: []
+          }),
+          usage: {
+            promptTokens: 91,
+            completionTokens: 34,
+            totalTokens: 125
+          },
+          finishReason: "stop",
+          generatedAt: "2026-05-29T00:00:00.000Z"
+        };
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(called, 1);
+    assert.equal(result.review.passed, false);
+    assert.equal(result.review.factBoundaryCheck.passed, false);
+    assert.equal(result.review.llm?.mode, "rules+real");
+    assert.deepEqual(result.review.llm?.usage, {
+      promptTokens: 91,
+      completionTokens: 34,
+      totalTokens: 125
+    });
+    assert.ok(
+      result.review.issues.some((issue) => issue.evidence.includes("完全替代"))
+    );
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

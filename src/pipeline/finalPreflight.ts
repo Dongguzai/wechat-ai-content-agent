@@ -5,7 +5,7 @@ import {
   FORBIDDEN_WECHAT_PUBLISH_API_TERMS,
   verifyWechatDraftOnlyApiGuard
 } from "../hooks/forbidWechatPublishApi.js";
-import type { ArticleReviewResult } from "../types/article.js";
+import type { ArticleMeta, ArticleReviewResult } from "../types/article.js";
 import type { CoverResult, CoverReviewResult } from "../types/cover.js";
 import type {
   FinalPreflightCheck,
@@ -18,6 +18,8 @@ import type {
   WechatApiDraftResult,
   WechatApiPreflight
 } from "../types/wechatApiDraft.js";
+import type { LlmRunMetadata } from "../types/llm.js";
+import type { TitleCandidatesFile } from "../types/title.js";
 import { readWechatDraftRunLock } from "./wechatDraftRunLock.js";
 
 export interface RunFinalPreflightOptions {
@@ -158,6 +160,10 @@ function isMockSvgPath(path: string | undefined): boolean {
 
 function productionChecks(input: {
   realProductionMode: boolean;
+  env: NodeJS.ProcessEnv;
+  articleMeta?: ArticleMeta;
+  titleLlm?: LlmRunMetadata;
+  articleReview: ArticleReviewResult;
   realDataAudit?: RealDataAuditResult;
   cover?: CoverResult;
   coverReview: CoverReviewResult;
@@ -184,6 +190,50 @@ function productionChecks(input: {
     : ["real-data-audit.json is missing."];
 
   return [
+    makeCheck(
+      "production llm real api enabled",
+      input.env.LLM_ENABLE_REAL_API?.trim() === "true" &&
+        input.env.LLM_DRY_RUN?.trim() === "false",
+      "REAL_PRODUCTION_MODE=true requires LLM_ENABLE_REAL_API=true and LLM_DRY_RUN=false.",
+      [
+        `LLM_ENABLE_REAL_API=${input.env.LLM_ENABLE_REAL_API ?? "unset"}`,
+        `LLM_DRY_RUN=${input.env.LLM_DRY_RUN ?? "unset"}`
+      ]
+    ),
+    makeCheck(
+      "production llm provider is real",
+      (input.env.LLM_PROVIDER?.trim() || "minimax") === "minimax",
+      "REAL_PRODUCTION_MODE=true requires LLM_PROVIDER=minimax or another explicitly supported real provider.",
+      [`LLM_PROVIDER=${input.env.LLM_PROVIDER ?? "unset"}`]
+    ),
+    makeCheck(
+      "production article writer llm is real",
+      input.articleMeta?.llm?.mode === "real",
+      "REAL_PRODUCTION_MODE=true requires article-meta.llm.mode=real.",
+      [
+        `article-meta.llm.mode=${input.articleMeta?.llm?.mode ?? "missing"}`,
+        `article-meta.llm.model=${input.articleMeta?.llm?.model ?? "missing"}`
+      ]
+    ),
+    makeCheck(
+      "production title generator llm is real",
+      input.titleLlm?.mode === "real",
+      "REAL_PRODUCTION_MODE=true requires title-candidates.llm.mode=real.",
+      [
+        `title-candidates.llm.mode=${input.titleLlm?.mode ?? "missing"}`,
+        `title-candidates.llm.model=${input.titleLlm?.model ?? "missing"}`
+      ]
+    ),
+    makeCheck(
+      "production article reviewer llm is real",
+      input.articleReview.llm?.mode === "real" ||
+        input.articleReview.llm?.mode === "rules+real",
+      "REAL_PRODUCTION_MODE=true requires article-review.llm.mode=real or rules+real.",
+      [
+        `article-review.llm.mode=${input.articleReview.llm?.mode ?? "missing"}`,
+        `article-review.llm.model=${input.articleReview.llm?.model ?? "missing"}`
+      ]
+    ),
     makeCheck(
       "real-data-audit passed",
       input.realDataAudit?.passed === true,
@@ -306,6 +356,7 @@ async function sensitiveOutputDetails(input: {
 }): Promise<string[]> {
   const details: string[] = [];
   const appSecret = input.env.WECHAT_APP_SECRET?.trim() ?? "";
+  const minimaxApiKey = input.env.MINIMAX_API_KEY?.trim() ?? "";
   const files = await listOutputTextFiles(input.outputDir);
 
   for (const file of files) {
@@ -314,6 +365,10 @@ async function sensitiveOutputDetails(input: {
 
     if (appSecret && text.includes(appSecret)) {
       details.push(`${relativePath} contains the configured AppSecret value.`);
+    }
+
+    if (minimaxApiKey && text.includes(minimaxApiKey)) {
+      details.push(`${relativePath} contains the configured MINIMAX_API_KEY value.`);
     }
 
     if (/\baccess_token\s*[:=]/i.test(text) || /\baccess_token=/i.test(text)) {
@@ -360,6 +415,14 @@ function createReport(result: FinalPreflightResult): string {
   ].join("\n");
 }
 
+function extractTitleLlm(value: unknown): LlmRunMetadata | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return (value as Partial<TitleCandidatesFile>).llm;
+}
+
 export async function runFinalPreflight(
   options: RunFinalPreflightOptions = {}
 ): Promise<FinalPreflightResult> {
@@ -372,6 +435,12 @@ export async function runFinalPreflight(
   const files = createOutputFiles(outputDir);
   const articleReview = await readJsonFile<ArticleReviewResult>(
     join(outputDir, "article-review.json")
+  );
+  const articleMeta = await readOptionalJsonFile<ArticleMeta>(
+    join(outputDir, "article-meta.json")
+  );
+  const titleCandidates = await readOptionalJsonFile<unknown>(
+    join(outputDir, "title-candidates.json")
   );
   const cover = await readOptionalJsonFile<CoverResult>(join(outputDir, "cover.json"));
   const coverReview = await readJsonFile<CoverReviewResult>(
@@ -482,6 +551,10 @@ export async function runFinalPreflight(
     ),
     ...productionChecks({
       realProductionMode,
+      env,
+      articleMeta,
+      titleLlm: extractTitleLlm(titleCandidates),
+      articleReview,
       realDataAudit,
       cover,
       coverReview,

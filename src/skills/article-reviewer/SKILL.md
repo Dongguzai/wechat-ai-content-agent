@@ -15,6 +15,15 @@
 - `outputs/article-review.json`
 - `outputs/article-review-report.md`
 
+## MiniMax LLM
+
+- 默认 `LLM_ENABLE_REAL_API=false`、`LLM_DRY_RUN=true`，只执行现有本地规则审核，不调用 MiniMax。
+- 真实辅助审稿必须显式设置 `LLM_ENABLE_REAL_API=true`、`LLM_DRY_RUN=false`、`ARTICLE_REVIEWER_PROVIDER=minimax`，并从环境变量读取 `MINIMAX_API_KEY`。
+- MiniMax 只能作为辅助审稿；本地硬规则、forbidden terms、fact pack 边界和 1500 字限制仍是最终 gate。
+- 即使 MiniMax 判断通过，只要本地硬规则发现 forbidden terms 或 fact pack 违规，`passed` 仍必须为 `false`。
+- `article-review.json.llm.mode` 在真实辅助审稿下记录为 `rules+real`。
+- MiniMax 原始响应不得完整落盘；只保留必要审稿摘要、结构化结果和脱敏后的 usage。
+
 ## 阶段边界
 
 - 不重写 `article.md`。

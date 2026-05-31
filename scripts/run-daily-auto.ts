@@ -15,14 +15,18 @@ import { runDailyPipeline } from "../src/pipeline/runDailyPipeline.js";
 import { saveWechatDraftApiWithReport } from "../src/pipeline/saveWechatDraftApi.js";
 import { readWechatDraftRunLock } from "../src/pipeline/wechatDraftRunLock.js";
 import type {
+  DailyAutoLlmStageSummary,
+  DailyAutoLlmSummary,
   DailyAutoOutputFiles,
   DailyAutoResult,
   DailyAutoStepName,
   DailyAutoStepResult
 } from "../src/types/dailyAuto.js";
 import type { CoverResult } from "../src/types/cover.js";
-import type { ArticleMeta } from "../src/types/article.js";
+import type { ArticleMeta, ArticleReviewResult } from "../src/types/article.js";
 import type { SelectedTopic } from "../src/types/news.js";
+import type { LlmRunMetadata } from "../src/types/llm.js";
+import type { TitleCandidatesFile } from "../src/types/title.js";
 import { formatRunArchiveTimestamp } from "../src/utils/dateFormat.js";
 import type { Logger } from "../src/utils/logger.js";
 
@@ -117,6 +121,7 @@ function redactSensitiveText(text: string, env: NodeJS.ProcessEnv): string {
   const sensitiveValues = [
     env.WECHAT_APP_SECRET,
     env.APIMART_API_KEY,
+    env.MINIMAX_API_KEY,
     env.NOTIFY_WEBHOOK_URL
   ]
     .map(trimEnv)
@@ -199,6 +204,7 @@ function createFileLogger(input: {
 
 function assertRequiredEnv(env: NodeJS.ProcessEnv): string {
   const requiredValues: Array<[string, string]> = [
+    ["MINIMAX_API_KEY", trimEnv(env.MINIMAX_API_KEY)],
     ["APIMART_API_KEY", trimEnv(env.APIMART_API_KEY)],
     ["APIMART_IMAGE_API_URL", trimEnv(env.APIMART_IMAGE_API_URL)],
     ["WECHAT_APP_ID", trimEnv(env.WECHAT_APP_ID)],
@@ -212,6 +218,9 @@ function assertRequiredEnv(env: NodeJS.ProcessEnv): string {
 
   const switchValues: Array<[string, string | undefined, string]> = [
     ["REAL_PRODUCTION_MODE", env.REAL_PRODUCTION_MODE, "true"],
+    ["LLM_ENABLE_REAL_API", env.LLM_ENABLE_REAL_API, "true"],
+    ["LLM_DRY_RUN", env.LLM_DRY_RUN, "false"],
+    ["LLM_PROVIDER", env.LLM_PROVIDER ?? "minimax", "minimax"],
     ["RSS_ENABLE_REAL_FETCH", env.RSS_ENABLE_REAL_FETCH, "true"],
     ["SEARCH_ENABLE_REAL_API", env.SEARCH_ENABLE_REAL_API, "true"],
     ["COVER_ENABLE_REAL_API", env.COVER_ENABLE_REAL_API, "true"],
@@ -388,9 +397,19 @@ async function readSummaryArtifacts(outputDir: string): Promise<{
   selectedTopicUrl: string | null;
   coverImagePath: string | null;
   draftMediaId: string | null;
+  llm: DailyAutoLlmSummary | null;
 }> {
-  const [articleMeta, selectedTopic, cover, draftResult] = await Promise.all([
+  const [
+    articleMeta,
+    titleCandidates,
+    articleReview,
+    selectedTopic,
+    cover,
+    draftResult
+  ] = await Promise.all([
     readOptionalJsonFile<ArticleMeta>(join(outputDir, "article-meta.json")),
+    readOptionalJsonFile<TitleCandidatesFile>(join(outputDir, "title-candidates.json")),
+    readOptionalJsonFile<ArticleReviewResult>(join(outputDir, "article-review.json")),
     readOptionalJsonFile<SelectedTopic>(join(outputDir, "selected-topic.json")),
     readOptionalJsonFile<CoverResult>(join(outputDir, "cover.json")),
     readOptionalJsonFile<{ mediaId?: string; title?: string; coverImagePath?: string }>(
@@ -410,8 +429,54 @@ async function readSummaryArtifacts(outputDir: string): Promise<{
       draftResult?.coverImagePath?.trim() ||
       cover?.imagePath?.trim() ||
       null,
-    draftMediaId: draftResult?.mediaId?.trim() || null
+    draftMediaId: draftResult?.mediaId?.trim() || null,
+    llm: createDailyAutoLlmSummary({
+      writer: articleMeta?.llm,
+      title: titleCandidates?.llm,
+      reviewer: articleReview?.llm
+    })
   };
+}
+
+function createDailyAutoLlmStageSummary(
+  llm: LlmRunMetadata | undefined
+): DailyAutoLlmStageSummary | null {
+  if (!llm) {
+    return null;
+  }
+
+  return {
+    provider: llm.provider,
+    model: llm.model,
+    mode: llm.mode,
+    promptTokens: llm.usage.promptTokens,
+    completionTokens: llm.usage.completionTokens,
+    totalTokens: llm.usage.totalTokens
+  };
+}
+
+function createDailyAutoLlmSummary(input: {
+  writer?: LlmRunMetadata;
+  title?: LlmRunMetadata;
+  reviewer?: LlmRunMetadata;
+}): DailyAutoLlmSummary | null {
+  const summary: DailyAutoLlmSummary = {
+    writer: createDailyAutoLlmStageSummary(input.writer),
+    title: createDailyAutoLlmStageSummary(input.title),
+    reviewer: createDailyAutoLlmStageSummary(input.reviewer)
+  };
+
+  return summary.writer || summary.title || summary.reviewer ? summary : null;
+}
+
+function formatDailyAutoLlmStageSummary(
+  stage: DailyAutoLlmStageSummary | null
+): string {
+  if (!stage) {
+    return "无";
+  }
+
+  return `${stage.provider} / ${stage.model} / ${stage.mode} (promptTokens=${stage.promptTokens ?? "unknown"}, completionTokens=${stage.completionTokens ?? "unknown"}, totalTokens=${stage.totalTokens ?? "unknown"})`;
 }
 
 function createReport(input: {
@@ -465,6 +530,12 @@ function createReport(input: {
     `- 封面图路径: ${input.result.coverImagePath ?? "无"}`,
     `- 微信草稿 media_id: ${input.result.draftMediaId ?? "无"}`,
     "",
+    "## MiniMax LLM 使用",
+    "",
+    `- writerModel: ${formatDailyAutoLlmStageSummary(input.result.llm?.writer ?? null)}`,
+    `- titleModel: ${formatDailyAutoLlmStageSummary(input.result.llm?.title ?? null)}`,
+    `- reviewerModel: ${formatDailyAutoLlmStageSummary(input.result.llm?.reviewer ?? null)}`,
+    "",
     "## 安全确认",
     "",
     `- 是否只创建草稿: ${input.result.draftOnly ? "是" : "否"}`,
@@ -488,7 +559,7 @@ function createReport(input: {
     "- article-review、cover-review、wechat-layout、preflight:final 仍是必经闸门。",
     "- 同日真实草稿锁默认生效；`--force` 只能由人工显式手动执行。",
     "- 最终发布仍必须由人工登录微信公众号后台确认。",
-    "- AppSecret、access token、APIMart key 不会写入本报告。",
+    "- AppSecret、access token、APIMart key、MiniMax key 不会写入本报告。",
     "",
     "## 输出文件",
     "",
@@ -510,6 +581,7 @@ function buildResult(input: {
   selectedTopicUrl: string | null;
   coverImagePath: string | null;
   draftMediaId: string | null;
+  llm: DailyAutoLlmSummary | null;
   error: string | null;
 }): DailyAutoResult {
   return {
@@ -522,6 +594,7 @@ function buildResult(input: {
     selectedTopicUrl: input.selectedTopicUrl,
     coverImagePath: input.coverImagePath,
     draftMediaId: input.draftMediaId,
+    llm: input.llm,
     draftOnly: true,
     publishApiCalled: false,
     massSendApiCalled: false,
@@ -586,6 +659,7 @@ export async function runDailyAuto(
   let selectedTopicUrl: string | null = null;
   let coverImagePath: string | null = null;
   let draftMediaId: string | null = null;
+  let llm: DailyAutoLlmSummary | null = null;
   let status: "success" | "failed" = "failed";
   let error: string | null = null;
 
@@ -746,6 +820,7 @@ export async function runDailyAuto(
     selectedTopicUrl = selectedTopicUrl ?? summary.selectedTopicUrl;
     coverImagePath = coverImagePath ?? summary.coverImagePath;
     draftMediaId = draftMediaId ?? summary.draftMediaId;
+    llm = llm ?? summary.llm;
   }
   const finishedAtMs = Date.now();
   const finishedAt = new Date(finishedAtMs).toISOString();
@@ -759,6 +834,7 @@ export async function runDailyAuto(
     selectedTopicUrl,
     coverImagePath,
     draftMediaId,
+    llm,
     error
   });
   const report = createReport({ result, files, force });

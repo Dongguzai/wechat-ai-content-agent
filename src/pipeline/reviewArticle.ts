@@ -2,6 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { countArticleChars } from "./writeArticle.js";
+import { createChatCompletion } from "../adapters/minimax.js";
+import {
+  formatLlmUsage,
+  mockLlmMetadata,
+  realLlmMetadata,
+  resolveLlmStageConfig
+} from "../adapters/llm.js";
 import type {
   ArticleMeta,
   ArticleReviewIssue,
@@ -14,6 +21,12 @@ import type {
 } from "../types/article.js";
 import type { FactPackClaim, TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
+import type {
+  LlmChatCompletionClient,
+  LlmChatCompletionResult,
+  LlmFetch,
+  LlmRunMetadata
+} from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 
 export interface ReviewArticleInput {
@@ -36,6 +49,9 @@ export interface ReviewArticleOptions {
   topicFactPackReport?: string;
   selectedTopic?: SelectedTopic;
   logger?: Logger;
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: LlmFetch;
+  chatCompletion?: LlmChatCompletionClient;
   writeOutputs?: boolean;
   now?: Date;
 }
@@ -446,6 +462,13 @@ function createReviewReport(result: ArticleReviewResult): string {
     `- passed: ${result.factBoundaryCheck.passed ? "true" : "false"}`,
     ...boundaryLines,
     "",
+    "## LLM 辅助审稿",
+    "",
+    `- provider: ${result.llm?.provider ?? "minimax"}`,
+    `- model: ${result.llm?.model ?? "unknown"}`,
+    `- mode: ${result.llm?.mode ?? "mock"}`,
+    `- usage: ${result.llm ? formatLlmUsage(result.llm.usage) : "unknown"}`,
+    "",
     "## 是否允许进入下一阶段",
     "",
     result.passed ? "允许进入“封面图生成 + HTML 排版”。" : "不允许进入下一阶段。",
@@ -455,7 +478,7 @@ function createReviewReport(result: ArticleReviewResult): string {
 
 export function reviewArticle(
   input: ReviewArticleInput,
-  options: { now?: Date } = {}
+  options: { now?: Date; llm?: LlmRunMetadata } = {}
 ): ArticleReviewResult {
   const { articleMarkdown, articleMeta, factPack, selectedTopic } = input;
   const issues: ArticleReviewIssue[] = [];
@@ -835,8 +858,173 @@ export function reviewArticle(
     optionalSuggestions,
     factBoundaryCheck,
     qualityCheck,
+    ...(options.llm ? { llm: options.llm } : {}),
     finalVerdict,
     generatedAt
+  };
+}
+
+function createReviewerSystemPrompt(): string {
+  return [
+    "你是公众号文章辅助审稿人。",
+    "只返回 JSON object，不要输出 Markdown 围栏。",
+    "你只能辅助发现风险，不能放宽本地硬规则。",
+    "重点检查事实边界、标题党、第一人称、通稿口吻、过度推导和 forbidden terms。"
+  ].join("\n");
+}
+
+function createReviewerUserPrompt(input: ReviewArticleInput): string {
+  return [
+    "请辅助审稿，返回 JSON：",
+    JSON.stringify(
+      {
+        passed: true,
+        score: 88,
+        summary: "简短总结",
+        issues: [
+          {
+            severity: "low",
+            message: "问题",
+            suggestion: "建议"
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    "",
+    "article.md:",
+    input.articleMarkdown,
+    "",
+    "article-meta.json:",
+    JSON.stringify(input.articleMeta, null, 2),
+    "",
+    "topic-fact-pack.json:",
+    JSON.stringify(input.factPack, null, 2),
+    "",
+    "selected-topic.json:",
+    JSON.stringify(input.selectedTopic, null, 2)
+  ].join("\n");
+}
+
+function parseJsonContent<T>(completion: LlmChatCompletionResult): T {
+  try {
+    return JSON.parse(completion.content) as T;
+  } catch {
+    throw new Error("MiniMax article-reviewer response was not valid JSON.");
+  }
+}
+
+function auxiliaryReviewerFoundBlockingIssue(value: unknown): {
+  found: boolean;
+  summary: string;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { found: false, summary: "" };
+  }
+
+  const record = value as Record<string, unknown>;
+  const passed = record.passed === true;
+  const summary = typeof record.summary === "string" ? record.summary.trim() : "";
+  const issues = Array.isArray(record.issues) ? record.issues : [];
+  const severeIssue = issues.find((issue) => {
+    if (typeof issue !== "object" || issue === null || Array.isArray(issue)) {
+      return false;
+    }
+
+    const severity = (issue as Record<string, unknown>).severity;
+    return severity === "medium" || severity === "high";
+  });
+
+  if (passed && !severeIssue) {
+    return { found: false, summary };
+  }
+
+  if (typeof severeIssue === "object" && severeIssue !== null) {
+    const issue = severeIssue as Record<string, unknown>;
+    const message = typeof issue.message === "string" ? issue.message : "MiniMax 辅助审稿提示需要复核。";
+    const suggestion =
+      typeof issue.suggestion === "string" ? issue.suggestion : "人工复核该辅助审稿意见。";
+    return {
+      found: true,
+      summary: `${message} ${suggestion}`.trim()
+    };
+  }
+
+  return {
+    found: !passed,
+    summary: summary || "MiniMax 辅助审稿认为文章需要人工复核。"
+  };
+}
+
+async function runMiniMaxAuxiliaryReview(input: {
+  reviewInput: ReviewArticleInput;
+  env: NodeJS.ProcessEnv;
+  fetchImpl?: LlmFetch;
+  chatCompletion: LlmChatCompletionClient;
+}): Promise<{
+  llm: LlmRunMetadata;
+  blockingSummary: string | null;
+}> {
+  const config = resolveLlmStageConfig("article-reviewer", input.env);
+  const completion = await input.chatCompletion({
+    model: config.model,
+    systemPrompt: createReviewerSystemPrompt(),
+    userPrompt: createReviewerUserPrompt(input.reviewInput),
+    temperature: config.temperature,
+    maxCompletionTokens: config.maxCompletionTokens,
+    responseFormat: "json_object",
+    env: input.env,
+    fetchImpl: input.fetchImpl
+  });
+  const payload = parseJsonContent<unknown>(completion);
+  const auxiliary = auxiliaryReviewerFoundBlockingIssue(payload);
+
+  return {
+    llm: realLlmMetadata(completion, "rules+real"),
+    blockingSummary: auxiliary.found ? auxiliary.summary : null
+  };
+}
+
+function applyAuxiliaryReview(
+  review: ArticleReviewResult,
+  input: {
+    llm: LlmRunMetadata;
+    blockingSummary: string | null;
+  }
+): ArticleReviewResult {
+  if (!input.blockingSummary) {
+    return {
+      ...review,
+      llm: input.llm
+    };
+  }
+
+  const issues: ArticleReviewIssue[] = [
+    ...review.issues,
+    {
+      type: "logic",
+      severity: "medium",
+      message: "MiniMax 辅助审稿提示需要人工复核。",
+      evidence: input.blockingSummary,
+      suggestion: "人工复核 MiniMax 辅助审稿意见，必要时修改正文后重新审核。"
+    }
+  ];
+  const requiredFixes = dedupe([
+    ...review.requiredFixes,
+    "人工复核 MiniMax 辅助审稿意见，必要时修改正文后重新审核。"
+  ]);
+  const score = Math.min(review.score, 79);
+
+  return {
+    ...review,
+    passed: false,
+    score,
+    summary: "文章未通过审核，需要先完成必修修改项。",
+    issues,
+    requiredFixes,
+    llm: input.llm,
+    finalVerdict: "不允许进入下一阶段；完成必修修改项后需要重新审核。"
   };
 }
 
@@ -856,6 +1044,9 @@ export async function reviewArticleWithReport(
     options.selectedTopicFile ?? join(outputDir, "selected-topic.json");
   const writeOutputs = options.writeOutputs ?? true;
   const files = createOutputFiles(outputDir);
+  const env = options.env ?? process.env;
+  const llmConfig = resolveLlmStageConfig("article-reviewer", env);
+  const chatCompletion = options.chatCompletion ?? createChatCompletion;
 
   const articleMarkdown =
     options.articleMarkdown ?? (await readFile(articleFile, "utf8"));
@@ -870,15 +1061,28 @@ export async function reviewArticleWithReport(
     await readFile(topicFactPackReportFile, "utf8");
   }
 
-  const review = reviewArticle(
-    {
-      articleMarkdown,
-      articleMeta,
-      factPack,
-      selectedTopic
-    },
-    { now: options.now }
-  );
+  const reviewInput = {
+    articleMarkdown,
+    articleMeta,
+    factPack,
+    selectedTopic
+  };
+  const baseReview = reviewArticle(reviewInput, { now: options.now });
+  const review =
+    llmConfig.mode === "real"
+      ? applyAuxiliaryReview(
+          baseReview,
+          await runMiniMaxAuxiliaryReview({
+            reviewInput,
+            env,
+            fetchImpl: options.fetchImpl,
+            chatCompletion
+          })
+        )
+      : {
+          ...baseReview,
+          llm: mockLlmMetadata(llmConfig)
+        };
   const report = createReviewReport(review);
 
   if (writeOutputs) {

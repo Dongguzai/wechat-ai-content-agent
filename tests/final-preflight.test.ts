@@ -24,7 +24,53 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 async function writeFinalPreflightFixture(outputDir: string): Promise<void> {
   await mkdir(outputDir, { recursive: true });
   await writeJson(join(outputDir, "article-review.json"), {
-    passed: true
+    passed: true,
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "mock",
+      usage: {
+        promptTokens: null,
+        completionTokens: null,
+        totalTokens: null
+      }
+    }
+  });
+  await writeJson(join(outputDir, "article-meta.json"), {
+    title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+    wordCount: 42,
+    sourceTopic: "source",
+    articleThesis: "thesis",
+    usedClaims: [],
+    riskControls: [],
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "mock",
+      usage: {
+        promptTokens: null,
+        completionTokens: null,
+        totalTokens: null
+      }
+    }
+  });
+  await writeJson(join(outputDir, "title-candidates.json"), {
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    selectedTitle: "AI 编码代理真正卷到的，不是价格，而是工作流",
+    selectedKind: "judgement",
+    candidates: [],
+    forbiddenTerms: [],
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "mock",
+      usage: {
+        promptTokens: null,
+        completionTokens: null,
+        totalTokens: null
+      }
+    }
   });
   await writeJson(join(outputDir, "cover-review.json"), {
     passed: true
@@ -154,6 +200,55 @@ async function writeProductionPreflightFixture(
     files: {
       result: join(outputDir, "real-data-audit.json"),
       report: join(outputDir, "real-data-audit-report.md")
+    }
+  });
+  await writeJson(join(outputDir, "article-meta.json"), {
+    title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+    wordCount: 42,
+    sourceTopic: "source",
+    articleThesis: "thesis",
+    usedClaims: [],
+    riskControls: [],
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "real",
+      usage: {
+        promptTokens: 10,
+        completionTokens: 20,
+        totalTokens: 30
+      }
+    }
+  });
+  await writeJson(join(outputDir, "title-candidates.json"), {
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    selectedTitle: "AI 编码代理真正卷到的，不是价格，而是工作流",
+    selectedKind: "judgement",
+    candidates: [],
+    forbiddenTerms: [],
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "real",
+      usage: {
+        promptTokens: 11,
+        completionTokens: 12,
+        totalTokens: 23
+      }
+    }
+  });
+  await writeJson(join(outputDir, "article-review.json"), {
+    passed: true,
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "rules+real",
+      usage: {
+        promptTokens: 13,
+        completionTokens: 14,
+        totalTokens: 27
+      }
     }
   });
 }
@@ -367,6 +462,16 @@ test("final preflight reports blocking conditions", async () => {
         WECHAT_APP_SECRET: "SUPER_SECRET_VALUE"
       },
       issue: /outputs contain no secrets/
+    },
+    {
+      name: "minimax-secret-output",
+      mutate: async (outputDir) =>
+        writeFile(join(outputDir, "article.md"), "MINIMAX_SECRET_VALUE\n", "utf8"),
+      env: {
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE",
+        MINIMAX_API_KEY: "MINIMAX_SECRET_VALUE"
+      },
+      issue: /outputs contain no secrets/
     }
   ];
 
@@ -408,6 +513,9 @@ test("REAL_PRODUCTION_MODE=true blocks mock cover mode in final preflight", asyn
       lockDir: join(outputDir, "locks"),
       env: {
         REAL_PRODUCTION_MODE: "true",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        LLM_PROVIDER: "minimax",
         WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
       },
       now: new Date("2026-05-29T00:00:00.000Z")
@@ -434,6 +542,9 @@ test("REAL_PRODUCTION_MODE=true blocks svg cover imagePath in final preflight", 
       lockDir: join(outputDir, "locks"),
       env: {
         REAL_PRODUCTION_MODE: "true",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        LLM_PROVIDER: "minimax",
         WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
       },
       now: new Date("2026-05-29T00:00:00.000Z")
@@ -441,6 +552,51 @@ test("REAL_PRODUCTION_MODE=true blocks svg cover imagePath in final preflight", 
 
     assert.equal(result.passed, false);
     assert.match(result.issues.join("\n"), /production cover image is jpg or png|mock svg/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("REAL_PRODUCTION_MODE=true blocks mock article LLM mode in final preflight", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "final-preflight-prod-mock-llm-"));
+
+  try {
+    await writeProductionPreflightFixture(outputDir);
+    await writeJson(join(outputDir, "article-meta.json"), {
+      title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+      wordCount: 42,
+      sourceTopic: "source",
+      articleThesis: "thesis",
+      usedClaims: [],
+      riskControls: [],
+      generatedAt: "2026-05-29T00:00:00.000Z",
+      llm: {
+        provider: "minimax",
+        model: "MiniMax-M2.7",
+        mode: "mock",
+        usage: {
+          promptTokens: null,
+          completionTokens: null,
+          totalTokens: null
+        }
+      }
+    });
+
+    const result = await runFinalPreflight({
+      outputDir,
+      lockDir: join(outputDir, "locks"),
+      env: {
+        REAL_PRODUCTION_MODE: "true",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        LLM_PROVIDER: "minimax",
+        WECHAT_COVER_MEDIA_ID: "THUMB_MEDIA_ID_VALUE"
+      },
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.issues.join("\n"), /production article writer llm is real/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

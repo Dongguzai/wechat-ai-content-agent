@@ -1,3 +1,5 @@
+import type { LlmRunMetadata } from "./llm.js";
+
 export type TitleCandidateKind =
   | "judgement"
   | "contrast"
@@ -29,6 +31,16 @@ export interface TitleSelectionSummary {
   editorialStyleRead: boolean;
   feedbackRead: boolean;
   feedbackSummary?: string;
+  llm?: LlmRunMetadata;
+}
+
+export interface TitleCandidatesFile {
+  generatedAt: string;
+  selectedTitle: string;
+  selectedKind: TitleCandidateKind;
+  candidates: TitleCandidate[];
+  forbiddenTerms: string[];
+  llm: LlmRunMetadata;
 }
 
 export interface TitleGenerationOutputFiles {

@@ -19,6 +19,7 @@ import { saveWechatDraftApiWithReport } from "./saveWechatDraftApi.js";
 import { loadEditorialFeedback } from "./loadEditorialFeedback.js";
 import { loadEditorialStyle } from "./loadEditorialStyle.js";
 import { loadManualTopic } from "./loadManualTopic.js";
+import { formatLlmUsage } from "../adapters/llm.js";
 import type {
   DailyPipelineResult,
   PipelineOutputFiles
@@ -113,13 +114,16 @@ function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): str
     `- Fact pack source reliability: ${artifacts.topicFactPack.sourceReliability}`,
     `- Fact pack claims: ${artifacts.topicFactPack.verifiedClaims.length}`,
     `- Article title: ${artifacts.article.title}`,
+    `- Writer LLM: ${artifacts.articleMeta.llm?.provider ?? "minimax"} / ${artifacts.articleMeta.llm?.model ?? "unknown"} / ${artifacts.articleMeta.llm?.mode ?? "mock"} (${artifacts.articleMeta.llm ? formatLlmUsage(artifacts.articleMeta.llm.usage) : "usage unknown"})`,
     `- Title candidates generated: ${artifacts.titleCandidates.length}`,
     `- Final title: ${finalTitle}`,
+    `- Title LLM: ${artifacts.titleSelection.llm?.provider ?? "minimax"} / ${artifacts.titleSelection.llm?.model ?? "unknown"} / ${artifacts.titleSelection.llm?.mode ?? "mock"} (${artifacts.titleSelection.llm ? formatLlmUsage(artifacts.titleSelection.llm.usage) : "usage unknown"})`,
     `- Final title selection reason: ${artifacts.titleSelection.selectionReason}`,
     `- Article word count: ${artifacts.article.wordCount}`,
     `- Article used claims: ${artifacts.articleMeta.usedClaims.length}`,
     `- Article review score: ${artifacts.articleReview.score}`,
     `- Article review passed: ${artifacts.articleReview.passed ? "yes" : "no"}`,
+    `- Reviewer LLM: ${artifacts.articleReview.llm?.provider ?? "minimax"} / ${artifacts.articleReview.llm?.model ?? "unknown"} / ${artifacts.articleReview.llm?.mode ?? "mock"} (${artifacts.articleReview.llm ? formatLlmUsage(artifacts.articleReview.llm.usage) : "usage unknown"})`,
     `- Article review verdict: ${artifacts.articleReview.finalVerdict}`,
     `- Cover provider: ${artifacts.cover.provider}`,
     `- Cover mode: ${artifacts.cover.mode}`,
@@ -288,6 +292,8 @@ export async function runDailyPipeline(
     factPack: factPack.factPack,
     editorialStyle,
     logger,
+    env: options.env,
+    fetchImpl: options.fetchImpl,
     writeOutputs: true,
     now: options.now
   });
@@ -302,6 +308,8 @@ export async function runDailyPipeline(
     editorialStyle,
     feedback: editorialFeedback,
     logger,
+    env: options.env,
+    fetchImpl: options.fetchImpl,
     writeOutputs: true,
     now: options.now
   });
@@ -321,6 +329,8 @@ export async function runDailyPipeline(
     factPack: factPack.factPack,
     selectedTopic: topicSelection.topic,
     logger,
+    env: options.env,
+    fetchImpl: options.fetchImpl,
     writeOutputs: true,
     now: options.now
   });

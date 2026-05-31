@@ -15,6 +15,7 @@ type EnvValueKind =
   | "enum"
   | "flag"
   | "url"
+  | "number"
   | "string";
 
 interface EnvSpec {
@@ -43,6 +44,20 @@ export interface EnvCheckCliOptions extends EnvCheckOptions {
 
 const envSpecs: EnvSpec[] = [
   { name: "REAL_PRODUCTION_MODE", kind: "boolean" },
+  { name: "LLM_PROVIDER", kind: "enum", allowedValues: ["minimax"] },
+  { name: "LLM_ENABLE_REAL_API", kind: "boolean" },
+  { name: "LLM_DRY_RUN", kind: "boolean" },
+  { name: "MINIMAX_API_KEY", kind: "string" },
+  { name: "MINIMAX_BASE_URL", kind: "url" },
+  { name: "MINIMAX_MODEL", kind: "string" },
+  { name: "MINIMAX_MAX_COMPLETION_TOKENS", kind: "integer" },
+  { name: "MINIMAX_TEMPERATURE", kind: "number" },
+  { name: "ARTICLE_WRITER_PROVIDER", kind: "enum", allowedValues: ["minimax"] },
+  { name: "ARTICLE_WRITER_MODEL", kind: "string" },
+  { name: "TITLE_GENERATOR_PROVIDER", kind: "enum", allowedValues: ["minimax"] },
+  { name: "TITLE_GENERATOR_MODEL", kind: "string" },
+  { name: "ARTICLE_REVIEWER_PROVIDER", kind: "enum", allowedValues: ["minimax"] },
+  { name: "ARTICLE_REVIEWER_MODEL", kind: "string" },
   { name: "RSS_ENABLE_REAL_FETCH", kind: "boolean" },
   { name: "RSS_FETCH_TIMEOUT_MS", kind: "integer" },
   { name: "RSS_FETCH_RETRY", kind: "nonnegativeInteger" },
@@ -271,6 +286,11 @@ function validateEnvValue(
     return;
   }
 
+  if (spec.kind === "number" && !Number.isFinite(Number(value))) {
+    errors.push(`${spec.name} must be a finite number.`);
+    return;
+  }
+
   if (spec.kind === "nonnegativeInteger" && !/^(0|[1-9]\d*)$/.test(value)) {
     errors.push(`${spec.name} must be a non-negative integer.`);
     return;
@@ -316,6 +336,37 @@ function validateConditionalEnv(
 
     if (!isExplicitTrue(env, "SEARCH_ENABLE_REAL_API")) {
       errors.push("REAL_PRODUCTION_MODE=true requires SEARCH_ENABLE_REAL_API=true.");
+    }
+
+    if (!isExplicitTrue(env, "LLM_ENABLE_REAL_API")) {
+      errors.push("REAL_PRODUCTION_MODE=true requires LLM_ENABLE_REAL_API=true.");
+    }
+
+    if (!isExplicitFalse(env, "LLM_DRY_RUN")) {
+      errors.push("REAL_PRODUCTION_MODE=true requires LLM_DRY_RUN=false.");
+    }
+
+    if ((envValue(env, "LLM_PROVIDER") ?? "minimax") !== "minimax") {
+      errors.push("REAL_PRODUCTION_MODE=true requires LLM_PROVIDER=minimax.");
+    }
+  }
+
+  const llmRealIntent =
+    isExplicitTrue(env, "LLM_ENABLE_REAL_API") ||
+    isExplicitFalse(env, "LLM_DRY_RUN");
+  if (llmRealIntent) {
+    if (!isExplicitTrue(env, "LLM_ENABLE_REAL_API") || !isExplicitFalse(env, "LLM_DRY_RUN")) {
+      errors.push(
+        "Real MiniMax LLM mode requires LLM_ENABLE_REAL_API=true and LLM_DRY_RUN=false."
+      );
+    }
+
+    if ((envValue(env, "LLM_PROVIDER") ?? "minimax") !== "minimax") {
+      errors.push("Real MiniMax LLM mode requires LLM_PROVIDER=minimax.");
+    }
+
+    if (!envValue(env, "MINIMAX_API_KEY")) {
+      errors.push("Real MiniMax LLM mode requires MINIMAX_API_KEY.");
     }
   }
 
@@ -440,6 +491,24 @@ function describeWechatDraftMode(env: NodeJS.ProcessEnv): string[] {
   ];
 }
 
+function describeLlmMode(env: NodeJS.ProcessEnv): string[] {
+  const realReady =
+    isExplicitTrue(env, "LLM_ENABLE_REAL_API") &&
+    isExplicitFalse(env, "LLM_DRY_RUN") &&
+    (envValue(env, "LLM_PROVIDER") ?? "minimax") === "minimax";
+
+  if (realReady) {
+    return [
+      "MiniMax LLM mode: real API calls are configured for article writing, title generation, and auxiliary review.",
+      "MiniMax API key is read from environment only and must not be written to outputs or logs."
+    ];
+  }
+
+  return [
+    "MiniMax LLM mode: mock/deterministic text generation; no MiniMax API call should occur."
+  ];
+}
+
 function formatMissingExampleKeys(
   missingKeys: string[],
   references: Map<string, Set<string>>
@@ -546,6 +615,7 @@ export async function checkEnvironment(
   }
 
   validateConditionalEnv(runtimeEnv, errors, warnings);
+  info.push(...describeLlmMode(runtimeEnv));
   info.push(...describeWechatDraftMode(runtimeEnv));
 
   return {

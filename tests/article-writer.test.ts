@@ -9,6 +9,7 @@ import {
   writeArticleWithReport
 } from "../src/pipeline/writeArticle.js";
 import type { ArticleMeta } from "../src/types/article.js";
+import type { LlmChatCompletionInput } from "../src/types/llm.js";
 import type { SelectedTopic } from "../src/types/news.js";
 import type { Logger } from "../src/utils/logger.js";
 
@@ -158,6 +159,8 @@ test("writeArticleWithReport writes article outputs and obeys safety boundaries"
     assert.ok(meta.wordCount <= 1500);
     assert.ok(meta.usedClaims.length >= 3);
     assert.ok(meta.riskControls.length >= 3);
+    assert.equal(meta.llm?.provider, "minimax");
+    assert.equal(meta.llm?.mode, "mock");
 
     for (const phrase of forbiddenArticlePhrases) {
       assert.equal(article.includes(phrase), false, `forbidden phrase: ${phrase}`);
@@ -175,6 +178,147 @@ test("writeArticleWithReport writes article outputs and obeys safety boundaries"
     assert.match(report, /1500 字限制/);
     assert.match(report, /阶段边界/);
     assert.match(report, /没有进入封面、HTML 排版、公众号后台、APIMart 或浏览器自动化/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("writeArticleWithReport keeps mock path when LLM_ENABLE_REAL_API=false", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-writer-mock-"));
+  const topic = selectedTopicFixture();
+  let called = false;
+
+  try {
+    await writeFile(
+      join(outputDir, "selected-topic.json"),
+      `${JSON.stringify(topic, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(outputDir, "topic-selection-report.md"),
+      "# Topic Selection Report\n",
+      "utf8"
+    );
+    const factPack = await buildTopicFactPack({
+      outputDir,
+      topic,
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    const result = await writeArticleWithReport({
+      outputDir,
+      topic,
+      factPack: factPack.factPack,
+      topicSelectionReport: "# Topic Selection Report",
+      topicFactPackReport: "# Topic Fact Pack",
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "false",
+        LLM_DRY_RUN: "true"
+      },
+      chatCompletion: async () => {
+        called = true;
+        throw new Error("should not call MiniMax in mock mode");
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(called, false);
+    assert.equal(result.meta.llm?.mode, "mock");
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("writeArticleWithReport real mode calls MiniMax adapter and records usage", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-writer-real-"));
+  const topic = selectedTopicFixture();
+  let called = 0;
+
+  try {
+    await writeFile(
+      join(outputDir, "selected-topic.json"),
+      `${JSON.stringify(topic, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(outputDir, "topic-selection-report.md"),
+      "# Topic Selection Report\n",
+      "utf8"
+    );
+    const factPack = await buildTopicFactPack({
+      outputDir,
+      topic,
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    const result = await writeArticleWithReport({
+      outputDir,
+      topic,
+      factPack: factPack.factPack,
+      topicSelectionReport: "# Topic Selection Report",
+      topicFactPackReport: "# Topic Fact Pack",
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        ARTICLE_WRITER_PROVIDER: "minimax",
+        ARTICLE_WRITER_MODEL: "MiniMax-M2.7"
+      },
+      chatCompletion: async (input: LlmChatCompletionInput) => {
+        called += 1;
+        assert.equal(input.model, "MiniMax-M2.7");
+        assert.match(input.userPrompt ?? "", /selected-topic\.json/);
+        return {
+          provider: "minimax",
+          model: "MiniMax-M2.7",
+          content: JSON.stringify({
+            title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+            subtitle: "开源路径和闭源订阅都在争夺默认入口。",
+            articleThesis: "编码代理竞争正在从模型能力转向工作流控制权。",
+            sections: [
+              {
+                heading: "冲突先摆出来",
+                body: "开源工具和闭源订阅工具被放在一起讨论，表面是成本差异，实际是开发者工作流入口在重新分配。"
+              },
+              {
+                heading: "事实边界要收紧",
+                body: "Claude Code 与 Goose 都触及部分 coding agent 工作流，但产品形态、模型后端、权限治理和成熟度不同，不能写成能力边界一致。"
+              },
+              {
+                heading: "团队会重新算账",
+                body: "团队关注的不只是价格，还包括工具锁定、审计、安全和模型调用成本。开源方案降低入口门槛，但外部模型调用仍可能产生费用。"
+              }
+            ],
+            riskControls: ["不写完全替代", "不写零成本", "不写单独固定高价工具"]
+          }),
+          usage: {
+            promptTokens: 101,
+            completionTokens: 88,
+            totalTokens: 189
+          },
+          finishReason: "stop",
+          generatedAt: "2026-05-29T00:00:00.000Z"
+        };
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(called, 1);
+    assert.equal(result.meta.llm?.provider, "minimax");
+    assert.equal(result.meta.llm?.model, "MiniMax-M2.7");
+    assert.equal(result.meta.llm?.mode, "real");
+    assert.deepEqual(result.meta.llm?.usage, {
+      promptTokens: 101,
+      completionTokens: 88,
+      totalTokens: 189
+    });
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

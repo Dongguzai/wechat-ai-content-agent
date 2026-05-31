@@ -13,8 +13,9 @@ import { loadEditorialStyle } from "../src/pipeline/loadEditorialStyle.js";
 import { runDailyPipeline } from "../src/pipeline/runDailyPipeline.js";
 import { writeArticleWithReport } from "../src/pipeline/writeArticle.js";
 import type { ArticleMeta } from "../src/types/article.js";
+import type { LlmChatCompletionInput } from "../src/types/llm.js";
 import type { SelectedTopic } from "../src/types/news.js";
-import type { TitleCandidate } from "../src/types/title.js";
+import type { TitleCandidatesFile } from "../src/types/title.js";
 import type { Logger } from "../src/utils/logger.js";
 
 const silentLogger: Logger = {
@@ -162,10 +163,12 @@ test("generateTitlesWithReport creates 5 safe candidates and writes final title 
 
     const writtenCandidates = JSON.parse(
       await readFile(result.files.titleCandidates, "utf8")
-    ) as TitleCandidate[];
-    assert.equal(writtenCandidates.length, 5);
+    ) as TitleCandidatesFile;
+    assert.equal(writtenCandidates.candidates.length, 5);
+    assert.equal(writtenCandidates.llm.provider, "minimax");
+    assert.equal(writtenCandidates.llm.mode, "mock");
 
-    for (const candidate of writtenCandidates) {
+    for (const candidate of writtenCandidates.candidates) {
       assert.equal(typeof candidate.spreadScore, "number");
       assert.equal(typeof candidate.accuracyScore, "number");
       assert.equal(typeof candidate.nonClickbaitScore, "number");
@@ -193,6 +196,93 @@ test("generateTitlesWithReport creates 5 safe candidates and writes final title 
     assert.equal(article.split(/\r?\n/, 1)[0].trim(), result.selection.selectedTitle);
     assert.match(report, /最终标题/);
     assert.match(report, /选择理由/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("generateTitlesWithReport real mode calls MiniMax and records title llm usage", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "title-generator-real-"));
+  let called = 0;
+
+  try {
+    await createArticleFixture(outputDir);
+    const feedback = await loadEditorialFeedback({
+      feedbackDir: join(outputDir, "missing-feedback"),
+      logger: silentLogger
+    });
+    const result = await generateTitlesWithReport({
+      outputDir,
+      feedback,
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        TITLE_GENERATOR_PROVIDER: "minimax",
+        TITLE_GENERATOR_MODEL: "MiniMax-M2.7"
+      },
+      chatCompletion: async (input: LlmChatCompletionInput) => {
+        called += 1;
+        assert.equal(input.model, "MiniMax-M2.7");
+        assert.match(input.userPrompt ?? "", /article\.md/);
+        return {
+          provider: "minimax",
+          model: "MiniMax-M2.7",
+          content: JSON.stringify({
+            candidates: [
+              {
+                kind: "judgement",
+                title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+                rationale: "判断明确。"
+              },
+              {
+                kind: "contrast",
+                title: "Claude Code 和 Goose 的分歧，不止在价格",
+                rationale: "保留反差。"
+              },
+              {
+                kind: "trend",
+                title: "编码代理开始从付费产品走向开源基础设施",
+                rationale: "趋势表达。"
+              },
+              {
+                kind: "publicImpact",
+                title: "AI 写代码变成账单后，团队要重新算成本",
+                rationale: "人群影响。"
+              },
+              {
+                kind: "techDiscussion",
+                title: "开发者争论 Goose，背后是工作流入口之争",
+                rationale: "技术圈讨论。"
+              }
+            ]
+          }),
+          usage: {
+            promptTokens: 77,
+            completionTokens: 55,
+            totalTokens: 132
+          },
+          finishReason: "stop",
+          generatedAt: "2026-05-29T00:00:00.000Z"
+        };
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    const writtenCandidates = JSON.parse(
+      await readFile(result.files.titleCandidates, "utf8")
+    ) as TitleCandidatesFile;
+
+    assert.equal(called, 1);
+    assert.equal(result.candidates.length, 5);
+    assert.equal(result.selection.llm?.mode, "real");
+    assert.equal(writtenCandidates.llm.mode, "real");
+    assert.deepEqual(writtenCandidates.llm.usage, {
+      promptTokens: 77,
+      completionTokens: 55,
+      totalTokens: 132
+    });
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

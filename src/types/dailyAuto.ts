@@ -32,6 +32,7 @@ export interface DailyAutoResult {
   selectedTopicUrl: string | null;
   coverImagePath: string | null;
   draftMediaId: string | null;
+  llm: DailyAutoLlmSummary | null;
   draftOnly: true;
   publishApiCalled: false;
   massSendApiCalled: false;
@@ -39,6 +40,21 @@ export interface DailyAutoResult {
   steps: DailyAutoStepResult[];
   error: string | null;
   generatedAt: string;
+}
+
+export interface DailyAutoLlmStageSummary {
+  provider: string;
+  model: string;
+  mode: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+}
+
+export interface DailyAutoLlmSummary {
+  writer: DailyAutoLlmStageSummary | null;
+  title: DailyAutoLlmStageSummary | null;
+  reviewer: DailyAutoLlmStageSummary | null;
 }
 
 export interface DailyAutoOutputFiles {

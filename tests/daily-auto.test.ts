@@ -44,6 +44,10 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 function completeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     REAL_PRODUCTION_MODE: "true",
+    LLM_PROVIDER: "minimax",
+    LLM_ENABLE_REAL_API: "true",
+    LLM_DRY_RUN: "false",
+    MINIMAX_API_KEY: "MINIMAX_KEY_VALUE",
     RSS_ENABLE_REAL_FETCH: "true",
     SEARCH_ENABLE_REAL_API: "true",
     TAVILY_API_KEY: "TAVILY_KEY_VALUE",
@@ -321,7 +325,34 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
     articleThesis: "AI agent workflows are becoming production infrastructure.",
     usedClaims,
     riskControls: ["source facts", "avoid overclaiming", "keep human review"],
-    generatedAt: "2026-05-29T00:00:00.000Z"
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "real",
+      usage: {
+        promptTokens: 10,
+        completionTokens: 20,
+        totalTokens: 30
+      }
+    }
+  });
+  await writeJson(join(outputDir, "title-candidates.json"), {
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    selectedTitle: "AI Agent 工作流进入真实生产",
+    selectedKind: "judgement",
+    candidates: [],
+    forbiddenTerms: [],
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "real",
+      usage: {
+        promptTokens: 11,
+        completionTokens: 12,
+        totalTokens: 23
+      }
+    }
   });
   await writeJson(join(outputDir, "article-review.json"), {
     passed: true,
@@ -343,7 +374,17 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
       themesCovered: ["开源", "工作流", "成本"]
     },
     finalVerdict: "允许进入下一阶段。",
-    generatedAt: "2026-05-29T00:00:00.000Z"
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    llm: {
+      provider: "minimax",
+      model: "MiniMax-M2.7",
+      mode: "rules+real",
+      usage: {
+        promptTokens: 13,
+        completionTokens: 14,
+        totalTokens: 27
+      }
+    }
   });
   await writeJson(join(outputDir, "candidate-news.json"), [baseNewsItem]);
   await writeJson(join(outputDir, "shortlisted-news.json"), [baseNewsItem]);
@@ -673,6 +714,7 @@ test("run:daily:auto writes draft only and does not expose secrets or credential
       false
     );
     assert.doesNotMatch(outputText, /SUPER_SECRET_SHOULD_NOT_APPEAR/);
+    assert.doesNotMatch(outputText, /MINIMAX_KEY_VALUE/);
     assert.doesNotMatch(outputText, /ACCESS_TOKEN_SHOULD_NOT_APPEAR/);
     assert.doesNotMatch(outputText, /\baccess_token\b/i);
     await access(join(temp.outputDir, "daily-auto-result.json"));

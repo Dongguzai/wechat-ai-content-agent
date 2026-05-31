@@ -2,6 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { countArticleChars } from "./writeArticle.js";
+import { createChatCompletion } from "../adapters/minimax.js";
+import {
+  formatLlmUsage,
+  mockLlmMetadata,
+  realLlmMetadata,
+  resolveLlmStageConfig
+} from "../adapters/llm.js";
 import { loadEditorialFeedback } from "./loadEditorialFeedback.js";
 import { loadEditorialStyle } from "./loadEditorialStyle.js";
 import type { ArticleMeta } from "../types/article.js";
@@ -11,11 +18,18 @@ import type { TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
 import type {
   TitleCandidate,
+  TitleCandidatesFile,
   TitleCandidateKind,
   TitleGenerationOutputFiles,
   TitleGenerationResult,
   TitleSelectionSummary
 } from "../types/title.js";
+import type {
+  LlmChatCompletionClient,
+  LlmChatCompletionResult,
+  LlmFetch,
+  LlmRunMetadata
+} from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 
 export interface GenerateTitlesOptions {
@@ -31,6 +45,9 @@ export interface GenerateTitlesOptions {
   editorialStyle?: EditorialStyleLoadResult;
   feedback?: EditorialFeedbackLoadResult;
   logger?: Logger;
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: LlmFetch;
+  chatCompletion?: LlmChatCompletionClient;
   writeOutputs?: boolean;
   now?: Date;
 }
@@ -322,6 +339,7 @@ function createSelection(
     generatedAt: string;
     editorialStyle: EditorialStyleLoadResult;
     feedback: EditorialFeedbackLoadResult;
+    llm: LlmRunMetadata;
   }
 ): TitleSelectionSummary {
   const eligible = candidates.filter((candidate) => candidate.violations.length === 0);
@@ -345,7 +363,8 @@ function createSelection(
     forbiddenTerms: [...FORBIDDEN_TITLE_TERMS],
     editorialStyleRead: input.editorialStyle.loaded,
     feedbackRead: input.feedback.feedbackRead,
-    feedbackSummary: createFeedbackSummary(input.feedback)
+    feedbackSummary: createFeedbackSummary(input.feedback),
+    llm: input.llm
   };
 }
 
@@ -375,6 +394,10 @@ function createReport(selection: TitleSelectionSummary): string {
     `- editorialStyleRead: ${selection.editorialStyleRead ? "yes" : "no"}`,
     `- feedbackRead: ${selection.feedbackRead ? "yes" : "no"}`,
     `- feedbackSummary: ${selection.feedbackSummary ?? "none"}`,
+    `- llmProvider: ${selection.llm?.provider ?? "minimax"}`,
+    `- llmModel: ${selection.llm?.model ?? "unknown"}`,
+    `- llmMode: ${selection.llm?.mode ?? "mock"}`,
+    `- llmUsage: ${selection.llm ? formatLlmUsage(selection.llm.usage) : "unknown"}`,
     "",
     "## 最终标题",
     "",
@@ -414,6 +437,186 @@ export function generateTitleCandidates(input: {
   );
 }
 
+function createTitleGeneratorSystemPrompt(): string {
+  return [
+    "你是安全的微信公众号标题生成器。",
+    "只返回 JSON object，不要输出 Markdown 围栏。",
+    "必须遵守 fact pack 安全边界，不得标题党。",
+    "不得写免费平替、完全替代、能力相同、零成本、发布、群发等 forbidden terms。"
+  ].join("\n");
+}
+
+function createTitleGeneratorUserPrompt(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  articleMarkdown: string;
+  articleMeta: ArticleMeta;
+  editorialStyle: EditorialStyleLoadResult;
+  feedback: EditorialFeedbackLoadResult;
+}): string {
+  return [
+    "请生成 5 个中文公众号标题候选，必须各 1 个 kind：judgement, contrast, trend, publicImpact, techDiscussion。",
+    "返回 JSON：",
+    JSON.stringify(
+      {
+        candidates: [
+          {
+            kind: "judgement",
+            title: "标题",
+            rationale: "生成理由"
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    "",
+    "article.md:",
+    input.articleMarkdown,
+    "",
+    "article-meta.json:",
+    JSON.stringify(input.articleMeta, null, 2),
+    "",
+    "selected-topic.json:",
+    JSON.stringify(input.topic, null, 2),
+    "",
+    "topic-fact-pack.json:",
+    JSON.stringify(input.factPack, null, 2),
+    "",
+    "editorial-style.md:",
+    input.editorialStyle.content,
+    "",
+    "feedback:",
+    input.feedback.latest ? JSON.stringify(input.feedback.latest, null, 2) : "none"
+  ].join("\n");
+}
+
+function parseJsonContent<T>(completion: LlmChatCompletionResult): T {
+  try {
+    return JSON.parse(completion.content) as T;
+  } catch {
+    throw new Error("MiniMax title-generator response was not valid JSON.");
+  }
+}
+
+function isTitleCandidateKind(value: unknown): value is TitleCandidateKind {
+  return (
+    value === "judgement" ||
+    value === "contrast" ||
+    value === "trend" ||
+    value === "publicImpact" ||
+    value === "techDiscussion"
+  );
+}
+
+function parseRawTitleCandidates(value: unknown): Array<{
+  kind: TitleCandidateKind;
+  title: string;
+  rationale: string;
+}> {
+  if (!Array.isArray(value)) {
+    throw new Error("MiniMax title-generator response must include candidates.");
+  }
+
+  const candidates = value.map((candidate, index) => {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      throw new Error(`MiniMax title candidate ${index + 1} is invalid.`);
+    }
+
+    const record = candidate as Record<string, unknown>;
+    if (!isTitleCandidateKind(record.kind)) {
+      throw new Error(`MiniMax title candidate ${index + 1} has invalid kind.`);
+    }
+
+    if (typeof record.title !== "string" || !record.title.trim()) {
+      throw new Error(`MiniMax title candidate ${index + 1} is missing title.`);
+    }
+
+    return {
+      kind: record.kind,
+      title: record.title.trim(),
+      rationale:
+        typeof record.rationale === "string" && record.rationale.trim()
+          ? record.rationale.trim()
+          : "MiniMax generated title candidate."
+    };
+  });
+  const requiredKinds: TitleCandidateKind[] = [
+    "judgement",
+    "contrast",
+    "trend",
+    "publicImpact",
+    "techDiscussion"
+  ];
+  const missingKinds = requiredKinds.filter(
+    (kind) => !candidates.some((candidate) => candidate.kind === kind)
+  );
+
+  if (candidates.length !== 5 || missingKinds.length > 0) {
+    throw new Error(
+      `MiniMax title-generator must return exactly 5 candidates with all required kinds; missing=${missingKinds.join(", ") || "none"}.`
+    );
+  }
+
+  return requiredKinds.map(
+    (kind) => candidates.find((candidate) => candidate.kind === kind)!
+  );
+}
+
+async function generateTitleCandidatesWithMiniMax(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  articleMarkdown: string;
+  articleMeta: ArticleMeta;
+  editorialStyle: EditorialStyleLoadResult;
+  feedback: EditorialFeedbackLoadResult;
+  env: NodeJS.ProcessEnv;
+  fetchImpl?: LlmFetch;
+  chatCompletion: LlmChatCompletionClient;
+}): Promise<{ candidates: TitleCandidate[]; llm: LlmRunMetadata }> {
+  const config = resolveLlmStageConfig("title-generator", input.env);
+  const completion = await input.chatCompletion({
+    model: config.model,
+    systemPrompt: createTitleGeneratorSystemPrompt(),
+    userPrompt: createTitleGeneratorUserPrompt(input),
+    temperature: config.temperature,
+    maxCompletionTokens: config.maxCompletionTokens,
+    responseFormat: "json_object",
+    env: input.env,
+    fetchImpl: input.fetchImpl
+  });
+  const payload = parseJsonContent<Record<string, unknown>>(completion);
+  const rawCandidates = parseRawTitleCandidates(payload.candidates);
+
+  return {
+    candidates: rawCandidates.map((candidate) =>
+      scoreCandidate({
+        ...candidate,
+        articleMarkdown: input.articleMarkdown,
+        articleMeta: input.articleMeta,
+        factPack: input.factPack,
+        feedback: input.feedback
+      })
+    ),
+    llm: realLlmMetadata(completion, "real")
+  };
+}
+
+function createTitleCandidatesFile(selection: TitleSelectionSummary): TitleCandidatesFile {
+  if (!selection.llm) {
+    throw new Error("Title selection is missing LLM metadata.");
+  }
+
+  return {
+    generatedAt: selection.generatedAt,
+    selectedTitle: selection.selectedTitle,
+    selectedKind: selection.selectedKind,
+    candidates: selection.candidates,
+    forbiddenTerms: selection.forbiddenTerms,
+    llm: selection.llm
+  };
+}
+
 export async function generateTitlesWithReport(
   options: GenerateTitlesOptions = {}
 ): Promise<TitleGenerationResult> {
@@ -428,6 +631,9 @@ export async function generateTitlesWithReport(
     options.topicFactPackFile ?? join(outputDir, "topic-fact-pack.json");
   const writeOutputs = options.writeOutputs ?? true;
   const generatedAt = (options.now ?? new Date()).toISOString();
+  const env = options.env ?? process.env;
+  const llmConfig = resolveLlmStageConfig("title-generator", env);
+  const chatCompletion = options.chatCompletion ?? createChatCompletion;
 
   const [articleMarkdown, articleMeta, topic, factPack, editorialStyle, feedback] =
     await Promise.all([
@@ -439,17 +645,34 @@ export async function generateTitlesWithReport(
       options.feedback ?? loadEditorialFeedback({ logger })
     ]);
 
-  const candidates = generateTitleCandidates({
-    topic,
-    factPack,
-    articleMarkdown,
-    articleMeta,
-    feedback
-  });
+  const { candidates, llm } =
+    llmConfig.mode === "real"
+      ? await generateTitleCandidatesWithMiniMax({
+          topic,
+          factPack,
+          articleMarkdown,
+          articleMeta,
+          editorialStyle,
+          feedback,
+          env,
+          fetchImpl: options.fetchImpl,
+          chatCompletion
+        })
+      : {
+          candidates: generateTitleCandidates({
+            topic,
+            factPack,
+            articleMarkdown,
+            articleMeta,
+            feedback
+          }),
+          llm: mockLlmMetadata(llmConfig)
+        };
   const selection = createSelection(candidates, {
     generatedAt,
     editorialStyle,
-    feedback
+    feedback,
+    llm
   });
   const selectedCandidate = candidates.find(
     (candidate) => candidate.title === selection.selectedTitle
@@ -473,7 +696,7 @@ export async function generateTitlesWithReport(
 
   if (writeOutputs) {
     await mkdir(outputDir, { recursive: true });
-    await writeJson(files.titleCandidates, candidates);
+    await writeJson(files.titleCandidates, createTitleCandidatesFile(selection));
     await writeFile(files.titleSelectionReport, report, "utf8");
     await writeFile(articleFile, updatedMarkdown, "utf8");
     await writeJson(articleMetaFile, updatedMeta);

@@ -39,8 +39,9 @@ pnpm run:daily
 
 - 命令退出码为 0。
 - `outputs/daily-report.md` 生成。
-- `outputs/title-candidates.json` 生成 5 个标题候选。
+- `outputs/title-candidates.json` 生成 5 个标题候选，并记录标题 LLM 元信息。
 - `outputs/title-selection-report.md` 记录最终标题选择理由。
+- `outputs/article-meta.json` 记录正文 LLM 元信息。
 - `outputs/article-review.json` 中 `passed=true`。
 - `outputs/cover-review.json` 中 `passed=true`。
 - `outputs/wechat-layout.json` 中 `compatibleWithWechat=true` 且 `allowedNextStage=true`。
@@ -82,6 +83,52 @@ cat outputs/title-selection-report.md
 ```
 
 最终标题会同步到 `outputs/article-meta.json`，并在 `outputs/wechat.html` 中使用。标题生成只做内容质量优化，不调用微信 API，不发布，不群发。
+
+## 3.1 MiniMax Token Plan / MiniMax LLM 配置
+
+MiniMax 只接入文字模型能力，用于文章正文、标题生成和文章辅助审核。封面仍走 APIMart，公众号草稿仍走微信公众号官方 API。
+
+默认配置保持 dry-run，不调用 MiniMax：
+
+```env
+LLM_PROVIDER=minimax
+MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_MAX_COMPLETION_TOKENS=2048
+MINIMAX_TEMPERATURE=0.75
+ARTICLE_WRITER_PROVIDER=minimax
+ARTICLE_WRITER_MODEL=MiniMax-M2.7
+TITLE_GENERATOR_PROVIDER=minimax
+TITLE_GENERATOR_MODEL=MiniMax-M2.7
+ARTICLE_REVIEWER_PROVIDER=minimax
+ARTICLE_REVIEWER_MODEL=MiniMax-M2.7
+LLM_ENABLE_REAL_API=false
+LLM_DRY_RUN=true
+```
+
+开启真实 MiniMax 调用：
+
+```env
+MINIMAX_API_KEY=你的MiniMaxKey
+LLM_ENABLE_REAL_API=true
+LLM_DRY_RUN=false
+LLM_PROVIDER=minimax
+```
+
+查看本次模型和 token usage：
+
+- `outputs/article-meta.json` 的 `llm`
+- `outputs/title-candidates.json` 的 `llm`
+- `outputs/article-review.json` 的 `llm`
+- `outputs/daily-report.md`
+- `outputs/daily-auto-report.md`
+
+注意：
+
+- `MINIMAX_API_KEY` 只能从环境变量读取，不能写死到代码、outputs、logs 或报告。
+- MiniMax 原始响应不得完整落盘，只保留必要字段和 usage。
+- `LLM_ENABLE_REAL_API=false` 时，测试和 dry-run 不依赖外部 API。
+- `REAL_PRODUCTION_MODE=true` 时，`preflight:final` 会阻断 mock LLM 产物进入公众号草稿。
 
 ## 4. 手动选题
 
@@ -165,6 +212,7 @@ pnpm preflight:final
 - 封面审核通过。
 - 公众号 HTML 排版允许进入下一阶段。
 - 官方 API 草稿 dry-run 通过。
+- 正文、标题和文章辅助审核 LLM 产物满足正式生产模式要求。
 - `WECHAT_COVER_MEDIA_ID` 存在，或存在可上传的真实 JPG/PNG/JPEG 封面图片。
 - HTML 不包含本地图片路径。
 - HTML 不包含发布或群发风险词。
@@ -212,6 +260,10 @@ pnpm run:daily:auto
 要求 `.env` 或当前 shell 中已经配置：
 
 - `REAL_PRODUCTION_MODE=true`
+- `LLM_ENABLE_REAL_API=true`
+- `LLM_DRY_RUN=false`
+- `LLM_PROVIDER=minimax`
+- `MINIMAX_API_KEY`
 - `RSS_ENABLE_REAL_FETCH=true`
 - `SEARCH_ENABLE_REAL_API=true`
 - `COVER_ENABLE_REAL_API=true`
@@ -276,7 +328,7 @@ NOTIFY_ON_FAILURE=true
 NOTIFY_ON_SUCCESS=false
 ```
 
-通知 payload 只包含运行状态、标题、摘要、文章标题、草稿 media_id、报告路径和人工确认要求，不写入 AppSecret、access token 或 APIMart key。webhook 发送失败只记录 warning，不回滚已经完成的草稿创建逻辑。
+通知 payload 只包含运行状态、标题、摘要、文章标题、草稿 media_id、报告路径和人工确认要求，不写入 AppSecret、access token、APIMart key 或 MiniMax key。webhook 发送失败只记录 warning，不回滚已经完成的草稿创建逻辑。
 
 ## 8. 异常处理流程
 
@@ -288,6 +340,7 @@ NOTIFY_ON_SUCCESS=false
 - 若标题阶段失败，打开 `outputs/title-selection-report.md` 或检查候选标题是否触碰 forbidden terms / fact pack 边界。
 - 若手动选题失败，确认 `inputs/manual-topic.md` 非空且包含 `Source URL`。
 - 若文章、封面或 HTML 审核失败，不要跳过审核，先修复对应 pipeline 输出。
+- 若真实 LLM 阶段失败，不要 fallback 到 mock 继续推草稿；先修复 MiniMax 配置、额度或响应格式。
 
 `pnpm preflight:final` 失败：
 
@@ -296,6 +349,7 @@ NOTIFY_ON_SUCCESS=false
 - 若提示本地图片路径，先把正文图片上传到微信图床或移除正文图片引用。
 - 若提示封面素材缺失，先上传真实 JPG/PNG/JPEG 封面素材，或确认 `WECHAT_COVER_IMAGE_PATH` / APIMart 真实封面产物可上传。
 - 若提示同日锁存在，确认不是重复写入；只有明确需要第二个真实草稿时才使用 `--force`。
+- 若提示 LLM mode=mock，确认 `LLM_ENABLE_REAL_API=true`、`LLM_DRY_RUN=false`，并重新生成文章、标题和文章审核产物。
 
 `pnpm wechat:draft:real` 失败：
 
