@@ -9,6 +9,10 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/dashboard/*"]
+    },
     "types": ["node"],
     "noEmit": true
   },

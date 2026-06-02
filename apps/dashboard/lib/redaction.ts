@@ -1,5 +1,5 @@
 const SECRET_KEY_PATTERN =
-  /(app[_-]?secret|access[_-]?token|api[_-]?key|authorization|bearer|cookie|session|password|secret|token)/i;
+  /(app[_-]?secret|access[_-]?token|api[_-]?key|database[_-]?url|authorization|bearer|cookie|session|password|secret|token)/i;
 
 const SECRET_VALUE_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{12,}\b/g,
@@ -14,7 +14,13 @@ const KNOWN_SECRET_ENV_KEYS = [
   "WECHAT_ACCESS_TOKEN",
   "WECHAT_COVER_MEDIA_ID",
   "TAVILY_API_KEY",
-  "EXA_API_KEY"
+  "EXA_API_KEY",
+  "DATABASE_URL",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+  "CRON_SECRET",
+  "DASHBOARD_PASSWORD",
+  "AUTH_SECRET"
 ];
 
 export function redactJson<T>(value: T): T {

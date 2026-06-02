@@ -4,6 +4,10 @@
   "description": "Local-first WeChat AI content production agent with dry-run safety gates.",
   "type": "module",
   "private": true,
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.940.0",
+    "postgres": "^3.4.7"
+  },
   "scripts": {
     "build": "pnpm dashboard:build",
     "dev": "tsx src/index.ts",

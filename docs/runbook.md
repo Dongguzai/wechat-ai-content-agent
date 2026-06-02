@@ -103,7 +103,7 @@ pnpm run:daily -- --from layout
 
 ## 2.1 本地 Next.js 编辑台
 
-本地编辑台位于 `apps/dashboard/`，使用 Next.js、TypeScript、Tailwind CSS、App Router 和 Node.js runtime API routes。它只读取本机白名单目录，并通过后端 action 白名单触发现有 pnpm 命令。
+编辑台位于 `apps/dashboard/`，使用 Next.js、TypeScript、Tailwind CSS、App Router 和 Node.js runtime API routes。本地页面仍可查看本机白名单目录中的产物；云端 Phase 1 的 `/brief` 改为通过 `/api/brief/today` 从 Neon 读取今日简报。
 
 启动：
 
@@ -131,6 +131,10 @@ http://localhost:3000
 
 安全边界：
 
+- `/brief` 页面需要 `DASHBOARD_PASSWORD` 登录。
+- `/api/brief/today` 需要登录。
+- `/api/cron/generate-brief` 只接受 `Authorization: Bearer ${CRON_SECRET}`，不走普通登录。
+- Dashboard 写操作 API 需要登录。
 - 文件读取 API 只允许 `outputs/`、`runs/`、`feedback/`、`inputs/`、`docs/`。
 - 文件读取 API 禁止 `.env`、`node_modules/`、`.git/`、绝对路径、路径穿越和 secret/token 文件。
 - `/settings` 只展示脱敏布尔状态，不显示 `.env` 内容、AppSecret、access token、APIMart key 或 MiniMax key。
@@ -138,7 +142,76 @@ http://localhost:3000
 - 禁止 action 包含 `publish`、`freepublish`、`mass`、`sendall`、`群发`、`发布`、`确认发送`、`立即发送`。
 - action 日志写入 `logs/dashboard-actions.log`，stdout/stderr 摘要会脱敏。
 - 系统只创建公众号草稿，不会发布，不会群发，最终发布需人工确认。
-- Dashboard 只用于本地运行，不部署公网。
+- `DATABASE_URL`、R2 secret、`CRON_SECRET`、`DASHBOARD_PASSWORD` 和 `AUTH_SECRET` 不输出到前端或日志。
+
+## 2.2 云端 Phase 1：Neon / R2 / cron-job.org
+
+云端版架构：
+
+- Vercel：Next.js Dashboard / API。
+- Neon：结构化数据。
+- Cloudflare R2：文件对象。
+- cron-job.org：每天 7 点触发生成简报。
+
+环境变量：
+
+```env
+DATABASE_URL=
+DATABASE_MAX_CONNECTIONS=1
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
+R2_PUBLIC_BASE_URL=
+CRON_SECRET=
+DASHBOARD_PASSWORD=
+AUTH_SECRET=
+BRIEF_TIME_ZONE=Asia/Shanghai
+```
+
+cron-job.org 配置：
+
+```text
+URL:
+https://你的域名/api/cron/generate-brief
+
+Method:
+POST
+
+Headers:
+Authorization: Bearer ${CRON_SECRET}
+Content-Type: application/json
+
+Body:
+{
+  "source": "cron-job.org",
+  "task": "daily-editorial-brief"
+}
+```
+
+`/api/cron/generate-brief` 行为：
+
+- 验证 `CRON_SECRET`。
+- 检查今天是否已有 `success` 的 `editorial_brief` run。
+- 已存在时返回 `already_exists`，不重复生成。
+- 未存在时创建或重置当天 run 为 `running`。
+- 运行现有采集、初筛、选题、简报生成逻辑。
+- 保存 20 条候选到 `news_items`。
+- 保存 10 条入围到 `shortlisted_items`。
+- 保存主选题推荐到 `editorial_briefs`。
+- 上传 `reports/{runDate}/editorial-brief.md` 到 R2。
+- 成功后 `runs.status=success`。
+- 失败后 `runs.status=failed`，错误写入 `runs.error`，接口返回 500。
+
+边界：
+
+- cron-job.org 只触发简报生成。
+- 不写文章。
+- 不生成封面。
+- 不写公众号草稿。
+- 不调用微信 API。
+- 不发布。
+- 不群发。
 
 Dashboard 验证：
 

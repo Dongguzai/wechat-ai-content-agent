@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { executeDashboardAction } from "@/lib/actions";
+import { requireApiSession } from "@/lib/auth";
 import { redactJson } from "@/lib/redaction";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const authError = await requireApiSession();
+  if (authError) return authError;
+
   try {
     const body = await request.json();
     const result = await executeDashboardAction(body?.action);

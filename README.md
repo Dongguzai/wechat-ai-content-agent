@@ -22,7 +22,8 @@ v0.6.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 14. `pnpm run:daily -- --from article` 在读取 `inputs/editorial-approval.json` 且 `approvedByUser=true` 后，继续到 mock 草稿 dry-run，不真实写公众号草稿。
 15. `pnpm scheduler:install-brief` / `pnpm scheduler:show` / `pnpm scheduler:uninstall-brief` 管理每天早上 7 点的编辑简报 cron。
 16. 保留 `pnpm run:daily:auto` 和 8 点 cron，但默认不建议启用；如果启用全自动草稿链路，必须由用户明确选择并承担真实草稿开关配置。
-16. 失败通知支持 `console` 与 `webhook`，默认关闭，通知内容会脱敏。
+17. 云端 Phase 1 支持 Vercel Dashboard/API、Neon 结构化数据、Cloudflare R2 简报 Markdown 存档，以及 cron-job.org 每天 7 点触发今日简报生成。
+18. 失败通知支持 `console` 与 `webhook`，默认关闭，通知内容会脱敏。
 
 ## 当前边界
 
@@ -35,7 +36,7 @@ v0.6.0 是一个本地优先、默认 dry-run 的公众号 AI 内容生产流水
 - 不自动点击“发布”“群发”“确认发送”“立即发送”。
 - 不默认操作微信公众号后台页面。
 - 不内置常驻定时服务；推荐定时运行只通过系统 cron 调用 `pnpm run:daily -- --until brief`。
-- 不接数据库。
+- 本地 dry-run 默认不依赖数据库；云端 Dashboard 使用 Neon Postgres 读取今日简报。
 - 默认业务产物写入 `outputs/`，成功运行归档写入 `runs/yyyy-mm-dd-HHmmss/`。
 
 ## 快速开始
@@ -57,9 +58,69 @@ pnpm dashboard:build
 
 更多操作步骤见 `docs/runbook.md`，常见问题见 `docs/troubleshooting.md`。
 
-## 本地 Next.js 编辑台
+## 云端 Phase 1 架构
 
-本项目提供一个只在本机运行的 Next.js Dashboard，用于查看每日编辑简报、确认选题、预览文章/封面/公众号 HTML、查看 runs、填写 feedback，并通过后端白名单 action 触发现有安全命令。
+云端版第一阶段的职责只到“每日简报”：
+
+- Vercel：Next.js Dashboard / API。
+- Neon：存 `runs`、`news_items`、`shortlisted_items`、`editorial_briefs`。
+- Cloudflare R2：存 `reports/{runDate}/editorial-brief.md`，后续再存封面图、HTML 和文章归档。
+- cron-job.org：每天 7 点调用 Vercel API 生成简报。
+
+调用链路：
+
+```text
+cron-job.org
+→ POST /api/cron/generate-brief
+→ 采集 20 条候选资讯
+→ 初筛 10 条入围资讯
+→ 推荐今日主选题
+→ 写入 Neon
+→ 上传 editorial-brief.md 到 R2
+→ /brief 从 GET /api/brief/today 读取 Neon
+```
+
+需要的云端环境变量：
+
+```env
+DATABASE_URL=
+DATABASE_MAX_CONNECTIONS=1
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
+R2_PUBLIC_BASE_URL=
+CRON_SECRET=
+DASHBOARD_PASSWORD=
+AUTH_SECRET=
+BRIEF_TIME_ZONE=Asia/Shanghai
+```
+
+cron-job.org 配置：
+
+```text
+URL:
+https://你的域名/api/cron/generate-brief
+
+Method:
+POST
+
+Headers:
+Authorization: Bearer ${CRON_SECRET}
+Content-Type: application/json
+
+Body:
+{
+  "source": "cron-job.org",
+  "task": "daily-editorial-brief"
+}
+```
+
+`/api/cron/generate-brief` 只接受 `CRON_SECRET`，不走普通登录。`/brief` 和 `/api/brief/today` 使用 `DASHBOARD_PASSWORD` + HttpOnly cookie 登录保护。cron-job.org 只触发简报生成，不写文章、不生成封面、不写公众号草稿、不发布、不群发。
+
+## Next.js 编辑台
+
+本项目提供 Next.js Dashboard，用于查看每日编辑简报、确认选题、预览文章/封面/公众号 HTML、查看 runs、填写 feedback，并通过后端白名单 action 触发现有安全命令。本地运行时仍可查看本机产物；云端 `/brief` 从 Neon 读取今日 10 条入围资讯，不再读取本地 `outputs/editorial-brief.json`。
 
 启动：
 
@@ -76,14 +137,14 @@ http://localhost:3000
 页面包括：
 
 - `/`：今日状态和安全 action 快捷按钮。
-- `/brief`：展示 `outputs/editorial-brief.md` / `outputs/editorial-brief.json`，缺失时回退到候选、入围和主选题产物。
+- `/brief`：登录后调用 `/api/brief/today`，展示 Neon 中今日 10 条入围资讯和 AI 推荐主选题；今日简报不存在时显示明确等待提示。
 - `/approval`：编辑并保存 `inputs/editorial-approval.json`。
 - `/article`、`/titles`、`/cover`、`/wechat`：预览文章、标题、封面和公众号 HTML。
 - `/runs`：查看历史 `runs/` 归档。
 - `/feedback`：创建或编辑 `feedback/*.json`。
 - `/settings`：只展示脱敏布尔状态，不显示 `.env` 原文、AppSecret、access token、APIMart key 或 MiniMax key。
 
-Dashboard 的按钮只调用 `/api/action` 中的硬编码白名单：`pnpm run:daily -- --until brief`、`pnpm run:daily -- --from article`、`pnpm wechat:draft:dry-run`、`pnpm preflight:final`、`pnpm wechat:draft:real`、`pnpm feedback:new`。它不接受任意 shell 命令，action 日志写入 `logs/dashboard-actions.log` 并做脱敏。
+Dashboard 的按钮只调用 `/api/action` 中的硬编码白名单：`pnpm run:daily -- --until brief`、`pnpm run:daily -- --from article`、`pnpm wechat:draft:dry-run`、`pnpm preflight:final`、`pnpm wechat:draft:real`、`pnpm feedback:new`。它不接受任意 shell 命令，action 日志写入 `logs/dashboard-actions.log` 并做脱敏。写操作 API 需要登录；`DATABASE_URL`、R2 secret、`CRON_SECRET`、`DASHBOARD_PASSWORD` 和 `AUTH_SECRET` 不会输出到前端。
 
 日常流程：
 

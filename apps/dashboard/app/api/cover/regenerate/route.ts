@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { requireApiSession } from "@/lib/auth";
 import { regenerateCover } from "@/lib/editor-workflow";
 import { redactJson } from "@/lib/redaction";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const authError = await requireApiSession();
+  if (authError) return authError;
+
   try {
     const body = await request.json();
     const result = await regenerateCover(body);

@@ -348,21 +348,23 @@ test("article title selection must come from candidates and blocks forbidden ter
   }
 });
 
-test("/brief page uses the shortlisted reading list with clickable URLs and selection buttons", async () => {
+test("/brief page reads the cloud today API with friendly empty state", async () => {
   const pageSource = await readFile(
     join(process.cwd(), "apps/dashboard/app/brief/page.tsx"),
     "utf8"
   );
-  const listSource = await readFile(
-    join(process.cwd(), "apps/dashboard/components/brief-topic-list.tsx"),
+  const viewSource = await readFile(
+    join(process.cwd(), "apps/dashboard/components/cloud-brief-view.tsx"),
     "utf8"
   );
 
-  assert.match(pageSource, /BriefTopicList/);
-  assert.match(pageSource, /今日 10 条入围资讯阅读清单/);
-  assert.match(listSource, /href=\{url\}/);
-  assert.match(listSource, /api\/brief\/select-topic/);
-  assert.match(listSource, /选择此主题/);
+  assert.match(pageSource, /CloudBriefView/);
+  assert.match(pageSource, /requireDashboardSession/);
+  assert.match(viewSource, /api\/brief\/today/);
+  assert.match(viewSource, /今日 10 条入围资讯阅读清单/);
+  assert.match(viewSource, /今日简报尚未生成。请等待 7 点定时任务，或手动触发生成。/);
+  assert.match(viewSource, /href=\{item\.url\}/);
+  assert.doesNotMatch(viewSource, /api\/brief\/select-topic/);
 });
 
 test("dashboard main nav only exposes brief, article, preview, and feedback", async () => {

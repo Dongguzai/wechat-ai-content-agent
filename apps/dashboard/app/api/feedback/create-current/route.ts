@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { requireApiSession } from "@/lib/auth";
 import { createCurrentFeedback } from "@/lib/editor-workflow";
 import { redactJson } from "@/lib/redaction";
 
 export const runtime = "nodejs";
 
 export async function POST() {
+  const authError = await requireApiSession();
+  if (authError) return authError;
+
   try {
     const result = await createCurrentFeedback();
     return NextResponse.json(redactJson({ ok: true, ...result }));
