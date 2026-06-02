@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useCallback, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Cropper, { type Area } from "react-easy-crop";
 import {
   AlertCircle,
   AlignCenter,
@@ -39,6 +40,7 @@ interface ArticleWorkbenchProps {
 
 type CoverHistoryItem = CoverData["history"][number];
 type CoverRegenerateStatus = "idle" | "loading" | "success" | "failed";
+const WECHAT_COVER_ASPECT = 900 / 383;
 
 export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbenchProps) {
   const router = useRouter();
@@ -62,7 +64,10 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
   } | null>(null);
   const [rewriteInstruction, setRewriteInstruction] = useState("");
   const [cropOpen, setCropOpen] = useState(false);
-  const [crop, setCrop] = useState({ x: 0, y: 0, width: 900, height: 383, scale: 1 });
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [cropError, setCropError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -72,6 +77,9 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
   const coverIsMock = String(coverJson?.mode ?? "").toLowerCase() === "mock" ||
     String(coverImage.relativePath ?? coverJson?.imagePath ?? "").toLowerCase().endsWith(".svg");
   const coverRegenerating = coverRegenerateStatus === "loading";
+  const onCropComplete = useCallback((_area: Area, pixels: Area) => {
+    setCroppedAreaPixels(pixels);
+  }, []);
 
   async function saveDraft() {
     setMessage("");
@@ -163,12 +171,57 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
 
   async function saveCrop() {
     setMessage("");
-    const payload = await postJson("/api/cover/crop", { crop });
-    setMessage(payload.ok ? "裁剪设置已保存，正在刷新封面。" : payload.error ?? "裁剪失败。");
-    if (payload.ok) {
-      setCropOpen(false);
-      router.refresh();
+    setCropError("");
+    if (!croppedAreaPixels) {
+      setCropError("请先等待裁剪区域计算完成。");
+      return;
     }
+
+    const payload = await postJson("/api/cover/crop", {
+      crop: {
+        x: croppedAreaPixels.x,
+        y: croppedAreaPixels.y,
+        width: croppedAreaPixels.width,
+        height: croppedAreaPixels.height
+      }
+    });
+    if (!payload.ok) {
+      const reason = String(payload.error ?? "裁剪失败。");
+      setCropError(reason);
+      setMessage(`封面裁剪失败：${reason}`);
+      return;
+    }
+
+    const nextRelativePath =
+      relativeImagePath(String(payload.cover?.imagePath ?? payload.imagePath ?? "")) ||
+      coverImage.relativePath;
+
+    if (payload.cover && typeof payload.cover === "object") {
+      setCoverJson(payload.cover);
+    }
+    if (nextRelativePath) {
+      setCoverImage({
+        src: rawFileUrl(nextRelativePath, Date.now()),
+        relativePath: nextRelativePath
+      });
+    }
+    if (Array.isArray(payload.history)) {
+      setCoverHistory(normalizeHistoryItems(payload.history, nextRelativePath));
+    } else {
+      await refreshCoverFromFiles(nextRelativePath);
+    }
+
+    setCropOpen(false);
+    setMessage("封面裁剪已保存并应用到当前文章。");
+    router.refresh();
+  }
+
+  function openCropDialog() {
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedAreaPixels(null);
+    setCropError("");
+    setCropOpen(true);
   }
 
   async function updateCoverVersion(action: "set-current" | "delete", item: CoverHistoryItem) {
@@ -291,7 +344,7 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
               <h3 className="text-sm font-bold text-ink">封面</h3>
               <button
                 type="button"
-                onClick={() => setCropOpen(true)}
+                onClick={openCropDialog}
                 className="inline-flex size-8 items-center justify-center rounded-md border border-line text-stone-600 hover:border-ink hover:text-ink"
                 title="编辑封面裁剪"
               >
@@ -526,40 +579,74 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
 
       {cropOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-3xl border border-line bg-white p-5 shadow-panel">
+          <div role="dialog" aria-modal="true" aria-labelledby="cover-crop-title" className="w-full max-w-4xl border border-line bg-white p-5 shadow-panel">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-ink">封面裁剪</h3>
+              <h3 id="cover-crop-title" className="text-base font-bold text-ink">封面裁剪</h3>
               <button type="button" onClick={() => setCropOpen(false)} className="text-sm font-semibold text-stone-500">
-                关闭
+                取消
               </button>
             </div>
-            <div className="relative mt-4 aspect-[900/383] overflow-hidden border border-line bg-paper">
+            <div className="relative mt-4 h-[min(62vh,520px)] min-h-[260px] overflow-hidden border border-line bg-stone-950">
               {coverImage.src ? (
-                <img
-                  src={coverImage.src}
-                  alt="封面裁剪预览"
-                  className="size-full object-cover"
-                  style={{ transform: `scale(${crop.scale})` }}
+                <Cropper
+                  image={coverImage.src}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={WECHAT_COVER_ASPECT}
+                  minZoom={1}
+                  maxZoom={3}
+                  onCropChange={setCrop}
+                  onZoomChange={setZoom}
+                  onCropComplete={onCropComplete}
+                  classes={{
+                    containerClassName: "bg-stone-950",
+                    cropAreaClassName: "border-white/95"
+                  }}
                 />
               ) : null}
-              <div className="pointer-events-none absolute inset-x-[8%] inset-y-[14%] border border-white/90 shadow-[0_0_0_999px_rgba(0,0,0,0.12)]" />
             </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-5">
-              <CropField label="x" value={crop.x} onChange={(value) => setCrop({ ...crop, x: value })} />
-              <CropField label="y" value={crop.y} onChange={(value) => setCrop({ ...crop, y: value })} />
-              <CropField label="width" value={crop.width} onChange={(value) => setCrop({ ...crop, width: value })} />
-              <CropField label="height" value={crop.height} onChange={(value) => setCrop({ ...crop, height: value })} />
-              <CropField label="scale" step={0.05} value={crop.scale} onChange={(value) => setCrop({ ...crop, scale: value })} />
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-stone-600">
+                缩放
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.01}
+                  value={zoom}
+                  onChange={(event) => setZoom(Number(event.target.value))}
+                  className="mt-2 w-full accent-ink"
+                />
+              </label>
+              <div className="mt-2 flex items-center justify-between text-xs text-stone-500">
+                <span>{zoom.toFixed(2)}x</span>
+                <span>900:383</span>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => run(saveCrop)}
-              disabled={pending}
-              className="mt-5 inline-flex items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              <Scissors className="size-4" aria-hidden="true" />
-              保存裁剪
-            </button>
+            {cropError ? (
+              <div className="mt-4 flex gap-2 border border-oxblood/25 bg-oxblood/5 px-3 py-2 text-xs leading-5 text-oxblood">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <span>{cropError}</span>
+              </div>
+            ) : null}
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCropOpen(false)}
+                className="inline-flex items-center gap-2 rounded-md border border-line px-4 py-2 text-sm font-semibold text-stone-700"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => run(saveCrop)}
+                disabled={pending || !croppedAreaPixels || !coverImage.src}
+                className="inline-flex items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                <Scissors className="size-4" aria-hidden="true" />
+                保存裁剪
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -634,31 +721,6 @@ function StatusLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CropField({
-  label,
-  value,
-  onChange,
-  step = 1
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  step?: number;
-}) {
-  return (
-    <label className="block text-xs font-semibold text-stone-600">
-      {label}
-      <input
-        type="number"
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="mt-1 w-full border border-line px-2 py-1.5 text-sm outline-none focus:border-ink"
-      />
-    </label>
-  );
-}
-
 async function postJson(url: string, body?: unknown): Promise<JsonObject> {
   const response = await fetch(url, {
     method: "POST",
@@ -706,7 +768,7 @@ function normalizeHistoryItems(items: unknown[], currentPath: string): CoverHist
         imagePath,
         relativePath: imagePath,
         updatedAt: typeof item.createdAt === "string" ? item.createdAt : undefined,
-        source: String(item.provider ?? item.mode ?? "history"),
+        source: item.instruction === "manual crop" ? "crop" : String(item.provider ?? item.mode ?? "history"),
         provider: typeof item.provider === "string" ? item.provider : undefined,
         mode: typeof item.mode === "string" ? item.mode : undefined,
         instruction: typeof item.instruction === "string" ? item.instruction : undefined,

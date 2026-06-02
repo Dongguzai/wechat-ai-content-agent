@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "build": "pnpm dashboard:build",
     "dev": "tsx src/index.ts",
     "env:check": "node --import tsx scripts/check-env.ts",
     "dry-run": "node --import tsx scripts/dry-run.ts",

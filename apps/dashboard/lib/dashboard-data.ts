@@ -452,7 +452,7 @@ async function getCoverHistory(
           imagePath: relativePath,
           relativePath,
           updatedAt: typeof item.createdAt === "string" ? item.createdAt : undefined,
-          source: String(item.provider ?? item.mode ?? "history"),
+          source: item.instruction === "manual crop" ? "crop" : String(item.provider ?? item.mode ?? "history"),
           provider: typeof item.provider === "string" ? item.provider : undefined,
           mode: typeof item.mode === "string" ? item.mode : undefined,
           instruction: typeof item.instruction === "string" ? item.instruction : undefined,

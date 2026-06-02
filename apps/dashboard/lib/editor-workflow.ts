@@ -1,9 +1,11 @@
-import { appendFile, copyFile, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import { generateApimartImage } from "../../../src/adapters/apimart";
 import { executeDashboardAction } from "./actions";
 import {
   getRepoRoot,
+  isInside,
   pathExists,
   readJsonFile,
   readTextFile,
@@ -33,7 +35,6 @@ export interface CoverCropInput {
     y: number;
     width: number;
     height: number;
-    scale: number;
   };
 }
 
@@ -67,6 +68,8 @@ const blockedWechatTerms = [
   "确认发送",
   "立即发送"
 ];
+const WECHAT_COVER_WIDTH = 900;
+const WECHAT_COVER_HEIGHT = 383;
 
 export async function selectBriefTopic(
   input: unknown,
@@ -381,7 +384,13 @@ export async function regenerateCover(
 export async function cropCover(
   input: unknown,
   options: DashboardFsOptions = {}
-): Promise<{ cover: JsonObject; imagePath: string }> {
+): Promise<{
+  cover: JsonObject;
+  imagePath: string;
+  history: CoverHistoryItem[];
+  historyCount: number;
+  message: "cover cropped";
+}> {
   const crop = normalizeCrop(input);
   const cover = await readJsonFile<JsonObject>("outputs/cover.json", options);
   if (!cover?.imagePath) {
@@ -390,29 +399,69 @@ export async function cropCover(
 
   const root = getRepoRoot(options);
   const relativeImagePath = relativePathFromMaybeAbsolute(String(cover.imagePath), options);
-  if (!relativeImagePath) {
-    throw new Error("Cover imagePath must point inside this repository.");
+  if (!relativeImagePath || !relativeImagePath.startsWith("outputs/covers/")) {
+    throw new Error("Cover imagePath must point to an outputs/covers image.");
   }
   const resolvedImage = resolveSafeReadPath(relativeImagePath, options);
-  const extension = path.extname(resolvedImage.absolutePath) || ".png";
-  const nextRelative = `outputs/covers/cover-crop-${fileTimestamp(new Date())}${extension}`;
+  const coversDir = path.join(root, "outputs", "covers");
+  if (!isInside(coversDir, resolvedImage.absolutePath)) {
+    throw new Error("Cover imagePath must stay inside outputs/covers.");
+  }
+  const stats = await stat(resolvedImage.absolutePath).catch(() => undefined);
+  if (!stats?.isFile()) {
+    throw new Error("Cover imagePath must point to an existing file.");
+  }
+  if (!/\.(png|jpe?g|webp|svg)$/i.test(resolvedImage.relativePath)) {
+    throw new Error("Cover crop only supports image files in outputs/covers.");
+  }
+
+  const image = sharp(resolvedImage.absolutePath);
+  const metadata = await image.metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new Error("Cover image dimensions could not be read.");
+  }
+  const extractArea = cropToExtractArea(crop, metadata.width, metadata.height);
+  const now = new Date();
+  const updatedAt = now.toISOString();
+  const nextRelative = `outputs/covers/cover-cropped-${fileTimestamp(now)}.png`;
   const nextAbsolute = path.join(root, nextRelative);
 
   await mkdir(path.dirname(nextAbsolute), { recursive: true });
-  await copyFile(resolvedImage.absolutePath, nextAbsolute);
+  await sharp(resolvedImage.absolutePath)
+    .extract(extractArea)
+    .resize(WECHAT_COVER_WIDTH, WECHAT_COVER_HEIGHT, { fit: "fill" })
+    .png()
+    .toFile(nextAbsolute);
 
   const nextCover = {
     ...cover,
-    imagePath: nextAbsolute,
+    imagePath: nextRelative,
     crop,
-    sourceImagePath: cover.imagePath,
-    generatedAt: new Date().toISOString()
+    cropApplied: true,
+    cropSourceImagePath: relativeImagePath,
+    updatedAt
   };
   await writeJsonRelative("outputs/cover.json", nextCover, options);
+  const history = await appendCoverHistoryItem(
+    {
+      imagePath: nextRelative,
+      provider: stringValue(cover.provider) || "apimart",
+      mode: stringValue(cover.mode) || "real",
+      instruction: "manual crop",
+      createdAt: updatedAt,
+      isCurrent: true
+    },
+    cover,
+    relativeImagePath,
+    options
+  );
 
   return {
     cover: redactJson(nextCover) as JsonObject,
-    imagePath: toPosixPath(path.relative(root, nextAbsolute))
+    imagePath: toPosixPath(path.relative(root, nextAbsolute)),
+    history: redactJson(history.items) as CoverHistoryItem[],
+    historyCount: history.items.length,
+    message: "cover cropped"
   };
 }
 
@@ -968,13 +1017,34 @@ function normalizeCrop(input: unknown): CoverCropInput["crop"] {
     x: finiteNumber(crop.x, "crop.x"),
     y: finiteNumber(crop.y, "crop.y"),
     width: finiteNumber(crop.width, "crop.width"),
-    height: finiteNumber(crop.height, "crop.height"),
-    scale: finiteNumber(crop.scale, "crop.scale")
+    height: finiteNumber(crop.height, "crop.height")
   };
-  if (normalized.width <= 0 || normalized.height <= 0 || normalized.scale <= 0) {
-    throw new Error("crop width, height, and scale must be positive.");
+  if (normalized.width <= 0 || normalized.height <= 0) {
+    throw new Error("crop width and height must be positive.");
   }
   return normalized;
+}
+
+function cropToExtractArea(
+  crop: CoverCropInput["crop"],
+  imageWidth: number,
+  imageHeight: number
+): sharp.Region {
+  const left = Math.max(0, Math.round(crop.x));
+  const top = Math.max(0, Math.round(crop.y));
+  if (left >= imageWidth || top >= imageHeight) {
+    throw new Error("crop area is outside the cover image.");
+  }
+
+  const requestedWidth = Math.max(1, Math.round(crop.width));
+  const requestedHeight = Math.max(1, Math.round(crop.height));
+  const width = Math.min(requestedWidth, imageWidth - left);
+  const height = Math.min(requestedHeight, imageHeight - top);
+  if (width <= 0 || height <= 0) {
+    throw new Error("crop area is outside the cover image.");
+  }
+
+  return { left, top, width, height };
 }
 
 async function uniqueFeedbackFileName(

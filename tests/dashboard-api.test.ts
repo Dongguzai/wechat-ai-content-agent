@@ -1,4 +1,5 @@
 import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
@@ -16,6 +17,9 @@ import {
   setCurrentCoverVersion
 } from "../apps/dashboard/lib/editor-workflow";
 import { saveApproval, saveFeedback } from "../apps/dashboard/lib/forms";
+
+const dashboardRequire = createRequire(new URL("../apps/dashboard/package.json", import.meta.url));
+const sharp = dashboardRequire("sharp") as any;
 
 async function createTempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "dashboard-api-"));
@@ -419,6 +423,37 @@ test("article workbench cover regenerate keeps loading on the button and refresh
   assert.match(source, /当前封面不能删除/);
 });
 
+test("article workbench renders an interactive fixed-ratio cover cropper", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/components/article-workbench.tsx"),
+    "utf8"
+  );
+
+  assert.match(source, /from "react-easy-crop"/);
+  assert.match(source, /const WECHAT_COVER_ASPECT = 900 \/ 383/);
+  assert.match(source, /const \[crop, setCrop\] = useState\(\{ x: 0, y: 0 \}\)/);
+  assert.match(source, /const \[zoom, setZoom\] = useState\(1\)/);
+  assert.match(source, /const \[croppedAreaPixels, setCroppedAreaPixels\]/);
+  assert.match(source, /<Cropper/);
+  assert.match(source, /image=\{coverImage\.src\}/);
+  assert.match(source, /crop=\{crop\}/);
+  assert.match(source, /zoom=\{zoom\}/);
+  assert.match(source, /aspect=\{WECHAT_COVER_ASPECT\}/);
+  assert.match(source, /onCropChange=\{setCrop\}/);
+  assert.match(source, /onZoomChange=\{setZoom\}/);
+  assert.match(source, /onCropComplete=\{onCropComplete\}/);
+  assert.match(source, /type="range"/);
+  assert.match(source, /setZoom\(Number\(event\.target\.value\)\)/);
+  assert.match(source, /\/api\/cover\/crop/);
+  assert.match(source, /x: croppedAreaPixels\.x/);
+  assert.match(source, /width: croppedAreaPixels\.width/);
+  assert.match(source, /rawFileUrl\(nextRelativePath, Date\.now\(\)\)/);
+  assert.match(source, /setCoverHistory\(normalizeHistoryItems\(payload\.history, nextRelativePath\)\)/);
+  assert.match(source, /封面裁剪已保存并应用到当前文章/);
+  assert.match(source, /封面裁剪失败/);
+  assert.doesNotMatch(source, /CropField/);
+});
+
 test("cover regenerate route returns ok true payload and redacted failed payload", async () => {
   const source = await readFile(
     join(process.cwd(), "apps/dashboard/app/api/cover/regenerate/route.ts"),
@@ -452,30 +487,99 @@ test("only preview page exposes the write-to-draft action button", async () => {
   }
 });
 
-test("cover crop updates cover json without calling WeChat APIs", async () => {
+test("cover crop generates a 900x383 png and updates cover json plus history", async () => {
   const root = await createTempRoot();
   try {
     await mkdir(join(root, "outputs/covers"), { recursive: true });
-    const imagePath = join(root, "outputs/covers/current.svg");
-    await writeFile(imagePath, "<svg />", "utf8");
+    const imagePath = join(root, "outputs/covers/current.png");
+    await sharp({
+      create: {
+        width: 1200,
+        height: 700,
+        channels: 4,
+        background: { r: 82, g: 130, b: 190, alpha: 1 }
+      }
+    })
+      .png()
+      .toFile(imagePath);
     await writeJson(root, "outputs/cover.json", {
       provider: "apimart",
-      mode: "mock",
-      imagePath
+      mode: "real",
+      imagePath: "outputs/covers/current.png",
+      title: "当前封面",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    });
+    await writeJson(root, "outputs/cover-history.json", {
+      items: [
+        {
+          imagePath: "outputs/covers/current.png",
+          provider: "apimart",
+          mode: "real",
+          instruction: "initial",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          isCurrent: true
+        }
+      ]
     });
 
     const result = await cropCover(
-      { crop: { x: 1, y: 2, width: 900, height: 383, scale: 1.1 } },
+      { crop: { x: 100, y: 50, width: 900, height: 383 } },
       { rootDir: root }
     );
     const saved = JSON.parse(await readFile(join(root, "outputs/cover.json"), "utf8"));
+    const history = JSON.parse(await readFile(join(root, "outputs/cover-history.json"), "utf8"));
+    const metadata = await sharp(join(root, result.imagePath)).metadata();
 
-    assert.match(result.imagePath, /^outputs\/covers\/cover-crop-/);
-    assert.equal(saved.crop.scale, 1.1);
-    assert.doesNotMatch(JSON.stringify(saved), /freepublish|mass|sendall/);
+    assert.equal(result.message, "cover cropped");
+    assert.match(result.imagePath, /^outputs\/covers\/cover-cropped-.*\.png$/);
+    assert.equal(metadata.width, 900);
+    assert.equal(metadata.height, 383);
+    assert.equal(saved.imagePath, result.imagePath);
+    assert.equal(saved.provider, "apimart");
+    assert.equal(saved.mode, "real");
+    assert.equal(saved.cropApplied, true);
+    assert.equal(saved.cropSourceImagePath, "outputs/covers/current.png");
+    assert.equal(saved.crop.x, 100);
+    assert.equal(typeof saved.updatedAt, "string");
+    assert.equal(history.items[0].imagePath, result.imagePath);
+    assert.equal(history.items[0].instruction, "manual crop");
+    assert.equal(history.items[0].isCurrent, true);
+    assert.equal(history.items.find((item: any) => item.imagePath === "outputs/covers/current.png").isCurrent, false);
+    assert.equal(result.history.length, history.items.length);
+    assert.doesNotMatch(JSON.stringify({ saved, history }), /freepublish|mass|sendall/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("cover crop rejects images outside outputs/covers", async () => {
+  const root = await createTempRoot();
+  try {
+    await writeFile(join(root, "outputs/current.png"), Buffer.from(tinyPngBase64, "base64"));
+    await writeJson(root, "outputs/cover.json", {
+      provider: "apimart",
+      mode: "real",
+      imagePath: "outputs/current.png"
+    });
+
+    await assert.rejects(
+      () => cropCover({ crop: { x: 0, y: 0, width: 1, height: 1 } }, { rootDir: root }),
+      /outputs\/covers/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover crop code does not call APIMart, WeChat, or publish endpoints", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/lib/editor-workflow.ts"),
+    "utf8"
+  );
+  const cropBlock = source.match(/export async function cropCover[\s\S]*?^export async function setCurrentCoverVersion/m)?.[0] ?? "";
+
+  assert.doesNotMatch(cropBlock, /generateApimartImage|APIMART_API|APIMART_IMAGE|fetch\(|wechatOfficialApi/i);
+  assert.doesNotMatch(cropBlock, /\b(?:publish|freepublish|mass|sendall)\b/i);
 });
 
 test("cover regenerate returns imagePath and updates cover json plus history", async () => {
