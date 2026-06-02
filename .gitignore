@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.next/
+apps/**/.next/
+*.tsbuildinfo
 .DS_Store
 .env
 .env.*
@@ -14,3 +17,4 @@ logs/*
 feedback/*.json
 !feedback/template.json
 inputs/manual-topic.md
+inputs/editorial-approval.json

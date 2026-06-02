@@ -23,6 +23,7 @@ export interface LoadDotEnvOptions {
   path?: string;
   env?: NodeJS.ProcessEnv;
   override?: boolean;
+  overrideKeys?: string[];
 }
 
 export interface LoadDotEnvResult {
@@ -35,6 +36,7 @@ export interface LoadDotEnvResult {
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = join(currentDir, "..", "..");
+export const miniMaxDotEnvOverrideKeys = ["MINIMAX_API_KEY"] as const;
 const envNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function isEscaped(value: string, index: number): boolean {
@@ -206,9 +208,10 @@ export async function loadDotEnv(
 
   const appliedKeys: string[] = [];
   const skippedKeys: string[] = [];
+  const overrideKeys = new Set(options.overrideKeys ?? []);
 
   for (const entry of parsed.entries) {
-    if (options.override || targetEnv[entry.key] === undefined) {
+    if (options.override || overrideKeys.has(entry.key) || targetEnv[entry.key] === undefined) {
       targetEnv[entry.key] = entry.value;
       appliedKeys.push(entry.key);
     } else {

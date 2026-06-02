@@ -48,6 +48,7 @@ function completeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     LLM_ENABLE_REAL_API: "true",
     LLM_DRY_RUN: "false",
     MINIMAX_API_KEY: "MINIMAX_KEY_VALUE",
+    MINIMAX_MODEL: "minimax-m3-test",
     RSS_ENABLE_REAL_FETCH: "true",
     SEARCH_ENABLE_REAL_API: "true",
     TAVILY_API_KEY: "TAVILY_KEY_VALUE",
@@ -328,7 +329,7 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
     generatedAt: "2026-05-29T00:00:00.000Z",
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "real",
       usage: {
         promptTokens: 10,
@@ -345,7 +346,7 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
     forbiddenTerms: [],
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "real",
       usage: {
         promptTokens: 11,
@@ -377,7 +378,7 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
     generatedAt: "2026-05-29T00:00:00.000Z",
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "rules+real",
       usage: {
         promptTokens: 13,
@@ -763,6 +764,42 @@ test("run:daily:auto marks later steps skipped after a step failure", async () =
       result.steps.find((step) => step.name === "wechat:draft:real")?.status,
       "skipped"
     );
+  } finally {
+    await rm(temp.root, { recursive: true, force: true });
+  }
+});
+
+test("run:daily:auto report notes MiniMax JSON blocking report", async () => {
+  const temp = await createTempAutoRun("daily-auto-llm-json-failure-");
+
+  try {
+    const result = await runTempAuto(temp, {
+      stepHandlers: {
+        "run:daily": async (context) => {
+          await mkdir(context.outputDir, { recursive: true });
+          await writeJson(join(context.outputDir, "llm-json-error.json"), {
+            failedStep: "article-writer",
+            provider: "minimax",
+            model: "minimax-m3-test",
+            expectedJsonShape: '{ "title": "..." }',
+            parseError: "invalid JSON",
+            contentPreview: "{ bad",
+            retryAttempted: true,
+            retrySucceeded: false,
+            suggestedFix: "fix prompt",
+            generatedAt: new Date().toISOString()
+          });
+          throw new Error(
+            "MiniMax JSON output could not be accepted for article-writer"
+          );
+        }
+      }
+    });
+
+    assert.equal(result.status, "failed");
+    const report = await readFile(join(temp.outputDir, "daily-auto-report.md"), "utf8");
+    assert.match(report, /MiniMax 返回非合法 JSON，已阻断正式草稿创建/);
+    assert.match(report, /llm-json-error-report\.md/);
   } finally {
     await rm(temp.root, { recursive: true, force: true });
   }

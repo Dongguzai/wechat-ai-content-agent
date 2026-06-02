@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { projectRoot } from "../src/config/env.js";
 import {
+  createBriefCronBlock,
+  installBriefCronText,
   createProjectCronBlock,
   installProjectCronText,
+  removeBriefCronBlocks,
   removeProjectCronBlocks,
   showProjectCronText
 } from "../scripts/scheduler-cron.js";
@@ -22,12 +25,37 @@ test("scheduler:install generates the daily 8 AM project cron block", () => {
   assert.match(installed, /15 9 \* \* \* echo keep-me/);
 });
 
+test("scheduler:install-brief generates the daily 7 AM editorial brief cron block", () => {
+  const installed = installBriefCronText("15 9 * * * echo keep-me\n");
+
+  assert.match(installed, /# wechat-ai-content-agent editorial brief start/);
+  assert.match(installed, /# wechat-ai-content-agent editorial brief end/);
+  assert.match(
+    installed,
+    new RegExp(
+      `0 7 \\* \\* \\* cd ${projectRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} && pnpm run:daily -- --until brief >> logs/editorial-brief\\.log 2>&1`
+    )
+  );
+  assert.match(installed, /15 9 \* \* \* echo keep-me/);
+});
+
 test("scheduler:uninstall only removes the current project cron block", () => {
   const otherCron = "30 7 * * * echo keep-me";
   const projectCron = createProjectCronBlock();
   const removed = removeProjectCronBlocks(`${otherCron}\n${projectCron}\n`);
 
   assert.equal(removed, otherCron);
+});
+
+test("scheduler:uninstall-brief only removes the editorial brief cron block", () => {
+  const otherCron = "30 7 * * * echo keep-me";
+  const projectCron = createProjectCronBlock();
+  const briefCron = createBriefCronBlock();
+  const removed = removeBriefCronBlocks(`${otherCron}\n${briefCron}\n${projectCron}\n`);
+
+  assert.match(removed, /daily auto start/);
+  assert.doesNotMatch(removed, /editorial brief start/);
+  assert.match(removed, /echo keep-me/);
 });
 
 test("scheduler:show displays only project-related cron entries", () => {
@@ -37,5 +65,15 @@ test("scheduler:show displays only project-related cron entries", () => {
 
   assert.match(shown, /wechat-ai-content-agent daily auto start/);
   assert.match(shown, /pnpm run:daily:auto/);
+  assert.doesNotMatch(shown, /echo keep-me/);
+});
+
+test("scheduler:show displays editorial brief cron entries", () => {
+  const otherCron = "30 7 * * * echo keep-me";
+  const briefCron = createBriefCronBlock();
+  const shown = showProjectCronText(`${otherCron}\n${briefCron}\n`);
+
+  assert.match(shown, /wechat-ai-content-agent editorial brief start/);
+  assert.match(shown, /pnpm run:daily -- --until brief/);
   assert.doesNotMatch(shown, /echo keep-me/);
 });

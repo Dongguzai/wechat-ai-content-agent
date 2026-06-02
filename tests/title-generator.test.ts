@@ -219,43 +219,79 @@ test("generateTitlesWithReport real mode calls MiniMax and records title llm usa
         LLM_ENABLE_REAL_API: "true",
         LLM_DRY_RUN: "false",
         TITLE_GENERATOR_PROVIDER: "minimax",
-        TITLE_GENERATOR_MODEL: "MiniMax-M2.7"
+        TITLE_GENERATOR_MODEL: "minimax-m3-test"
       },
       chatCompletion: async (input: LlmChatCompletionInput) => {
         called += 1;
-        assert.equal(input.model, "MiniMax-M2.7");
+        assert.equal(input.model, "minimax-m3-test");
         assert.match(input.userPrompt ?? "", /article\.md/);
         return {
           provider: "minimax",
-          model: "MiniMax-M2.7",
+          model: "minimax-m3-test",
           content: JSON.stringify({
             candidates: [
               {
-                kind: "judgement",
+                type: "judgement",
                 title: "AI 编码代理真正卷到的，不是价格，而是工作流",
-                rationale: "判断明确。"
+                rationale: "判断明确。",
+                scores: {
+                  spread: 88,
+                  accuracy: 92,
+                  nonClickbait: 90,
+                  wechatFit: 91,
+                  thesisMatch: 93
+                }
               },
               {
-                kind: "contrast",
+                type: "contrast",
                 title: "Claude Code 和 Goose 的分歧，不止在价格",
-                rationale: "保留反差。"
+                rationale: "保留反差。",
+                scores: {
+                  spread: 84,
+                  accuracy: 90,
+                  nonClickbait: 89,
+                  wechatFit: 88,
+                  thesisMatch: 87
+                }
               },
               {
-                kind: "trend",
+                type: "trend",
                 title: "编码代理开始从付费产品走向开源基础设施",
-                rationale: "趋势表达。"
+                rationale: "趋势表达。",
+                scores: {
+                  spread: 86,
+                  accuracy: 91,
+                  nonClickbait: 90,
+                  wechatFit: 89,
+                  thesisMatch: 90
+                }
               },
               {
-                kind: "publicImpact",
+                type: "publicImpact",
                 title: "AI 写代码变成账单后，团队要重新算成本",
-                rationale: "人群影响。"
+                rationale: "人群影响。",
+                scores: {
+                  spread: 85,
+                  accuracy: 88,
+                  nonClickbait: 90,
+                  wechatFit: 92,
+                  thesisMatch: 86
+                }
               },
               {
-                kind: "techDiscussion",
+                type: "techDiscussion",
                 title: "开发者争论 Goose，背后是工作流入口之争",
-                rationale: "技术圈讨论。"
+                rationale: "技术圈讨论。",
+                scores: {
+                  spread: 87,
+                  accuracy: 90,
+                  nonClickbait: 89,
+                  wechatFit: 90,
+                  thesisMatch: 91
+                }
               }
-            ]
+            ],
+            finalSelectedTitle: "AI 编码代理真正卷到的，不是价格，而是工作流"
           }),
           usage: {
             promptTokens: 77,
@@ -288,6 +324,86 @@ test("generateTitlesWithReport real mode calls MiniMax and records title llm usa
   }
 });
 
+test("generateTitlesWithReport real mode parses MiniMax markdown JSON", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "title-generator-markdown-json-"));
+  let called = 0;
+
+  try {
+    await createArticleFixture(outputDir);
+    const result = await generateTitlesWithReport({
+      outputDir,
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        TITLE_GENERATOR_PROVIDER: "minimax",
+        TITLE_GENERATOR_MODEL: "minimax-m3-test"
+      },
+      chatCompletion: async () => {
+        called += 1;
+        return {
+          provider: "minimax",
+          model: "minimax-m3-test",
+          content: [
+            "```json",
+            JSON.stringify({
+              candidates: [
+                {
+                  type: "judgement",
+                  title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+                  rationale: "判断明确。",
+                  scores: { spread: 88 }
+                },
+                {
+                  type: "contrast",
+                  title: "Claude Code 和 Goose 的分歧，不止在价格",
+                  rationale: "保留反差。",
+                  scores: { spread: 84 }
+                },
+                {
+                  type: "trend",
+                  title: "编码代理开始从付费产品走向开源基础设施",
+                  rationale: "趋势表达。",
+                  scores: { spread: 86 }
+                },
+                {
+                  type: "publicImpact",
+                  title: "AI 写代码变成账单后，团队要重新算成本",
+                  rationale: "人群影响。",
+                  scores: { spread: 85 }
+                },
+                {
+                  type: "techDiscussion",
+                  title: "开发者争论 Goose，背后是工作流入口之争",
+                  rationale: "技术圈讨论。",
+                  scores: { spread: 87 }
+                }
+              ],
+              finalSelectedTitle: "AI 编码代理真正卷到的，不是价格，而是工作流"
+            }),
+            "```"
+          ].join("\n"),
+          usage: {
+            promptTokens: 77,
+            completionTokens: 55,
+            totalTokens: 132
+          },
+          finishReason: "stop",
+          generatedAt: "2026-05-29T00:00:00.000Z"
+        };
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(called, 1);
+    assert.equal(result.candidates.length, 5);
+    assert.equal(result.selection.llm?.mode, "real");
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("feedback missing does not fail the loader", async () => {
   const root = await mkdtemp(join(tmpdir(), "feedback-missing-"));
 
@@ -305,10 +421,11 @@ test("feedback missing does not fail the loader", async () => {
   }
 });
 
-test("manual-topic takes priority and still runs fact pack and article review", async () => {
+test("manual-topic takes priority in brief, then approval continues article stages", async () => {
   const root = await mkdtemp(join(tmpdir(), "manual-topic-flow-"));
   const outputDir = join(root, "outputs");
   const manualTopicFile = join(root, "inputs", "manual-topic.md");
+  const approvalFile = join(root, "inputs", "editorial-approval.json");
 
   try {
     await mkdir(join(root, "inputs"), { recursive: true });
@@ -340,14 +457,60 @@ test("manual-topic takes priority and still runs fact pack and article review", 
       now: new Date("2026-05-29T00:00:00.000Z")
     });
 
-    assert.equal(result.artifacts.manualTopic.used, true);
-    assert.equal(result.artifacts.selectedTopic.selected.sourceType, "manual");
-    assert.ok(result.artifacts.topicFactPack.verifiedClaims.length >= 3);
-    assert.equal(result.artifacts.articleReview.passed, true);
+    assert.equal(result.stoppedAt, "brief");
+    assert.equal(result.artifacts.manualTopic?.used, true);
+    assert.equal(result.artifacts.selectedTopic?.selected.sourceType, "manual");
+    assert.ok(result.artifacts.editorialBrief);
+    assert.equal(result.artifacts.articleReview, undefined);
 
-    const report = await readFile(result.files.dailyReport, "utf8");
-    assert.match(report, /Manual topic used: yes/);
-    assert.match(report, /Title candidates generated: 5/);
+    const briefReport = await readFile(result.files.dailyReport, "utf8");
+    assert.match(briefReport, /currentStage: brief/);
+    assert.match(briefReport, /pnpm run:daily -- --from article/);
+
+    const approvedTopicId = result.artifacts.selectedTopic?.selected.id;
+    assert.ok(approvedTopicId);
+    await writeFile(
+      approvalFile,
+      `${JSON.stringify(
+        {
+          approvedByUser: true,
+          approvedTopicId,
+          approvedTitle: "AI 编码代理真正卷到的，不是价格，而是工作流",
+          notes: "今天写这个，但角度更偏普通人和创作者影响。"
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const continued = await runDailyPipeline({
+      outputDir,
+      from: "article",
+      approvalFile,
+      logger: silentLogger,
+      env: {
+        SEARCH_ENABLE_REAL_API: "false",
+        WECHAT_DRAFT_DRY_RUN: "true",
+        WECHAT_API_ENABLE_REAL_DRAFT: "false",
+        WECHAT_DRAFT_ALLOW_REAL_API: "false"
+      },
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.ok(continued.artifacts.topicFactPack);
+    assert.ok(continued.artifacts.articleReview);
+    assert.ok(continued.artifacts.articleMeta);
+    assert.ok(continued.artifacts.topicFactPack.verifiedClaims.length >= 3);
+    assert.equal(continued.artifacts.articleReview.passed, true);
+    assert.equal(
+      continued.artifacts.articleMeta.editorialApproval?.notes,
+      "今天写这个，但角度更偏普通人和创作者影响。"
+    );
+
+    const continuedReport = await readFile(continued.files.dailyReport, "utf8");
+    assert.match(continuedReport, /currentStage: draft-dry-run/);
+    assert.match(continuedReport, /pnpm preflight:final/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

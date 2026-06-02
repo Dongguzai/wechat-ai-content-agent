@@ -21,7 +21,7 @@ function smokeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     LLM_ENABLE_REAL_API: "true",
     MINIMAX_API_KEY: "SECRET_MINIMAX_KEY",
     MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
-    MINIMAX_MODEL: "MiniMax-M2.7",
+    MINIMAX_MODEL: "minimax-m3-test",
     ...overrides
   };
 }
@@ -60,7 +60,7 @@ test("MiniMax smoke calls chat completions exactly once", async () => {
   assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer SECRET_MINIMAX_KEY");
 
   const body = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
-  assert.equal(body.model, "MiniMax-M2.7");
+  assert.equal(body.model, "minimax-m3-test");
   assert.equal(body.max_completion_tokens, 80);
   assert.deepEqual(body.messages, [
     { role: "user", content: "用一句中文说明 AI 编码代理是什么。" }
@@ -74,7 +74,7 @@ test("MiniMax smoke calls chat completions exactly once", async () => {
   assert.equal(url.includes("mass"), false);
   assert.equal(url.includes("sendall"), false);
   assert.equal(result.provider, "minimax");
-  assert.equal(result.model, "MiniMax-M2.7");
+  assert.equal(result.model, "minimax-m3-test");
   assert.equal(
     result.contentPreview,
     "AI 编码代理是能理解任务并协助完成代码工作的智能助手。"
@@ -157,7 +157,7 @@ test("MiniMax smoke CLI prints safe summary and redacts key from content", async
   assert.equal(exitCode, 0);
   assert.deepEqual(stderr, []);
   assert.match(combinedOutput, /provider: minimax/);
-  assert.match(combinedOutput, /model: MiniMax-M2.7/);
+  assert.match(combinedOutput, /model: minimax-m3-test/);
   assert.match(combinedOutput, /content preview: \[redacted\]/);
   assert.match(
     combinedOutput,

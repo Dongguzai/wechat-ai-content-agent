@@ -52,7 +52,7 @@ test("createChatCompletion posts OpenAI-compatible request body", async () => {
     env: {
       MINIMAX_API_KEY: "SECRET_MINIMAX_KEY",
       MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
-      MINIMAX_MODEL: "MiniMax-M2.7"
+      MINIMAX_MODEL: "minimax-m3-test"
     },
     fetchImpl,
     systemPrompt: "system",
@@ -65,7 +65,7 @@ test("createChatCompletion posts OpenAI-compatible request body", async () => {
   assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer SECRET_MINIMAX_KEY");
 
   const body = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
-  assert.equal(body.model, "MiniMax-M2.7");
+  assert.equal(body.model, "minimax-m3-test");
   assert.equal(body.temperature, 0.4);
   assert.equal(body.max_completion_tokens, 123);
   assert.deepEqual(body.messages, [
@@ -73,7 +73,7 @@ test("createChatCompletion posts OpenAI-compatible request body", async () => {
     { role: "user", content: "user" }
   ]);
   assert.equal(result.provider, "minimax");
-  assert.equal(result.model, "MiniMax-M2.7");
+  assert.equal(result.model, "minimax-m3-test");
   assert.equal(result.content, "MiniMax response");
   assert.deepEqual(result.usage, {
     promptTokens: 11,
@@ -96,7 +96,22 @@ test("createChatCompletion blocks real mode when MINIMAX_API_KEY is missing", as
   );
 });
 
-test("createChatCompletion retries without response_format and normalizes JSON", async () => {
+test("createChatCompletion blocks real mode when model is missing", async () => {
+  await assert.rejects(
+    () =>
+      createChatCompletion({
+        env: {
+          MINIMAX_API_KEY: "SECRET_MINIMAX_KEY",
+          MINIMAX_BASE_URL: "https://api.minimaxi.com/v1"
+        },
+        systemPrompt: "system",
+        userPrompt: "user"
+      }),
+    /requires a model/
+  );
+});
+
+test("createChatCompletion retries without response_format and returns raw JSON text", async () => {
   const bodies: Record<string, unknown>[] = [];
   const fetchImpl = async (_input: string | URL, init?: RequestInit): Promise<Response> => {
     bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -125,7 +140,7 @@ test("createChatCompletion retries without response_format and normalizes JSON",
     env: {
       MINIMAX_API_KEY: "SECRET_MINIMAX_KEY",
       MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
-      MINIMAX_MODEL: "MiniMax-M2.7"
+      MINIMAX_MODEL: "minimax-m3-test"
     },
     fetchImpl,
     userPrompt: "json please",
@@ -134,7 +149,39 @@ test("createChatCompletion retries without response_format and normalizes JSON",
 
   assert.deepEqual(bodies[0].response_format, { type: "json_object" });
   assert.equal("response_format" in bodies[1], false);
-  assert.equal(result.content, "{\"ok\":true,\"items\":[1]}");
+  assert.equal(result.content, "Here is JSON: {\"ok\":true,\"items\":[1]}");
+});
+
+test("createChatCompletion disables MiniMax-M3 thinking for JSON responses", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const fetchImpl = async (_input: string | URL, init?: RequestInit): Promise<Response> => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return jsonResponse({
+      choices: [
+        {
+          message: {
+            content: "{\"ok\":true}"
+          },
+          finish_reason: "stop"
+        }
+      ],
+      usage: {}
+    });
+  };
+
+  await createChatCompletion({
+    env: {
+      MINIMAX_API_KEY: "SECRET_MINIMAX_KEY",
+      MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
+      MINIMAX_MODEL: "MiniMax-M3"
+    },
+    fetchImpl,
+    userPrompt: "json please",
+    responseFormat: "json_object"
+  });
+
+  assert.deepEqual(bodies[0].thinking, { type: "disabled" });
+  assert.equal(bodies[0].reasoning_split, true);
 });
 
 test("createChatCompletion redacts MINIMAX_API_KEY from errors", async () => {
@@ -149,7 +196,8 @@ test("createChatCompletion redacts MINIMAX_API_KEY from errors", async () => {
       createChatCompletion({
         env: {
           MINIMAX_API_KEY: "SECRET_MINIMAX_KEY",
-          MINIMAX_BASE_URL: "https://api.minimaxi.com/v1"
+          MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
+          MINIMAX_MODEL: "minimax-m3-test"
         },
         fetchImpl,
         userPrompt: "hello"

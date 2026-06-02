@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { checkEnvironment } from "../scripts/check-env.js";
-import { loadDotEnv, parseDotEnv } from "../src/config/env.js";
+import {
+  loadDotEnv,
+  miniMaxDotEnvOverrideKeys,
+  parseDotEnv
+} from "../src/config/env.js";
 
 function entriesToEnv(content: string): NodeJS.ProcessEnv {
   const parsed = parseDotEnv(content);
@@ -57,6 +61,38 @@ test("loadDotEnv keeps shell values unless override is enabled", async () => {
     assert.equal(env.FROM_SHELL, "shell-value");
     assert.deepEqual(result.appliedKeys, ["FROM_FILE"]);
     assert.deepEqual(result.skippedKeys, ["FROM_SHELL"]);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("loadDotEnv can force MiniMax key from .env without overriding other shell values", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "dotenv-minimax-key-"));
+
+  try {
+    await writeFile(
+      join(tempDir, ".env"),
+      [
+        "MINIMAX_API_KEY=file-minimax-key",
+        "MINIMAX_BASE_URL=https://api.minimaxi.com/v1"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const env: NodeJS.ProcessEnv = {
+      MINIMAX_API_KEY: "stale-shell-key",
+      MINIMAX_BASE_URL: "https://shell.example/v1"
+    };
+    const result = await loadDotEnv({
+      cwd: tempDir,
+      env,
+      overrideKeys: [...miniMaxDotEnvOverrideKeys]
+    });
+
+    assert.equal(env.MINIMAX_API_KEY, "file-minimax-key");
+    assert.equal(env.MINIMAX_BASE_URL, "https://shell.example/v1");
+    assert.deepEqual(result.appliedKeys, ["MINIMAX_API_KEY"]);
+    assert.deepEqual(result.skippedKeys, ["MINIMAX_BASE_URL"]);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

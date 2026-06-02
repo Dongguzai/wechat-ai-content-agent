@@ -7,7 +7,12 @@ import type {
 import type { CoverResult, CoverReviewResult } from "./cover.js";
 import type { WechatLayoutResult } from "./layout.js";
 import type { WechatDraftResult } from "./wechatDraft.js";
-import type { EditorialStyleLoadResult, ManualTopicLoadResult } from "./editorial.js";
+import type {
+  EditorialApprovalLoadResult,
+  EditorialBrief,
+  EditorialStyleLoadResult,
+  ManualTopicLoadResult
+} from "./editorial.js";
 import type { EditorialFeedbackLoadResult } from "./feedback.js";
 import type { TitleCandidate, TitleSelectionSummary } from "./title.js";
 import type {
@@ -35,6 +40,8 @@ export interface PipelineOutputFiles {
   shortlistReport: string;
   selectedTopic: string;
   topicSelectionReport: string;
+  editorialBrief: string;
+  editorialBriefJson: string;
   topicFactPackJson: string;
   topicFactPackReport: string;
   article: string;
@@ -60,32 +67,37 @@ export interface PipelineOutputFiles {
 }
 
 export interface DailyPipelineArtifacts {
-  candidates: NormalizedNewsItem[];
-  shortlisted: ShortlistedNewsItem[];
-  selectedTopic: SelectedTopic;
-  manualTopic: ManualTopicLoadResult;
-  editorialStyle: EditorialStyleLoadResult;
-  editorialFeedback: EditorialFeedbackLoadResult;
-  sourceHealth: SourceHealthResult;
-  topicFactPack: TopicFactPack;
-  article: ArticleDraft;
-  articleMeta: ArticleMeta;
-  titleCandidates: TitleCandidate[];
-  titleSelection: TitleSelectionSummary;
-  articleReview: ArticleReviewResult;
-  cover: CoverResult;
-  coverReview: CoverReviewResult;
-  wechatLayout: WechatLayoutResult;
-  wechatDraft: WechatDraftResult;
-  wechatApiDraft: WechatApiDraftResult;
-  wechatApiPreflight: WechatApiPreflight;
+  candidates?: NormalizedNewsItem[];
+  shortlisted?: ShortlistedNewsItem[];
+  selectedTopic?: SelectedTopic;
+  manualTopic?: ManualTopicLoadResult;
+  editorialStyle?: EditorialStyleLoadResult;
+  editorialFeedback?: EditorialFeedbackLoadResult;
+  editorialBrief?: EditorialBrief;
+  editorialApproval?: EditorialApprovalLoadResult;
+  sourceHealth?: SourceHealthResult;
+  topicFactPack?: TopicFactPack;
+  article?: ArticleDraft;
+  articleMeta?: ArticleMeta;
+  titleCandidates?: TitleCandidate[];
+  titleSelection?: TitleSelectionSummary;
+  articleReview?: ArticleReviewResult;
+  cover?: CoverResult;
+  coverReview?: CoverReviewResult;
+  wechatLayout?: WechatLayoutResult;
+  wechatDraft?: WechatDraftResult;
+  wechatApiDraft?: WechatApiDraftResult;
+  wechatApiPreflight?: WechatApiPreflight;
 }
 
 export interface DailyPipelineResult {
   outputDir: string;
   files: PipelineOutputFiles;
   artifacts: DailyPipelineArtifacts;
-  collectionStats: NewsCollectionStats;
-  shortlistStats: NewsShortlistStats;
+  currentStage: string;
+  stoppedAt: string;
+  nextCommand: string;
+  collectionStats?: NewsCollectionStats;
+  shortlistStats?: NewsShortlistStats;
   durationMs: number;
 }

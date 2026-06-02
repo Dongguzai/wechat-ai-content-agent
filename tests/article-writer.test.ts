@@ -106,6 +106,31 @@ function selectedTopicFixture(): SelectedTopic {
   };
 }
 
+function validMiniMaxArticlePayload(): Record<string, unknown> {
+  return {
+    title: "AI 编码代理真正卷到的，不是价格，而是工作流",
+    subtitle: "开源路径和闭源订阅都在争夺默认入口。",
+    articleThesis: "编码代理竞争正在从模型能力转向工作流控制权。",
+    body: "开源工具和闭源订阅工具被放在一起讨论，表面是成本差异，实际是开发者工作流入口在重新分配。Claude Code 与 Goose 都触及部分 coding agent 工作流，但产品形态、模型后端、权限治理和成熟度不同。团队关注的不只是价格，还包括工具锁定、审计、安全和模型调用成本。",
+    sections: [
+      {
+        heading: "冲突先摆出来",
+        body: "开源工具和闭源订阅工具被放在一起讨论，表面是成本差异，实际是开发者工作流入口在重新分配。"
+      },
+      {
+        heading: "事实边界要收紧",
+        body: "Claude Code 与 Goose 都触及部分 coding agent 工作流，但产品形态、模型后端、权限治理和成熟度不同，不能写成能力边界一致。"
+      },
+      {
+        heading: "团队会重新算账",
+        body: "团队关注的不只是价格，还包括工具锁定、审计、安全和模型调用成本。开源方案降低入口门槛，但外部模型调用仍可能产生费用。"
+      }
+    ],
+    usedClaims: ["Claude Code 与 Goose 的产品形态不同。"],
+    riskControls: ["不写完全替代", "不写零成本", "不写单独固定高价工具"]
+  };
+}
+
 async function assertFileMissing(path: string): Promise<void> {
   await assert.rejects(() => access(path), /ENOENT/);
 }
@@ -268,19 +293,20 @@ test("writeArticleWithReport real mode calls MiniMax adapter and records usage",
         LLM_ENABLE_REAL_API: "true",
         LLM_DRY_RUN: "false",
         ARTICLE_WRITER_PROVIDER: "minimax",
-        ARTICLE_WRITER_MODEL: "MiniMax-M2.7"
+        ARTICLE_WRITER_MODEL: "minimax-m3-test"
       },
       chatCompletion: async (input: LlmChatCompletionInput) => {
         called += 1;
-        assert.equal(input.model, "MiniMax-M2.7");
+        assert.equal(input.model, "minimax-m3-test");
         assert.match(input.userPrompt ?? "", /selected-topic\.json/);
         return {
           provider: "minimax",
-          model: "MiniMax-M2.7",
+          model: "minimax-m3-test",
           content: JSON.stringify({
             title: "AI 编码代理真正卷到的，不是价格，而是工作流",
             subtitle: "开源路径和闭源订阅都在争夺默认入口。",
             articleThesis: "编码代理竞争正在从模型能力转向工作流控制权。",
+            body: "开源工具和闭源订阅工具被放在一起讨论，表面是成本差异，实际是开发者工作流入口在重新分配。Claude Code 与 Goose 都触及部分 coding agent 工作流，但产品形态、模型后端、权限治理和成熟度不同，不能写成能力边界一致。团队关注的不只是价格，还包括工具锁定、审计、安全和模型调用成本。开源方案降低入口门槛，但外部模型调用仍可能产生费用。",
             sections: [
               {
                 heading: "冲突先摆出来",
@@ -295,6 +321,7 @@ test("writeArticleWithReport real mode calls MiniMax adapter and records usage",
                 body: "团队关注的不只是价格，还包括工具锁定、审计、安全和模型调用成本。开源方案降低入口门槛，但外部模型调用仍可能产生费用。"
               }
             ],
+            usedClaims: ["Claude Code 与 Goose 的产品形态不同。"],
             riskControls: ["不写完全替代", "不写零成本", "不写单独固定高价工具"]
           }),
           usage: {
@@ -312,13 +339,161 @@ test("writeArticleWithReport real mode calls MiniMax adapter and records usage",
 
     assert.equal(called, 1);
     assert.equal(result.meta.llm?.provider, "minimax");
-    assert.equal(result.meta.llm?.model, "MiniMax-M2.7");
+    assert.equal(result.meta.llm?.model, "minimax-m3-test");
     assert.equal(result.meta.llm?.mode, "real");
     assert.deepEqual(result.meta.llm?.usage, {
       promptTokens: 101,
       completionTokens: 88,
       totalTokens: 189
     });
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("writeArticleWithReport retries once when MiniMax returns invalid JSON", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-writer-repair-"));
+  const topic = selectedTopicFixture();
+  let called = 0;
+
+  try {
+    await writeFile(
+      join(outputDir, "selected-topic.json"),
+      `${JSON.stringify(topic, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(outputDir, "topic-selection-report.md"),
+      "# Topic Selection Report\n",
+      "utf8"
+    );
+    const factPack = await buildTopicFactPack({
+      outputDir,
+      topic,
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    const result = await writeArticleWithReport({
+      outputDir,
+      topic,
+      factPack: factPack.factPack,
+      topicSelectionReport: "# Topic Selection Report",
+      topicFactPackReport: "# Topic Fact Pack",
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        ARTICLE_WRITER_PROVIDER: "minimax",
+        ARTICLE_WRITER_MODEL: "minimax-m3-test"
+      },
+      chatCompletion: async (input: LlmChatCompletionInput) => {
+        called += 1;
+        if (called === 1) {
+          return {
+            provider: "minimax",
+            model: "minimax-m3-test",
+            content: "好的，正文如下，但我忘了输出 JSON",
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            finishReason: "stop",
+            generatedAt: "2026-05-29T00:00:00.000Z"
+          };
+        }
+
+        assert.match(input.userPrompt ?? "", /你上一次返回的内容不是合法 JSON/);
+        return {
+          provider: "minimax",
+          model: "minimax-m3-test",
+          content: JSON.stringify(validMiniMaxArticlePayload()),
+          usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+          finishReason: "stop",
+          generatedAt: "2026-05-29T00:00:00.000Z"
+        };
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(called, 2);
+    assert.equal(result.meta.llm?.mode, "real");
+    assert.equal(result.article.title, "AI 编码代理真正卷到的，不是价格，而是工作流");
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("writeArticleWithReport stops after failed repair retry and writes sanitized report", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-writer-repair-fail-"));
+  const topic = selectedTopicFixture();
+  let called = 0;
+
+  try {
+    await writeFile(
+      join(outputDir, "selected-topic.json"),
+      `${JSON.stringify(topic, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(outputDir, "topic-selection-report.md"),
+      "# Topic Selection Report\n",
+      "utf8"
+    );
+    const factPack = await buildTopicFactPack({
+      outputDir,
+      topic,
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    await assert.rejects(
+      () =>
+        writeArticleWithReport({
+          outputDir,
+          topic,
+          factPack: factPack.factPack,
+          topicSelectionReport: "# Topic Selection Report",
+          topicFactPackReport: "# Topic Fact Pack",
+          env: {
+            REAL_PRODUCTION_MODE: "true",
+            LLM_PROVIDER: "minimax",
+            LLM_ENABLE_REAL_API: "true",
+            LLM_DRY_RUN: "false",
+            ARTICLE_WRITER_PROVIDER: "minimax",
+            ARTICLE_WRITER_MODEL: "minimax-m3-test",
+            MINIMAX_API_KEY: "SECRET_MINIMAX_KEY"
+          },
+          chatCompletion: async () => {
+            called += 1;
+            return {
+              provider: "minimax",
+              model: "minimax-m3-test",
+              content:
+                called === 1
+                  ? "SECRET_MINIMAX_KEY 不是 JSON"
+                  : "SECRET_MINIMAX_KEY { bad json",
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+              finishReason: "stop",
+              generatedAt: "2026-05-29T00:00:00.000Z"
+            };
+          },
+          logger: silentLogger,
+          now: new Date("2026-05-29T00:00:00.000Z")
+        }),
+      /MiniMax JSON output could not be accepted for article-writer/
+    );
+
+    assert.equal(called, 2);
+    await assertFileMissing(join(outputDir, "article-meta.json"));
+
+    const report = await readFile(join(outputDir, "llm-json-error-report.md"), "utf8");
+    const jsonReport = await readFile(join(outputDir, "llm-json-error.json"), "utf8");
+    assert.match(report, /failedStep: article-writer/);
+    assert.match(report, /retryAttempted: true/);
+    assert.match(report, /retrySucceeded: false/);
+    assert.doesNotMatch(report, /SECRET_MINIMAX_KEY/);
+    assert.doesNotMatch(jsonReport, /SECRET_MINIMAX_KEY/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

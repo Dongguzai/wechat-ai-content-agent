@@ -1,6 +1,8 @@
 {
   "date": "2026-05-30",
   "title": "示例标题",
+  "topic": "示例主选题",
+  "draftMediaId": "",
   "published": false,
   "views": 0,
   "likes": 0,
@@ -8,6 +10,7 @@
   "myRating": 0,
   "topicQuality": 0,
   "titleQuality": 0,
+  "coverQuality": 0,
   "articleProblems": [],
   "notes": ""
 }

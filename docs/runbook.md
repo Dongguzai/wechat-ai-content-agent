@@ -1,6 +1,6 @@
 # v0.6.0 Runbook
 
-本文档用于 v0.6.0 每日自动草稿版的每日运行、真实草稿写入、8 点定时任务、失败通知和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
+本文档用于 v0.6.0 半自动编辑台模式的每日运行、人工确认、真实草稿写入、7 点简报定时任务、失败通知和异常处理。除非明确进入真实草稿模式，所有命令都保持 dry-run；系统不发布、不群发、不打开微信公众号后台。
 
 ## 1. 环境准备
 
@@ -21,15 +21,15 @@ pnpm env:check
 
 CLI 入口会自动加载项目根目录的 `.env`，但不会覆盖当前 shell 已设置的同名变量。真实 API key、公众号凭据和 `WECHAT_COVER_MEDIA_ID` 只写入本地 `.env` 或命令行环境变量。
 
-## 2. 每日运行流程
+## 2. 半自动编辑台流程
 
-每日默认执行：
+每日早上 7 点或手动执行：
 
 ```bash
-pnpm run:daily
+pnpm run:daily -- --until brief
 ```
 
-该命令会执行完整内容生产流程，并强制保持：
+该命令只执行资讯采集、候选筛选、入围筛选、主选题推荐和编辑简报生成，并强制保持：
 
 - `WECHAT_DRAFT_DRY_RUN=true`
 - `WECHAT_API_ENABLE_REAL_DRAFT=false`
@@ -39,14 +39,13 @@ pnpm run:daily
 
 - 命令退出码为 0。
 - `outputs/daily-report.md` 生成。
-- `outputs/title-candidates.json` 生成 5 个标题候选，并记录标题 LLM 元信息。
-- `outputs/title-selection-report.md` 记录最终标题选择理由。
-- `outputs/article-meta.json` 记录正文 LLM 元信息。
-- `outputs/article-review.json` 中 `passed=true`。
-- `outputs/cover-review.json` 中 `passed=true`。
-- `outputs/wechat-layout.json` 中 `compatibleWithWechat=true` 且 `allowedNextStage=true`。
-- `outputs/wechat-draft-result.json` 为 mock 草稿结果。
-- `outputs/wechat-api-preflight.json` 为官方 API 草稿 dry-run 预检结果。
+- `outputs/editorial-brief.md` 生成。
+- `outputs/editorial-brief.json` 中包含 20 条候选、10 条入围、推荐主选题、2 条备选、风险提醒和 `approvalRequired=true`。
+- `outputs/selected-topic.json` 生成。
+- 不生成 `outputs/article.md`。
+- 不生成 `outputs/cover.json`。
+- 不生成 `outputs/wechat-draft-result.json`。
+- 不生成 `outputs/wechat-api-preflight.json`。
 - 核心产物复制到 `runs/yyyy-mm-dd-HHmmss/`，并生成 `run-manifest.json` 和 `run-report.md`。
 
 兼容命令：
@@ -55,7 +54,99 @@ pnpm run:daily
 pnpm dry-run
 ```
 
-`pnpm dry-run` 与 `pnpm run:daily` 一样会归档成功运行产物。
+`pnpm dry-run` 与 `pnpm run:daily -- --until brief` 一样默认停在编辑简报阶段。
+
+人工确认选题：
+
+```json
+{
+  "approvedByUser": true,
+  "approvedTopicId": "editorial-brief.json 中的 topic id",
+  "approvedTitle": "可选标题参考",
+  "notes": "今天写这个，但角度更偏普通人和创作者影响。"
+}
+```
+
+继续生产到 mock 草稿 dry-run：
+
+```bash
+pnpm run:daily -- --from article
+```
+
+要求：
+
+- `inputs/editorial-approval.json` 存在。
+- `approvedByUser=true`。
+- `approvedTopicId` 能匹配 `selected-topic.json` 或 `shortlisted-news.json`。
+- `notes` 会传入 article writer。
+- `approvedTitle` 会作为标题参考传入 title generator，但仍会经过 forbidden terms 检查。
+
+预期结果：
+
+- `outputs/topic-fact-pack.json` 生成。
+- `outputs/article.md` 和 `outputs/article-meta.json` 生成。
+- `outputs/title-candidates.json` 生成 5 个标题候选。
+- `outputs/article-review.json` 中 `passed=true`。
+- `outputs/cover-review.json` 中 `passed=true`。
+- `outputs/wechat-layout.json` 中 `compatibleWithWechat=true` 且 `allowedNextStage=true`。
+- `outputs/wechat-draft-result.json` 为 mock 草稿结果。
+- 不直接真实写入公众号草稿。
+- 官方 API preflight 仍通过后续 `pnpm wechat:draft:dry-run` 或 `pnpm preflight:final` 串联检查。
+
+如只需从已有文章和封面继续：
+
+```bash
+pnpm run:daily -- --from layout
+```
+
+该命令从已有 `article.md` / `article-meta.json` / `cover.json` 继续执行 article review、cover review、layout 和 mock draft dry-run，不发布、不群发。
+
+## 2.1 本地 Next.js 编辑台
+
+本地编辑台位于 `apps/dashboard/`，使用 Next.js、TypeScript、Tailwind CSS、App Router 和 Node.js runtime API routes。它只读取本机白名单目录，并通过后端 action 白名单触发现有 pnpm 命令。
+
+启动：
+
+```bash
+pnpm dashboard:dev
+```
+
+访问：
+
+```text
+http://localhost:3000
+```
+
+日常流程：
+
+1. 早上 7 点自动生成 brief，或点击“生成今日编辑简报”。
+2. 打开 `/brief` 查看选题。
+3. 在 `/approval` 确认选题并保存 `inputs/editorial-approval.json`。
+4. 点击“继续写文章”。
+5. 查看 `/article`、`/cover`、`/wechat`。
+6. 点击“最终 preflight”。
+7. 双开关、凭据、封面素材和预检都满足后，才点击“写入公众号草稿箱”。
+8. 去公众号后台人工检查并发布。
+9. 在 `/feedback` 填写反馈。
+
+安全边界：
+
+- 文件读取 API 只允许 `outputs/`、`runs/`、`feedback/`、`inputs/`、`docs/`。
+- 文件读取 API 禁止 `.env`、`node_modules/`、`.git/`、绝对路径、路径穿越和 secret/token 文件。
+- `/settings` 只展示脱敏布尔状态，不显示 `.env` 内容、AppSecret、access token、APIMart key 或 MiniMax key。
+- `/api/action` 只允许执行白名单 action，不允许输入任意 shell command。
+- 禁止 action 包含 `publish`、`freepublish`、`mass`、`sendall`、`群发`、`发布`、`确认发送`、`立即发送`。
+- action 日志写入 `logs/dashboard-actions.log`，stdout/stderr 摘要会脱敏。
+- 系统只创建公众号草稿，不会发布，不会群发，最终发布需人工确认。
+- Dashboard 只用于本地运行，不部署公网。
+
+Dashboard 验证：
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm dashboard:build
+```
 
 ## 3. 内容质量配置
 
@@ -93,15 +184,17 @@ MiniMax 只接入文字模型能力，用于文章正文、标题生成和文章
 ```env
 LLM_PROVIDER=minimax
 MINIMAX_BASE_URL=https://api.minimaxi.com/v1
-MINIMAX_MODEL=MiniMax-M2.7
+# 按量计费 API Key 请填写 MiniMax 控制台或 /v1/models 返回的真实模型 id。
+# 例如使用 M3 时，填控制台中 M3 对应的 model id。
+MINIMAX_MODEL=
 MINIMAX_MAX_COMPLETION_TOKENS=2048
 MINIMAX_TEMPERATURE=0.75
 ARTICLE_WRITER_PROVIDER=minimax
-ARTICLE_WRITER_MODEL=MiniMax-M2.7
+ARTICLE_WRITER_MODEL=
 TITLE_GENERATOR_PROVIDER=minimax
-TITLE_GENERATOR_MODEL=MiniMax-M2.7
+TITLE_GENERATOR_MODEL=
 ARTICLE_REVIEWER_PROVIDER=minimax
-ARTICLE_REVIEWER_MODEL=MiniMax-M2.7
+ARTICLE_REVIEWER_MODEL=
 LLM_ENABLE_REAL_API=false
 LLM_DRY_RUN=true
 ```
@@ -113,7 +206,23 @@ MINIMAX_API_KEY=你的MiniMaxKey
 LLM_ENABLE_REAL_API=true
 LLM_DRY_RUN=false
 LLM_PROVIDER=minimax
+MINIMAX_MODEL=MiniMax控制台返回的M3模型id
 ```
+
+模型优先级：
+
+- `ARTICLE_WRITER_MODEL` 优先于 `MINIMAX_MODEL`。
+- `TITLE_GENERATOR_MODEL` 优先于 `MINIMAX_MODEL`。
+- `ARTICLE_REVIEWER_MODEL` 优先于 `MINIMAX_MODEL`。
+- 子模块模型为空时，统一回退到 `MINIMAX_MODEL`。
+
+按量计费 key 和 M3 模型检查：
+
+```bash
+pnpm llm:minimax:models
+```
+
+该命令只请求 `GET {MINIMAX_BASE_URL}/models`，不会调用 chat completions、APIMart 或微信 API，也不会输出完整 `MINIMAX_API_KEY`。如果返回 401，优先检查按量计费 API Key 是否有效；国内站 key 使用 `https://api.minimaxi.com/v1`，国际站 key 使用 `https://api.minimax.io/v1`，并确认 key 处于 active 状态。
 
 查看本次模型和 token usage：
 
@@ -158,7 +267,15 @@ Thesis: 这条资讯说明某类 AI 工作流正在发生变化。
 
 ## 5. 人工反馈
 
-人工反馈模板在 `feedback/template.json`。复制为日期文件，例如：
+人工反馈模板可自动生成：
+
+```bash
+pnpm feedback:new
+```
+
+该命令根据最新 `outputs/article-meta.json` 或 `runs/*` 生成 `feedback/yyyy-mm-dd-title-slug.json`，不覆盖已有文件，不调用任何外部 API。
+
+也可以复制 `feedback/template.json` 为日期文件，例如：
 
 ```bash
 cp feedback/template.json feedback/2026-05-30.json
@@ -168,6 +285,8 @@ cp feedback/template.json feedback/2026-05-30.json
 
 - `date`
 - `title`
+- `topic`
+- `draftMediaId`
 - `published`
 - `views`
 - `likes`
@@ -175,6 +294,7 @@ cp feedback/template.json feedback/2026-05-30.json
 - `myRating`
 - `topicQuality`
 - `titleQuality`
+- `coverQuality`
 - `articleProblems`
 - `notes`
 
@@ -182,10 +302,10 @@ cp feedback/template.json feedback/2026-05-30.json
 
 ## 6. 真实草稿写入流程
 
-真实写入前，先确认已经完成每日运行：
+真实写入前，先确认已经完成半自动流程和草稿 dry-run：
 
 ```bash
-pnpm run:daily
+pnpm run:daily -- --from article
 pnpm wechat:draft:dry-run
 ```
 
@@ -241,9 +361,27 @@ pnpm wechat:draft:real -- --force
 
 最终发布仍必须由人工登录微信公众号后台完成。
 
+没有人工确认选题时，不会写文章；系统不会自动发布，也不会自动群发。
+
 ## 7. 每日定时运行
 
-每日自动草稿任务使用：
+推荐每日自动任务只生成 7 点编辑简报：
+
+```bash
+pnpm scheduler:install-brief
+```
+
+安装后的 cron 块：
+
+```cron
+# wechat-ai-content-agent editorial brief start
+0 7 * * * cd /Users/Shared/AgentWork/公众号AI内容生产与草稿发布Agent/wechat-ai-content-agent && pnpm run:daily -- --until brief >> logs/editorial-brief.log 2>&1
+# wechat-ai-content-agent editorial brief end
+```
+
+该任务只生成编辑简报，不写文章、不生成封面、不写入公众号草稿、不调用微信真实 API、不发布、不群发。
+
+保留的每日自动草稿任务使用：
 
 ```bash
 pnpm run:daily:auto
@@ -251,7 +389,7 @@ pnpm run:daily:auto
 
 它按固定顺序执行：
 
-1. `pnpm run:daily`
+1. `pnpm run:daily -- --from article`
 2. `real-data-audit`
 3. `pnpm wechat:draft:dry-run`
 4. `pnpm preflight:final`
@@ -276,7 +414,7 @@ pnpm run:daily:auto
 
 脚本会自动加载 `.env`，真实草稿阶段会确保 `WECHAT_DRAFT_DRY_RUN=false`。任意一步失败都会停止，后续步骤会在 `outputs/daily-auto-result.json` 中标记为 `skipped`。日志写入 `logs/daily-auto.log`，总结写入 `outputs/daily-auto-report.md`，本次运行报告写入 `runs/yyyy-mm-dd-HHmmss/run-report.md`。
 
-安装每天早上 8 点运行的项目 cron：
+默认不建议启用旧的 8 点 daily:auto。只有用户明确选择全自动草稿链路时，才安装每天早上 8 点运行的项目 cron：
 
 ```bash
 pnpm scheduler:install
@@ -375,8 +513,9 @@ NOTIFY_ON_SUCCESS=false
 ```bash
 pnpm typecheck
 pnpm test
+pnpm dashboard:build
 pnpm dry-run
-pnpm run:daily
+pnpm run:daily -- --until brief
 pnpm wechat:draft:dry-run
 pnpm preflight:final
 ```

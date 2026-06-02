@@ -28,6 +28,7 @@ export interface TitleSelectionSummary {
   selectionReason: string;
   candidates: TitleCandidate[];
   forbiddenTerms: string[];
+  approvedTitleReference?: string;
   editorialStyleRead: boolean;
   feedbackRead: boolean;
   feedbackSummary?: string;
@@ -40,6 +41,7 @@ export interface TitleCandidatesFile {
   selectedKind: TitleCandidateKind;
   candidates: TitleCandidate[];
   forbiddenTerms: string[];
+  approvedTitleReference?: string;
   llm: LlmRunMetadata;
 }
 

@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { loadDotEnv } from "./config/env.js";
+import { loadDotEnv, miniMaxDotEnvOverrideKeys } from "./config/env.js";
 import { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
 
 export { runDailyPipeline } from "./pipeline/runDailyPipeline.js";
@@ -18,6 +18,15 @@ export {
   generateTitlesWithReport
 } from "./pipeline/generateTitles.js";
 export { loadEditorialFeedback } from "./pipeline/loadEditorialFeedback.js";
+export {
+  createFeedbackTemplate,
+  createFeedbackTitleSlug
+} from "./pipeline/createFeedbackTemplate.js";
+export { generateEditorialBrief } from "./pipeline/generateEditorialBrief.js";
+export {
+  loadEditorialApproval,
+  resolveEditorialApprovalForTopic
+} from "./pipeline/loadEditorialApproval.js";
 export { loadEditorialStyle } from "./pipeline/loadEditorialStyle.js";
 export { loadManualTopic } from "./pipeline/loadManualTopic.js";
 export {
@@ -64,6 +73,6 @@ export {
 } from "./adapters/wechatBrowser.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await loadDotEnv();
+  await loadDotEnv({ overrideKeys: [...miniMaxDotEnvOverrideKeys] });
   await runDailyPipeline();
 }

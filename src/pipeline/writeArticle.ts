@@ -18,14 +18,17 @@ import type {
 } from "../types/article.js";
 import type { TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
-import type { EditorialStyleLoadResult } from "../types/editorial.js";
+import type {
+  EditorialApproval,
+  EditorialStyleLoadResult
+} from "../types/editorial.js";
 import type {
   LlmChatCompletionClient,
-  LlmChatCompletionResult,
   LlmFetch,
   LlmRunMetadata
 } from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { requestLlmJsonWithRepair } from "../utils/llmJson.js";
 import { loadEditorialStyle } from "./loadEditorialStyle.js";
 
 export interface WriteArticleOptions {
@@ -39,6 +42,7 @@ export interface WriteArticleOptions {
   factPack?: TopicFactPack;
   topicFactPackReport?: string;
   editorialStyle?: EditorialStyleLoadResult;
+  editorialApproval?: EditorialApproval;
   logger?: Logger;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: LlmFetch;
@@ -228,7 +232,8 @@ function validateArticle(article: ArticleDraft, meta: ArticleMeta): void {
 function createMeta(
   article: ArticleDraft,
   generatedAt: string,
-  llm: LlmRunMetadata
+  llm: LlmRunMetadata,
+  editorialApproval?: EditorialApproval
 ): ArticleMeta {
   return {
     title: article.title,
@@ -237,6 +242,7 @@ function createMeta(
     articleThesis: article.articleThesis,
     usedClaims: article.usedClaims,
     riskControls: article.riskControls,
+    editorialApproval,
     llm,
     generatedAt
   };
@@ -254,6 +260,10 @@ function createWritingReport(
     "",
     `- editorialStyleRead: ${editorialStyle?.loaded ? "yes" : "no"}`,
     `- editorialStyleFile: ${editorialStyle?.path ?? "not loaded"}`,
+    `- approvalRead: ${meta.editorialApproval ? "yes" : "no"}`,
+    `- approvedTopicId: ${meta.editorialApproval?.approvedTopicId || "none"}`,
+    `- approvedTitleReference: ${meta.editorialApproval?.approvedTitle || "none"}`,
+    `- approvalNotes: ${meta.editorialApproval?.notes || "none"}`,
     "- appliedStructure: 冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断",
     "- appliedTone: 第三视角、旁观者分析、通俗但犀利、非通稿、非营销号腔",
     "",
@@ -301,7 +311,7 @@ function createWritingReport(
 export function writeArticle(
   topic: SelectedTopic,
   factPack: TopicFactPack,
-  options: { now?: Date } = {}
+  options: { now?: Date; editorialApproval?: EditorialApproval } = {}
 ): ArticleDraft {
   if (factPack.sourceReliability === "low") {
     throw new Error("Topic fact pack sourceReliability is low; stop before writing.");
@@ -331,19 +341,12 @@ export function writeArticle(
   const meta = createMeta(
     article,
     article.createdAt,
-    mockLlmMetadata(resolveLlmStageConfig("article-writer", {}))
+    mockLlmMetadata(resolveLlmStageConfig("article-writer", {})),
+    options.editorialApproval
   );
 
   validateArticle(article, meta);
   return article;
-}
-
-function parseJsonContent<T>(completion: LlmChatCompletionResult): T {
-  try {
-    return JSON.parse(completion.content) as T;
-  } catch {
-    throw new Error("MiniMax article-writer response was not valid JSON.");
-  }
 }
 
 function asString(value: unknown, label: string): string {
@@ -352,6 +355,10 @@ function asString(value: unknown, label: string): string {
   }
 
   return value.trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseArticleSections(value: unknown): ArticleSection[] {
@@ -372,10 +379,87 @@ function parseArticleSections(value: unknown): ArticleSection[] {
   });
 }
 
+const articleWriterExpectedJsonShape = JSON.stringify(
+  {
+    title: "文章标题",
+    subtitle: "一句副标题",
+    articleThesis: "中心论点",
+    body: "完整正文，不含标题，中文内容放在这里",
+    sections: [
+      {
+        heading: "小标题",
+        body: "段落正文"
+      }
+    ],
+    usedClaims: ["引用的 fact pack safeWording"],
+    riskControls: ["规避的风险表达"]
+  },
+  null,
+  2
+);
+
+function validateArticleWriterPayload(value: unknown): {
+  title: string;
+  subtitle?: string;
+  articleThesis?: string;
+  body: string;
+  sections: ArticleSection[];
+  usedClaims: unknown[];
+  riskControls: unknown[];
+} {
+  if (!isRecord(value)) {
+    throw new Error("MiniMax article-writer response must be a JSON object.");
+  }
+
+  const bodySource =
+    typeof value.body === "string" && value.body.trim()
+      ? value.body
+      : typeof value.markdown === "string" && value.markdown.trim()
+        ? value.markdown
+        : "";
+
+  if (!bodySource.trim()) {
+    throw new Error("MiniMax article-writer response is missing markdown/body.");
+  }
+
+  if (!Array.isArray(value.usedClaims)) {
+    throw new Error("MiniMax article-writer response is missing usedClaims array.");
+  }
+
+  if (!Array.isArray(value.riskControls)) {
+    throw new Error("MiniMax article-writer response is missing riskControls array.");
+  }
+
+  return {
+    title: asString(value.title, "title"),
+    subtitle:
+      typeof value.subtitle === "string" && value.subtitle.trim()
+        ? value.subtitle.trim()
+        : undefined,
+    articleThesis:
+      typeof value.articleThesis === "string" && value.articleThesis.trim()
+        ? value.articleThesis.trim()
+        : undefined,
+    body: bodySource.trim(),
+    sections: Array.isArray(value.sections)
+      ? parseArticleSections(value.sections)
+      : [{ heading: "正文", body: bodySource.trim() }],
+    usedClaims: value.usedClaims,
+    riskControls: value.riskControls
+  };
+}
+
 function createArticleWriterSystemPrompt(): string {
   return [
     "你是公众号文章写作者，只能基于 fact pack 的 safeWording 写作。",
-    "输出必须是 JSON object，不要输出 Markdown 围栏。",
+    "只返回 JSON。",
+    "不要 Markdown。",
+    "不要解释。",
+    "不要代码块。",
+    "不要前后缀文本。",
+    "不要输出 <think> 或任何思考过程。",
+    "必须符合给定字段结构。",
+    "中文内容放在 JSON 字段值里。",
     "不得编造事实，不得把搜索摘要当确定性事实。",
     "保持第三视角、非通稿、1500 字以内。",
     "禁止写发布、群发、确认发送、立即发送等公众号操作内容。"
@@ -388,30 +472,23 @@ function createArticleWriterUserPrompt(input: {
   topicSelectionReport: string;
   topicFactPackReport: string;
   editorialStyle?: EditorialStyleLoadResult;
+  editorialApproval?: EditorialApproval;
   titleContext?: string;
 }): string {
   return [
-    "请生成一篇中文公众号正文，返回 JSON：",
+    "请生成一篇中文公众号正文。",
+    "只返回 JSON，不要 Markdown，不要解释，不要代码块，不要前后缀文本，不要输出 <think> 或任何思考过程。",
+    "必须包含 title、body 或 markdown、usedClaims、riskControls。",
+    "中文内容放在 JSON 字段值里。",
+    "返回 JSON 结构：",
     "",
-    JSON.stringify(
-      {
-        title: "文章标题",
-        subtitle: "一句副标题",
-        articleThesis: "中心论点",
-        sections: [
-          {
-            heading: "小标题",
-            body: "段落正文"
-          }
-        ],
-        riskControls: ["规避的风险表达"]
-      },
-      null,
-      2
-    ),
+    articleWriterExpectedJsonShape,
     "",
     "硬性要求：",
     "- 正文必须使用 fact pack safeWritingBoundary 和 verifiedClaims.safeWording。",
+    "- 每条 verifiedClaims.safeWording 的关键限定必须在正文中被明确反映，不能只写近似意思。",
+    "- 如果涉及 Claude 高阶订阅价格，正文必须写出“高阶个人订阅方案”或“高阶套餐价格”，并明确“不是 Claude Code 的单独固定价格”。",
+    "- 如果提到媒体标题中“做同一件事”的说法，正文必须明确写出“不等于两者能力边界一致”或“不代表可以无差别迁移”。",
     "- 不得写 forbidden terms 或 unsafeComparisonClaims。",
     "- 必须解释开源、工作流、成本、工具锁定中的至少 3 个主题。",
     "- 结尾保留原始选题线索 URL。",
@@ -431,17 +508,27 @@ function createArticleWriterUserPrompt(input: {
     "editorial-style.md:",
     input.editorialStyle?.content ?? "not loaded",
     "",
+    "editorial-approval.json:",
+    input.editorialApproval
+      ? JSON.stringify(input.editorialApproval, null, 2)
+      : "not provided",
+    "",
+    "user approval notes:",
+    input.editorialApproval?.notes || "none",
+    "",
     "title-candidates or selected title if present:",
     input.titleContext ?? "not available"
   ].join("\n");
 }
 
 async function writeArticleWithMiniMax(input: {
+  outputDir: string;
   topic: SelectedTopic;
   factPack: TopicFactPack;
   topicSelectionReport: string;
   topicFactPackReport: string;
   editorialStyle?: EditorialStyleLoadResult;
+  editorialApproval?: EditorialApproval;
   titleContext?: string;
   env: NodeJS.ProcessEnv;
   fetchImpl?: LlmFetch;
@@ -449,19 +536,20 @@ async function writeArticleWithMiniMax(input: {
   now?: Date;
 }): Promise<{ article: ArticleDraft; llm: LlmRunMetadata }> {
   const config = resolveLlmStageConfig("article-writer", input.env);
-  const completion = await input.chatCompletion({
-    model: config.model,
+  const { value: payload, completion } = await requestLlmJsonWithRepair({
+    failedStep: "article-writer",
+    outputDir: input.outputDir,
+    config,
     systemPrompt: createArticleWriterSystemPrompt(),
     userPrompt: createArticleWriterUserPrompt(input),
-    temperature: config.temperature,
-    maxCompletionTokens: config.maxCompletionTokens,
-    responseFormat: "json_object",
+    expectedJsonShape: articleWriterExpectedJsonShape,
     env: input.env,
-    fetchImpl: input.fetchImpl
+    fetchImpl: input.fetchImpl,
+    chatCompletion: input.chatCompletion,
+    validate: validateArticleWriterPayload
   });
-  const payload = parseJsonContent<Record<string, unknown>>(completion);
-  const sections = parseArticleSections(payload.sections);
-  const title = asString(payload.title, "title");
+  const sections = payload.sections;
+  const title = payload.title;
   const markdown = createArticleMarkdown(title, sections, input.topic.selected.url);
   const wordCount = countArticleChars(markdown);
   const usedClaims = usedClaimsFromFactPack(input.factPack);
@@ -493,7 +581,12 @@ async function writeArticleWithMiniMax(input: {
     createdAt: (input.now ?? new Date()).toISOString()
   };
   const llm = realLlmMetadata(completion, "real");
-  const meta = createMeta(article, article.createdAt, llm);
+  const meta = createMeta(
+    article,
+    article.createdAt,
+    llm,
+    input.editorialApproval
+  );
 
   validateArticle(article, meta);
   return { article, llm };
@@ -532,11 +625,13 @@ export async function writeArticleWithReport(
   const { article, llm } =
     llmConfig.mode === "real"
       ? await writeArticleWithMiniMax({
+          outputDir,
           topic,
           factPack,
           topicSelectionReport,
           topicFactPackReport,
           editorialStyle,
+          editorialApproval: options.editorialApproval,
           titleContext,
           env,
           fetchImpl: options.fetchImpl,
@@ -544,10 +639,18 @@ export async function writeArticleWithReport(
           now: options.now
         })
       : {
-          article: writeArticle(topic, factPack, { now: options.now }),
+          article: writeArticle(topic, factPack, {
+            now: options.now,
+            editorialApproval: options.editorialApproval
+          }),
           llm: mockLlmMetadata(llmConfig)
         };
-  const meta = createMeta(article, article.createdAt, llm);
+  const meta = createMeta(
+    article,
+    article.createdAt,
+    llm,
+    options.editorialApproval
+  );
   const report = createWritingReport(article, meta, editorialStyle);
 
   if (writeOutputs) {

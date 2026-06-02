@@ -19,6 +19,10 @@ interface MiniMaxRequestBody {
   messages: LlmChatMessage[];
   temperature: number;
   max_completion_tokens: number;
+  thinking?: {
+    type: "disabled" | "adaptive";
+  };
+  reasoning_split?: boolean;
   response_format?: {
     type: "json_object";
   };
@@ -32,7 +36,6 @@ interface MiniMaxResponsePreview {
 }
 
 const defaultBaseUrl = "https://api.minimaxi.com/v1";
-const defaultModel = "MiniMax-M2.7";
 const defaultTemperature = 0.75;
 const defaultMaxCompletionTokens = 2048;
 
@@ -63,7 +66,7 @@ function resolveMiniMaxConfig(input: LlmChatCompletionInput): MiniMaxConfig {
   const env = input.env ?? process.env;
   const apiKey = envValue(env, "MINIMAX_API_KEY");
   const baseUrl = envValue(env, "MINIMAX_BASE_URL") ?? defaultBaseUrl;
-  const model = input.model ?? envValue(env, "MINIMAX_MODEL") ?? defaultModel;
+  const model = input.model ?? envValue(env, "MINIMAX_MODEL");
   const temperature =
     input.temperature ?? envNumber(env, "MINIMAX_TEMPERATURE", defaultTemperature);
   const maxCompletionTokens =
@@ -76,6 +79,12 @@ function resolveMiniMaxConfig(input: LlmChatCompletionInput): MiniMaxConfig {
 
   if (!apiKey) {
     throw new Error("MiniMax real API mode requires MINIMAX_API_KEY.");
+  }
+
+  if (!model) {
+    throw new Error(
+      "MiniMax real API mode requires a model via input.model or MINIMAX_MODEL."
+    );
   }
 
   try {
@@ -143,6 +152,11 @@ function createMessages(input: LlmChatCompletionInput): LlmChatMessage[] {
   return messages;
 }
 
+function isMiniMaxM3Model(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return normalized === "minimax-m3" || normalized.startsWith("minimax-m3-");
+}
+
 function createRequestBody(
   input: LlmChatCompletionInput,
   config: MiniMaxConfig,
@@ -159,6 +173,14 @@ function createRequestBody(
     messages,
     temperature: config.temperature,
     max_completion_tokens: config.maxCompletionTokens,
+    ...(input.responseFormat === "json_object" && isMiniMaxM3Model(config.model)
+      ? {
+          thinking: {
+            type: "disabled" as const
+          },
+          reasoning_split: true
+        }
+      : {}),
     ...(includeResponseFormat && input.responseFormat === "json_object"
       ? {
           response_format: {
@@ -268,8 +290,7 @@ function contentFromMessageContent(value: unknown): string {
 
 function parseCompletionPayload(
   payload: unknown,
-  model: string,
-  responseFormat: "json_object" | undefined
+  model: string
 ): Omit<LlmChatCompletionResult, "provider" | "model" | "generatedAt"> {
   if (!isRecord(payload) || !Array.isArray(payload.choices) || !payload.choices[0]) {
     throw new Error("MiniMax chat completion response is missing choices[0].");
@@ -281,11 +302,7 @@ function parseCompletionPayload(
   }
 
   const message = isRecord(firstChoice.message) ? firstChoice.message : {};
-  const rawContent = contentFromMessageContent(message.content);
-  const content =
-    responseFormat === "json_object"
-      ? normalizeJsonObjectContent(rawContent)
-      : rawContent;
+  const content = contentFromMessageContent(message.content);
   const finishReason =
     typeof firstChoice.finish_reason === "string"
       ? firstChoice.finish_reason
@@ -302,70 +319,6 @@ function parseCompletionPayload(
     usage: responseUsage(payload),
     finishReason
   };
-}
-
-function normalizeJsonObjectContent(content: string): string {
-  const trimmed = content.trim();
-
-  try {
-    return JSON.stringify(JSON.parse(trimmed));
-  } catch {
-    const extracted = extractJsonValue(trimmed);
-    if (extracted) {
-      return JSON.stringify(extracted);
-    }
-  }
-
-  throw new Error("MiniMax response did not contain valid JSON content.");
-}
-
-function extractJsonValue(text: string): unknown | undefined {
-  const objectStart = text.indexOf("{");
-  const arrayStart = text.indexOf("[");
-  const candidates = [objectStart, arrayStart].filter((index) => index >= 0);
-  const start = candidates.length > 0 ? Math.min(...candidates) : -1;
-
-  if (start === -1) {
-    return undefined;
-  }
-
-  const open = text[start];
-  const close = open === "{" ? "}" : "]";
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-    } else if (char === open) {
-      depth += 1;
-    } else if (char === close) {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(start, index + 1)) as unknown;
-        } catch {
-          return undefined;
-        }
-      }
-    }
-  }
-
-  return undefined;
 }
 
 async function postMiniMaxChatCompletion(input: {
@@ -434,7 +387,7 @@ export async function createChatCompletion(
 
     const text = await response.text();
     const payload = safeJsonParse(text, config.apiKey);
-    const completion = parseCompletionPayload(payload, config.model, input.responseFormat);
+    const completion = parseCompletionPayload(payload, config.model);
 
     return {
       provider: "minimax",

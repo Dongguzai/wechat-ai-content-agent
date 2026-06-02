@@ -23,11 +23,11 @@ import type { FactPackClaim, TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
 import type {
   LlmChatCompletionClient,
-  LlmChatCompletionResult,
   LlmFetch,
   LlmRunMetadata
 } from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { requestLlmJsonWithRepair } from "../utils/llmJson.js";
 
 export interface ReviewArticleInput {
   articleMarkdown: string;
@@ -867,31 +867,56 @@ export function reviewArticle(
 function createReviewerSystemPrompt(): string {
   return [
     "你是公众号文章辅助审稿人。",
-    "只返回 JSON object，不要输出 Markdown 围栏。",
+    "只返回 JSON。",
+    "不要 Markdown。",
+    "不要解释。",
+    "不要代码块。",
+    "不要前后缀文本。",
+    "不要输出 <think> 或任何思考过程。",
+    "必须符合给定字段结构。",
+    "中文内容放在 JSON 字段值里。",
     "你只能辅助发现风险，不能放宽本地硬规则。",
     "重点检查事实边界、标题党、第一人称、通稿口吻、过度推导和 forbidden terms。"
   ].join("\n");
 }
 
+const articleReviewerExpectedJsonShape = JSON.stringify(
+  {
+    passed: true,
+    score: 88,
+    summary: "简短总结",
+    issues: [
+      {
+        severity: "low",
+        message: "问题",
+        suggestion: "建议"
+      }
+    ],
+    factBoundaryCheck: {
+      passed: true,
+      violations: []
+    },
+    qualityCheck: {
+      wordCountOk: true,
+      hasTitle: true,
+      hasHeadings: true,
+      thirdPersonPerspective: true,
+      notNewsRelease: true,
+      themesCovered: ["开源", "工作流", "成本"]
+    }
+  },
+  null,
+  2
+);
+
 function createReviewerUserPrompt(input: ReviewArticleInput): string {
   return [
-    "请辅助审稿，返回 JSON：",
-    JSON.stringify(
-      {
-        passed: true,
-        score: 88,
-        summary: "简短总结",
-        issues: [
-          {
-            severity: "low",
-            message: "问题",
-            suggestion: "建议"
-          }
-        ]
-      },
-      null,
-      2
-    ),
+    "请辅助审稿。",
+    "只返回 JSON，不要 Markdown，不要解释，不要代码块，不要前后缀文本，不要输出 <think> 或任何思考过程。",
+    "必须包含 passed、score、issues、factBoundaryCheck、qualityCheck。",
+    "中文内容放在 JSON 字段值里。",
+    "返回 JSON 结构：",
+    articleReviewerExpectedJsonShape,
     "",
     "article.md:",
     input.articleMarkdown,
@@ -907,12 +932,36 @@ function createReviewerUserPrompt(input: ReviewArticleInput): string {
   ].join("\n");
 }
 
-function parseJsonContent<T>(completion: LlmChatCompletionResult): T {
-  try {
-    return JSON.parse(completion.content) as T;
-  } catch {
-    throw new Error("MiniMax article-reviewer response was not valid JSON.");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateArticleReviewerPayload(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error("MiniMax article-reviewer response must be a JSON object.");
   }
+
+  if (typeof value.passed !== "boolean") {
+    throw new Error("MiniMax article-reviewer response is missing boolean passed.");
+  }
+
+  if (typeof value.score !== "number" || !Number.isFinite(value.score)) {
+    throw new Error("MiniMax article-reviewer response is missing number score.");
+  }
+
+  if (!Array.isArray(value.issues)) {
+    throw new Error("MiniMax article-reviewer response is missing issues array.");
+  }
+
+  if (!isRecord(value.factBoundaryCheck)) {
+    throw new Error("MiniMax article-reviewer response is missing factBoundaryCheck.");
+  }
+
+  if (!isRecord(value.qualityCheck)) {
+    throw new Error("MiniMax article-reviewer response is missing qualityCheck.");
+  }
+
+  return value;
 }
 
 function auxiliaryReviewerFoundBlockingIssue(value: unknown): {
@@ -958,6 +1007,7 @@ function auxiliaryReviewerFoundBlockingIssue(value: unknown): {
 }
 
 async function runMiniMaxAuxiliaryReview(input: {
+  outputDir: string;
   reviewInput: ReviewArticleInput;
   env: NodeJS.ProcessEnv;
   fetchImpl?: LlmFetch;
@@ -967,17 +1017,18 @@ async function runMiniMaxAuxiliaryReview(input: {
   blockingSummary: string | null;
 }> {
   const config = resolveLlmStageConfig("article-reviewer", input.env);
-  const completion = await input.chatCompletion({
-    model: config.model,
+  const { value: payload, completion } = await requestLlmJsonWithRepair({
+    failedStep: "article-reviewer",
+    outputDir: input.outputDir,
+    config,
     systemPrompt: createReviewerSystemPrompt(),
     userPrompt: createReviewerUserPrompt(input.reviewInput),
-    temperature: config.temperature,
-    maxCompletionTokens: config.maxCompletionTokens,
-    responseFormat: "json_object",
+    expectedJsonShape: articleReviewerExpectedJsonShape,
     env: input.env,
-    fetchImpl: input.fetchImpl
+    fetchImpl: input.fetchImpl,
+    chatCompletion: input.chatCompletion,
+    validate: validateArticleReviewerPayload
   });
-  const payload = parseJsonContent<unknown>(completion);
   const auxiliary = auxiliaryReviewerFoundBlockingIssue(payload);
 
   return {
@@ -1073,6 +1124,7 @@ export async function reviewArticleWithReport(
       ? applyAuxiliaryReview(
           baseReview,
           await runMiniMaxAuxiliaryReview({
+            outputDir,
             reviewInput,
             env,
             fetchImpl: options.fetchImpl,

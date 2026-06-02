@@ -18,7 +18,7 @@ export interface LlmStageConfig {
 }
 
 const defaultProvider: LlmProvider = "minimax";
-const defaultModel = "MiniMax-M2.7";
+const unconfiguredModel = "not-configured";
 const defaultTemperature = 0.75;
 const defaultMaxCompletionTokens = 2048;
 
@@ -89,19 +89,22 @@ export function resolveLlmStageConfig(
   env: NodeJS.ProcessEnv = process.env
 ): LlmStageConfig {
   const provider = resolveProvider(env, stage);
-  const model =
-    envValue(env, stageModelEnv[stage]) ??
-    envValue(env, "MINIMAX_MODEL") ??
-    defaultModel;
   const realEnabled = isExplicitTrue(env, "LLM_ENABLE_REAL_API");
   const dryRun = envValue(env, "LLM_DRY_RUN")
     ? !isExplicitFalse(env, "LLM_DRY_RUN")
     : !realEnabled;
+  const model = envValue(env, stageModelEnv[stage]) ?? envValue(env, "MINIMAX_MODEL");
+
+  if (realEnabled && !dryRun && !model) {
+    throw new Error(
+      `${stageModelEnv[stage]} or MINIMAX_MODEL is required for real ${stage} MiniMax calls.`
+    );
+  }
 
   return {
     stage,
     provider,
-    model,
+    model: model ?? unconfiguredModel,
     mode: realEnabled && !dryRun ? "real" : "mock",
     temperature: envNumber(env, "MINIMAX_TEMPERATURE", defaultTemperature),
     maxCompletionTokens: envNumber(

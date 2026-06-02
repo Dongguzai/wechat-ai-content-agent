@@ -1,33 +1,46 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatLlmUsage } from "../adapters/llm.js";
+import type { ArticleMeta } from "../types/article.js";
+import type { CoverPipelineResult, CoverResult, CoverReviewResult } from "../types/cover.js";
+import type { EditorialBrief } from "../types/editorial.js";
+import type { TopicFactPack } from "../types/factPack.js";
+import type {
+  DailyPipelineArtifacts,
+  DailyPipelineResult,
+  PipelineOutputFiles
+} from "../types/pipeline.js";
+import type {
+  NormalizedNewsItem,
+  SelectedTopic,
+  ShortlistedNewsItem
+} from "../types/news.js";
+import { createLogger, type Logger } from "../utils/logger.js";
 import { buildTopicFactPack } from "./buildTopicFactPack.js";
 import { checkSourceHealthWithReport } from "./checkSourceHealth.js";
 import { collectNewsWithReport } from "./collectNews.js";
+import { generateCoverWithReport, reviewCover } from "./generateCover.js";
+import { generateEditorialBrief } from "./generateEditorialBrief.js";
+import { generateTitlesWithReport } from "./generateTitles.js";
+import { loadEditorialApproval, resolveEditorialApprovalForTopic } from "./loadEditorialApproval.js";
+import { loadEditorialFeedback } from "./loadEditorialFeedback.js";
+import { loadEditorialStyle } from "./loadEditorialStyle.js";
+import { loadManualTopic } from "./loadManualTopic.js";
+import { renderWechatHtmlWithReport } from "./renderWechatHtml.js";
+import { reviewArticleWithReport } from "./reviewArticle.js";
+import { saveWechatDraftWithReport } from "./saveWechatDraft.js";
 import {
   selectManualTopicWithReport,
   selectTopicWithReport
 } from "./selectTopic.js";
 import { shortlistNewsWithReport } from "./shortlistNews.js";
 import { writeArticleWithReport } from "./writeArticle.js";
-import { generateTitlesWithReport } from "./generateTitles.js";
-import { reviewArticleWithReport } from "./reviewArticle.js";
-import { generateCoverWithReport } from "./generateCover.js";
-import { renderWechatHtmlWithReport } from "./renderWechatHtml.js";
-import { saveWechatDraftWithReport } from "./saveWechatDraft.js";
-import { saveWechatDraftApiWithReport } from "./saveWechatDraftApi.js";
-import { loadEditorialFeedback } from "./loadEditorialFeedback.js";
-import { loadEditorialStyle } from "./loadEditorialStyle.js";
-import { loadManualTopic } from "./loadManualTopic.js";
-import { formatLlmUsage } from "../adapters/llm.js";
-import type {
-  DailyPipelineResult,
-  PipelineOutputFiles
-} from "../types/pipeline.js";
-import { createLogger, type Logger } from "../utils/logger.js";
-import type { CoverPipelineResult } from "../types/cover.js";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+export type RunDailyUntilStage = "brief" | "topic";
+export type RunDailyFromStage = "article" | "layout";
 
 export interface RunDailyPipelineOptions {
   outputDir?: string;
@@ -37,14 +50,101 @@ export interface RunDailyPipelineOptions {
   now?: Date;
   useMockRss?: boolean;
   manualTopicFile?: string;
+  approvalFile?: string;
+  until?: RunDailyUntilStage;
+  from?: RunDailyFromStage;
+}
+
+interface ReportInput {
+  outputDir: string;
+  files: PipelineOutputFiles;
+  artifacts: DailyPipelineArtifacts;
+  currentStage: string;
+  stoppedAt: string;
+  nextCommand: string;
+  collectionStats?: DailyPipelineResult["collectionStats"];
+  shortlistStats?: DailyPipelineResult["shortlistStats"];
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const defaultOutputDir = join(currentDir, "..", "..", "outputs");
+const projectRoot = join(currentDir, "..", "..");
+const defaultOutputDir = join(projectRoot, "outputs");
+
+function createOutputFiles(outputDir: string): PipelineOutputFiles {
+  return {
+    sourceHealth: join(outputDir, "source-health.json"),
+    sourceHealthReport: join(outputDir, "source-health-report.md"),
+    rawNews: join(outputDir, "raw-news.json"),
+    normalizedNews: join(outputDir, "normalized-news.json"),
+    rejectedNews: join(outputDir, "rejected-news.json"),
+    candidateNews: join(outputDir, "candidate-news.json"),
+    collectionReport: join(outputDir, "collection-report.md"),
+    shortlistedNews: join(outputDir, "shortlisted-news.json"),
+    shortlistReport: join(outputDir, "shortlist-report.md"),
+    selectedTopic: join(outputDir, "selected-topic.json"),
+    topicSelectionReport: join(outputDir, "topic-selection-report.md"),
+    editorialBrief: join(outputDir, "editorial-brief.md"),
+    editorialBriefJson: join(outputDir, "editorial-brief.json"),
+    topicFactPackJson: join(outputDir, "topic-fact-pack.json"),
+    topicFactPackReport: join(outputDir, "topic-fact-pack.md"),
+    article: join(outputDir, "article.md"),
+    articleMeta: join(outputDir, "article-meta.json"),
+    articleWritingReport: join(outputDir, "article-writing-report.md"),
+    titleCandidates: join(outputDir, "title-candidates.json"),
+    titleSelectionReport: join(outputDir, "title-selection-report.md"),
+    articleReview: join(outputDir, "article-review.json"),
+    articleReviewReport: join(outputDir, "article-review-report.md"),
+    cover: join(outputDir, "cover.json"),
+    coverPrompt: join(outputDir, "cover-prompt.md"),
+    coverReview: join(outputDir, "cover-review.json"),
+    coverImageDir: join(outputDir, "covers"),
+    wechatHtml: join(outputDir, "wechat.html"),
+    wechatLayout: join(outputDir, "wechat-layout.json"),
+    wechatLayoutReport: join(outputDir, "wechat-layout-report.md"),
+    wechatDraftResult: join(outputDir, "wechat-draft-result.json"),
+    wechatDraftReport: join(outputDir, "wechat-draft-report.md"),
+    wechatApiDraftResult: join(outputDir, "wechat-api-draft-result.json"),
+    wechatApiDraftReport: join(outputDir, "wechat-api-draft-report.md"),
+    wechatApiPreflight: join(outputDir, "wechat-api-preflight.json"),
+    dailyReport: join(outputDir, "daily-report.md")
+  };
+}
 
 async function readJsonFile<T>(path: string): Promise<T> {
   const content = await readFile(path, "utf8");
   return JSON.parse(content) as T;
+}
+
+async function readOptionalJsonFile<T>(path: string): Promise<T | undefined> {
+  try {
+    return await readJsonFile<T>(path);
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function asEditorialApproval(input: DailyPipelineArtifacts["editorialApproval"]) {
+  return input
+    ? {
+        approvedByUser: input.approvedByUser,
+        approvedTopicId: input.approvedTopicId,
+        approvedTitle: input.approvedTitle,
+        notes: input.notes
+      }
+    : undefined;
 }
 
 async function reuseExistingCoverIfAvailable(
@@ -60,8 +160,8 @@ async function reuseExistingCoverIfAvailable(
 
   try {
     const [cover, review] = await Promise.all([
-      readJsonFile<CoverPipelineResult["cover"]>(files.cover),
-      readJsonFile<CoverPipelineResult["review"]>(files.coverReview)
+      readJsonFile<CoverResult>(files.cover),
+      readJsonFile<CoverReviewResult>(files.coverReview)
     ]);
 
     if (!review.passed || cover.imagePath !== review.imagePath) {
@@ -81,180 +181,224 @@ async function reuseExistingCoverIfAvailable(
   }
 }
 
-function createDailyReport(result: Omit<DailyPipelineResult, "durationMs">): string {
-  const { artifacts, collectionStats, files, outputDir, shortlistStats } = result;
-  const selected = artifacts.selectedTopic.selected;
-  const finalTitle = artifacts.titleSelection.selectedTitle;
-  const sourceHealth = artifacts.sourceHealth;
+async function imagePathAvailable(imagePath: string): Promise<boolean> {
+  if (imagePath.startsWith("mock://")) {
+    return true;
+  }
+
+  return pathExists(imagePath);
+}
+
+async function reviewExistingCoverWithReport(input: {
+  outputDir: string;
+  files: PipelineOutputFiles;
+  cover: CoverResult;
+  env?: NodeJS.ProcessEnv;
+  logger: Logger;
+  now?: Date;
+}): Promise<CoverPipelineResult> {
+  const realApiEnabled =
+    input.env?.COVER_ENABLE_REAL_API?.trim().toLowerCase() === "true";
+  const review = reviewCover(input.cover, {
+    imagePathAvailable: await imagePathAvailable(input.cover.imagePath),
+    realApiEnabled,
+    now: input.now
+  });
+  input.cover.review = {
+    passed: review.passed,
+    issues: review.issues,
+    riskNotes: review.riskNotes
+  };
+  const promptMarkdown = await readFile(input.files.coverPrompt, "utf8").catch(
+    () => "# Existing Cover Review\n"
+  );
+
+  await writeJson(input.files.cover, input.cover);
+  await writeJson(input.files.coverReview, review);
+  input.logger.info(
+    `Reviewed existing cover; passed=${review.passed}; image=${input.cover.imagePath}.`
+  );
+
+  return {
+    outputDir: input.outputDir,
+    files: {
+      cover: input.files.cover,
+      coverPrompt: input.files.coverPrompt,
+      coverReview: input.files.coverReview,
+      coverImageDir: input.files.coverImageDir
+    },
+    cover: input.cover,
+    review,
+    promptMarkdown
+  };
+}
+
+function createApprovalLines(artifacts: DailyPipelineArtifacts): string[] {
+  const approval = artifacts.editorialApproval;
+
+  return [
+    `- approvalRequired: true`,
+    `- editorialBriefGenerated: ${artifacts.editorialBrief ? "yes" : "no"}`,
+    `- editorialApprovalRead: ${approval?.approvalRead ? "yes" : "no"}`,
+    `- approvedByUser: ${approval?.approvedByUser ? "true" : "false"}`,
+    `- approvedTopicId: ${approval?.approvedTopicId || "none"}`,
+    `- approvedTitle: ${approval?.approvedTitle || "none"}`,
+    `- approvalMatchedTopicKind: ${approval?.matchedTopicKind ?? "none"}`,
+    `- aiRecommendedTopicId: ${approval?.aiRecommendedTopicId ?? "none"}`,
+    `- userApprovedTopicId: ${approval?.userApprovedTopicId ?? approval?.approvedTopicId ?? "none"}`,
+    `- userChangedTopic: ${approval?.userChangedTopic ? "yes" : "no"}`,
+    `- approvalNotes: ${approval?.notes || "none"}`,
+    `- approvalBlockedReason: ${approval?.blockedReason ?? "none"}`
+  ];
+}
+
+function createDailyReport(input: ReportInput): string {
+  const { artifacts, collectionStats, files, outputDir, shortlistStats } = input;
+  const selected = artifacts.selectedTopic?.selected;
+  const titleSelection = artifacts.titleSelection;
+  const articleReview = artifacts.articleReview;
+  const coverReview = artifacts.coverReview;
+  const layout = artifacts.wechatLayout;
+  const draft = artifacts.wechatDraft;
+  const nextLines =
+    input.stoppedAt === "brief"
+      ? [
+          "下一步：",
+          "请查看 outputs/editorial-brief.md。",
+          "如确认选题，请编辑 inputs/editorial-approval.json，将 approvedByUser 设为 true。",
+          "然后运行：",
+          "pnpm run:daily -- --from article"
+        ]
+      : ["下一步：", input.nextCommand];
 
   return [
     "# Daily AI Content Pipeline Report",
     "",
     `Output directory: ${outputDir}`,
     "",
+    "## Stage",
+    "",
+    `- currentStage: ${input.currentStage}`,
+    `- stoppedAt: ${input.stoppedAt}`,
+    `- nextCommand: ${input.nextCommand}`,
+    ...createApprovalLines(artifacts),
+    "",
     "## Summary",
     "",
-    "- Current phase: wechat official API draft dry-run",
-    `- Candidate news: ${artifacts.candidates.length}`,
-    `- Shortlisted news: ${artifacts.shortlisted.length}`,
-    `- Manual topic used: ${artifacts.manualTopic.used ? "yes" : "no"}`,
-    `- Manual topic file: ${artifacts.manualTopic.used ? artifacts.manualTopic.filePath : "none"}`,
-    `- Editorial style read: ${artifacts.editorialStyle.loaded ? "yes" : "no"}`,
-    `- Editorial style file: ${artifacts.editorialStyle.path}`,
-    `- Feedback read: ${artifacts.editorialFeedback.feedbackRead ? "yes" : "no"}`,
-    `- Feedback file: ${artifacts.editorialFeedback.latest?.filePath ?? "none"}`,
-    `- Source health passed: ${sourceHealth.passed ? "yes" : "no"}`,
-    `- Source health real items: ${sourceHealth.summary.totalRealNewsItems}`,
-    `- Source health RSS items: ${sourceHealth.summary.realRssItems}`,
-    `- Source health search items: ${sourceHealth.summary.realSearchItems}`,
-    `- Source health fallback used: ${sourceHealth.sources.some((source) => source.usedFallback) ? "yes" : "no"}`,
-    `- Selected topic: ${selected.title}`,
-    `- Selected source reliability: ${selected.selection.sourceReliability}`,
-    `- Selected decisionScore: ${selected.selection.decisionScore.toFixed(1)}`,
-    `- Fact pack source reliability: ${artifacts.topicFactPack.sourceReliability}`,
-    `- Fact pack claims: ${artifacts.topicFactPack.verifiedClaims.length}`,
-    `- Article title: ${artifacts.article.title}`,
-    `- Writer LLM: ${artifacts.articleMeta.llm?.provider ?? "minimax"} / ${artifacts.articleMeta.llm?.model ?? "unknown"} / ${artifacts.articleMeta.llm?.mode ?? "mock"} (${artifacts.articleMeta.llm ? formatLlmUsage(artifacts.articleMeta.llm.usage) : "usage unknown"})`,
-    `- Title candidates generated: ${artifacts.titleCandidates.length}`,
-    `- Final title: ${finalTitle}`,
-    `- Title LLM: ${artifacts.titleSelection.llm?.provider ?? "minimax"} / ${artifacts.titleSelection.llm?.model ?? "unknown"} / ${artifacts.titleSelection.llm?.mode ?? "mock"} (${artifacts.titleSelection.llm ? formatLlmUsage(artifacts.titleSelection.llm.usage) : "usage unknown"})`,
-    `- Final title selection reason: ${artifacts.titleSelection.selectionReason}`,
-    `- Article word count: ${artifacts.article.wordCount}`,
-    `- Article used claims: ${artifacts.articleMeta.usedClaims.length}`,
-    `- Article review score: ${artifacts.articleReview.score}`,
-    `- Article review passed: ${artifacts.articleReview.passed ? "yes" : "no"}`,
-    `- Reviewer LLM: ${artifacts.articleReview.llm?.provider ?? "minimax"} / ${artifacts.articleReview.llm?.model ?? "unknown"} / ${artifacts.articleReview.llm?.mode ?? "mock"} (${artifacts.articleReview.llm ? formatLlmUsage(artifacts.articleReview.llm.usage) : "usage unknown"})`,
-    `- Article review verdict: ${artifacts.articleReview.finalVerdict}`,
-    `- Cover provider: ${artifacts.cover.provider}`,
-    `- Cover mode: ${artifacts.cover.mode}`,
-    `- Cover image size: ${artifacts.cover.imageSize}`,
-    `- Cover review passed: ${artifacts.coverReview.passed ? "yes" : "no"}`,
-    `- Cover image path: ${artifacts.cover.imagePath}`,
-    `- WeChat HTML compatible: ${artifacts.wechatLayout.compatibleWithWechat ? "yes" : "no"}`,
-    `- WeChat layout warnings: ${artifacts.wechatLayout.warnings.length}`,
-    `- WeChat draft stage allowed: ${artifacts.wechatLayout.allowedNextStage ? "yes" : "no"}`,
-    `- WeChat draft dry-run mode: ${artifacts.wechatDraft.mode}`,
-    `- WeChat draft dry-run status: ${artifacts.wechatDraft.status}`,
-    `- WeChat mock draftId: ${artifacts.wechatDraft.draftId}`,
-    `- WeChat mock previewUrl: ${artifacts.wechatDraft.previewUrl}`,
-    `- WeChat draft allowedNextStage: ${artifacts.wechatDraft.allowedNextStage ? "yes" : "no"}`,
-    `- Human confirmation required: ${artifacts.wechatDraft.safety.requiresHumanConfirmation ? "yes" : "no"}`,
-    `- WeChat official API draft mode: ${artifacts.wechatApiDraft.mode}`,
-    `- WeChat official API draft status: ${artifacts.wechatApiDraft.status}`,
-    `- WeChat official API preflight passed: ${artifacts.wechatApiPreflight.passed ? "yes" : "no"}`,
-    `- WeChat official API real switches enabled: ${artifacts.wechatApiPreflight.realDraftSwitchEnabled && artifacts.wechatApiPreflight.realApiAllowSwitchEnabled ? "yes" : "no"}`,
-    `- WeChat official API publish called: ${artifacts.wechatApiDraft.safety.publishApiCalled ? "yes" : "no"}`,
-    `- WeChat official API mass send called: ${artifacts.wechatApiDraft.safety.massSendApiCalled ? "yes" : "no"}`,
-    `- RSS shortlisted: ${shortlistStats.rssShortlistedCount}`,
-    `- global_search shortlisted: ${shortlistStats.globalSearchShortlistedCount}`,
-    `- Collection API real call: ${collectionStats.apiRealCall ? "yes" : "no"}`,
+    `- Candidate news: ${artifacts.candidates?.length ?? "not loaded"}`,
+    `- Shortlisted news: ${artifacts.shortlisted?.length ?? "not loaded"}`,
+    `- Selected topic: ${selected?.title ?? "not selected"}`,
+    `- Selected topic id: ${selected?.id ?? "none"}`,
+    `- Selected source reliability: ${selected?.selection.sourceReliability ?? "unknown"}`,
+    `- Editorial style read: ${artifacts.editorialStyle?.loaded ? "yes" : "no"}`,
+    `- Feedback read: ${artifacts.editorialFeedback?.feedbackRead ? "yes" : "no"}`,
+    `- Source health passed: ${artifacts.sourceHealth?.passed ? "yes" : "not checked"}`,
+    `- Article generated: ${artifacts.article ? "yes" : "no"}`,
+    `- Writer LLM: ${
+      artifacts.articleMeta?.llm
+        ? `${artifacts.articleMeta.llm.provider} / ${artifacts.articleMeta.llm.model} / ${artifacts.articleMeta.llm.mode} (${formatLlmUsage(artifacts.articleMeta.llm.usage)})`
+        : "not run"
+    }`,
+    `- Title candidates generated: ${artifacts.titleCandidates?.length ?? 0}`,
+    `- Final title: ${titleSelection?.selectedTitle ?? "not generated"}`,
+    `- Article review passed: ${articleReview ? (articleReview.passed ? "yes" : "no") : "not run"}`,
+    `- Cover review passed: ${coverReview ? (coverReview.passed ? "yes" : "no") : "not run"}`,
+    `- WeChat HTML compatible: ${layout ? (layout.compatibleWithWechat ? "yes" : "no") : "not run"}`,
+    `- WeChat draft dry-run status: ${draft?.status ?? "not run"}`,
+    `- WeChat official API preflight: ${artifacts.wechatApiPreflight ? (artifacts.wechatApiPreflight.passed ? "passed" : "blocked") : "not run in this stage"}`,
+    `- RSS shortlisted: ${shortlistStats?.rssShortlistedCount ?? "not loaded"}`,
+    `- global_search shortlisted: ${shortlistStats?.globalSearchShortlistedCount ?? "not loaded"}`,
+    `- Collection API real call: ${collectionStats ? (collectionStats.apiRealCall ? "yes" : "no") : "not loaded"}`,
     "",
     "## Output Files",
     "",
-    `- raw-news.json: ${files.rawNews}`,
-    `- source-health.json: ${files.sourceHealth}`,
-    `- source-health-report.md: ${files.sourceHealthReport}`,
-    `- normalized-news.json: ${files.normalizedNews}`,
-    `- rejected-news.json: ${files.rejectedNews}`,
     `- candidate-news.json: ${files.candidateNews}`,
-    `- collection-report.md: ${files.collectionReport}`,
     `- shortlisted-news.json: ${files.shortlistedNews}`,
-    `- shortlist-report.md: ${files.shortlistReport}`,
     `- selected-topic.json: ${files.selectedTopic}`,
-    `- topic-selection-report.md: ${files.topicSelectionReport}`,
+    `- editorial-brief.md: ${files.editorialBrief}`,
+    `- editorial-brief.json: ${files.editorialBriefJson}`,
     `- topic-fact-pack.json: ${files.topicFactPackJson}`,
-    `- topic-fact-pack.md: ${files.topicFactPackReport}`,
     `- article.md: ${files.article}`,
     `- article-meta.json: ${files.articleMeta}`,
-    `- article-writing-report.md: ${files.articleWritingReport}`,
     `- title-candidates.json: ${files.titleCandidates}`,
-    `- title-selection-report.md: ${files.titleSelectionReport}`,
     `- article-review.json: ${files.articleReview}`,
-    `- article-review-report.md: ${files.articleReviewReport}`,
     `- cover.json: ${files.cover}`,
-    `- cover-prompt.md: ${files.coverPrompt}`,
     `- cover-review.json: ${files.coverReview}`,
-    `- covers/: ${files.coverImageDir}`,
     `- wechat.html: ${files.wechatHtml}`,
     `- wechat-layout.json: ${files.wechatLayout}`,
-    `- wechat-layout-report.md: ${files.wechatLayoutReport}`,
     `- wechat-draft-result.json: ${files.wechatDraftResult}`,
-    `- wechat-draft-report.md: ${files.wechatDraftReport}`,
-    `- wechat-api-draft-result.json: ${files.wechatApiDraftResult}`,
-    `- wechat-api-draft-report.md: ${files.wechatApiDraftReport}`,
     `- wechat-api-preflight.json: ${files.wechatApiPreflight}`,
     `- daily-report.md: ${files.dailyReport}`,
     "",
+    "## Next Step",
+    "",
+    ...nextLines,
+    "",
     "## Safety Notes",
     "",
-    "- This run stops after generating the WeChat official API draft request preview.",
-    "- 已完成 mock 草稿写入。",
-    "- 已生成微信公众号官方 API 草稿箱请求预览。",
-    "- 未操作真实公众号后台。",
-    "- 未打开公众号后台。",
-    "- 未真实写入草稿，除非显式打开 WECHAT_API_ENABLE_REAL_DRAFT 和 WECHAT_DRAFT_ALLOW_REAL_API。",
-    "- 未发布。",
-    "- 未群发。",
-    "- 需要人工确认。",
-    "- 真实 API 模式也只允许创建草稿箱草稿。",
-    "- No public send action, mass send action, browser automation, or WeChat admin page operation is used.",
-    "- APIMart is the only allowed image provider; default mode is mock unless COVER_ENABLE_REAL_API=true and APIMART_API_KEY is present.",
-    "- Real APIMart generation is intentionally TODO-gated until the API contract is confirmed.",
-    "- Tavily/Exa search summaries are treated as leads only, not factual sources.",
-    "- The article uses topic-fact-pack safeWording and avoids absolute comparison claims.",
+    "- 系统不会自动发布。",
+    "- 系统不会自动群发。",
+    "- 没有人工确认选题，不会写文章。",
+    "- run:daily --from article 只生成到 mock 草稿 dry-run，不真实写入公众号草稿。",
+    "- 真实草稿仍需手动执行 preflight:final 和 wechat:draft:real，且只允许官方 draft/add。",
+    "- 未打开微信公众号后台。",
+    "- 未点击发布、群发、确认发送或立即发送。",
     ""
   ].join("\n");
 }
 
-export async function runDailyPipeline(
-  options: RunDailyPipelineOptions = {}
-): Promise<DailyPipelineResult> {
-  const startedAt = Date.now();
-  const logger = options.logger ?? createLogger("dry-run");
-  const outputDir = options.outputDir ?? defaultOutputDir;
+async function writeReport(input: ReportInput): Promise<void> {
+  await writeFile(input.files.dailyReport, createDailyReport(input), "utf8");
+}
 
-  await mkdir(outputDir, { recursive: true });
-  logger.info(`Output directory ready: ${outputDir}`);
-
+async function runBriefStage(input: {
+  outputDir: string;
+  files: PipelineOutputFiles;
+  logger: Logger;
+  fetchImpl?: FetchLike;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+  useMockRss?: boolean;
+  manualTopicFile?: string;
+}): Promise<Omit<DailyPipelineResult, "durationMs">> {
+  const { outputDir, files, logger } = input;
   const editorialStyle = await loadEditorialStyle({ logger });
   const editorialFeedback = await loadEditorialFeedback({ logger });
   const manualTopic = await loadManualTopic({
-    manualTopicFile: options.manualTopicFile,
+    manualTopicFile: input.manualTopicFile,
     logger
   });
 
-  logger.info("1/12 checkSourceHealth: probing real RSS/search source readiness.");
+  logger.info("1/4 checkSourceHealth: probing RSS/search readiness.");
   const sourceHealth = await checkSourceHealthWithReport({
     outputDir,
     logger,
-    fetchImpl: options.fetchImpl,
-    env: options.env,
-    now: options.now
+    fetchImpl: input.fetchImpl,
+    env: input.env,
+    now: input.now
   });
 
   if (!sourceHealth.passed) {
     throw new Error(`Source health blocked: ${sourceHealth.issues.join(" ")}`);
   }
 
-  logger.info("2/12 collectNews: building the 20-item candidate pool.");
+  logger.info("2/4 collectNews: building the 20-item candidate pool.");
   const collection = await collectNewsWithReport({
     outputDir,
     logger,
-    fetchImpl: options.fetchImpl,
-    env: options.env,
-    now: options.now,
-    useMockRss: options.useMockRss
+    fetchImpl: input.fetchImpl,
+    env: input.env,
+    now: input.now,
+    useMockRss: input.useMockRss
   });
 
-  logger.info("3/12 shortlistNews: running editorial first-pass selection.");
+  logger.info("3/4 shortlistNews and selectTopic: preparing editor choices.");
   const shortlist = await shortlistNewsWithReport({
     outputDir,
     candidates: collection.candidates,
     logger,
     writeOutputs: true
   });
-
-  logger.info("4/12 selectTopic: choosing today's main editorial topic.");
   const topicSelection = manualTopic.used
     ? await selectManualTopicWithReport({
         outputDir,
@@ -264,7 +408,7 @@ export async function runDailyPipeline(
         feedback: editorialFeedback,
         logger,
         writeOutputs: true,
-        now: options.now
+        now: input.now
       })
     : await selectTopicWithReport({
         outputDir,
@@ -273,45 +417,128 @@ export async function runDailyPipeline(
         feedback: editorialFeedback,
         logger,
         writeOutputs: true,
-        now: options.now
+        now: input.now
       });
 
-  logger.info("5/12 buildTopicFactPack: verifying key claims for the selected topic.");
+  logger.info("4/4 generateEditorialBrief: writing editor-facing brief.");
+  const editorialBrief = await generateEditorialBrief({
+    outputDir,
+    candidates: collection.candidates,
+    shortlisted: shortlist.shortlisted,
+    selectedTopic: topicSelection.topic,
+    logger,
+    writeOutputs: true,
+    now: input.now
+  });
+  const approval = await loadEditorialApproval({ logger });
+  const artifacts: DailyPipelineArtifacts = {
+    candidates: collection.candidates,
+    shortlisted: shortlist.shortlisted,
+    selectedTopic: topicSelection.topic,
+    manualTopic,
+    editorialStyle,
+    editorialFeedback,
+    editorialBrief: editorialBrief.brief,
+    editorialApproval: approval,
+    sourceHealth
+  };
+  const partial = {
+    outputDir,
+    files,
+    artifacts,
+    currentStage: "brief",
+    stoppedAt: "brief",
+    nextCommand: "pnpm run:daily -- --from article",
+    collectionStats: collection.stats,
+    shortlistStats: shortlist.stats
+  };
+
+  await writeReport(partial);
+  return partial;
+}
+
+async function loadBriefArtifactsForArticle(input: {
+  files: PipelineOutputFiles;
+}): Promise<{
+  candidates: NormalizedNewsItem[];
+  shortlisted: ShortlistedNewsItem[];
+  selectedTopic: SelectedTopic;
+}> {
+  const [candidates, shortlisted, selectedTopic] = await Promise.all([
+    readJsonFile<NormalizedNewsItem[]>(input.files.candidateNews),
+    readJsonFile<ShortlistedNewsItem[]>(input.files.shortlistedNews),
+    readJsonFile<SelectedTopic>(input.files.selectedTopic)
+  ]);
+
+  return { candidates, shortlisted, selectedTopic };
+}
+
+async function runArticleStage(input: {
+  outputDir: string;
+  files: PipelineOutputFiles;
+  logger: Logger;
+  fetchImpl?: FetchLike;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+  approvalFile?: string;
+}): Promise<Omit<DailyPipelineResult, "durationMs">> {
+  const { outputDir, files, logger } = input;
+  const [editorialStyle, editorialFeedback, briefArtifacts] = await Promise.all([
+    loadEditorialStyle({ logger }),
+    loadEditorialFeedback({ logger }),
+    loadBriefArtifactsForArticle({ files })
+  ]);
+  const resolvedApproval = await resolveEditorialApprovalForTopic({
+    selectedTopic: briefArtifacts.selectedTopic,
+    shortlisted: briefArtifacts.shortlisted,
+    approvalFile: input.approvalFile,
+    outputSelectedTopicFile: files.selectedTopic,
+    logger
+  });
+  const selectedTopic = resolvedApproval.topic;
+  const editorialApproval = resolvedApproval.approval;
+  const existingBrief = await readOptionalJsonFile<EditorialBrief>(
+    files.editorialBriefJson
+  );
+
+  logger.info("1/7 buildTopicFactPack: verifying approved topic claims.");
   const factPack = await buildTopicFactPack({
     outputDir,
-    topic: topicSelection.topic,
+    topic: selectedTopic,
     logger,
     writeOutputs: true,
-    now: options.now
+    now: input.now
   });
 
-  logger.info("6/12 writeArticle: writing the WeChat article body.");
+  logger.info("2/7 writeArticle: writing with editorial approval notes.");
   const article = await writeArticleWithReport({
     outputDir,
-    topic: topicSelection.topic,
+    topic: selectedTopic,
     factPack: factPack.factPack,
     editorialStyle,
+    editorialApproval: asEditorialApproval(editorialApproval),
     logger,
-    env: options.env,
-    fetchImpl: options.fetchImpl,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
     writeOutputs: true,
-    now: options.now
+    now: input.now
   });
 
-  logger.info("7/12 generateTitles: scoring title candidates and selecting final title.");
+  logger.info("3/7 generateTitles: using approvedTitle as a checked reference.");
   const titleGeneration = await generateTitlesWithReport({
     outputDir,
     articleMarkdown: article.article.markdown,
     articleMeta: article.meta,
-    selectedTopic: topicSelection.topic,
+    selectedTopic,
     factPack: factPack.factPack,
     editorialStyle,
+    editorialApproval: asEditorialApproval(editorialApproval),
     feedback: editorialFeedback,
     logger,
-    env: options.env,
-    fetchImpl: options.fetchImpl,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
     writeOutputs: true,
-    now: options.now
+    now: input.now
   });
   const articleForNextStages = {
     ...article.article,
@@ -321,21 +548,21 @@ export async function runDailyPipeline(
   };
   const articleMetaForNextStages = titleGeneration.articleMeta;
 
-  logger.info("8/12 reviewArticle: auditing the article before cover generation.");
+  logger.info("4/7 reviewArticle: auditing approved article.");
   const articleReview = await reviewArticleWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
     articleMeta: articleMetaForNextStages,
     factPack: factPack.factPack,
-    selectedTopic: topicSelection.topic,
+    selectedTopic,
     logger,
-    env: options.env,
-    fetchImpl: options.fetchImpl,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
     writeOutputs: true,
-    now: options.now
+    now: input.now
   });
 
-  logger.info("9/12 cover: reusing existing cover artifacts when available.");
+  logger.info("5/7 cover: generating or reusing cover artifacts.");
   const cover =
     (await reuseExistingCoverIfAvailable(outputDir, logger)) ??
     (await generateCoverWithReport({
@@ -343,15 +570,15 @@ export async function runDailyPipeline(
       articleMarkdown: articleForNextStages.markdown,
       articleMeta: articleMetaForNextStages,
       articleReview: articleReview.review,
-      selectedTopic: topicSelection.topic,
+      selectedTopic,
       factPack: factPack.factPack,
       logger,
-      env: options.env,
+      env: input.env,
       writeOutputs: true,
-      now: options.now
+      now: input.now
     }));
 
-  logger.info("10/12 renderWechatHtml: creating Stripe-inspired WeChat HTML layout.");
+  logger.info("6/7 renderWechatHtml: creating WeChat HTML layout.");
   const wechatLayout = await renderWechatHtmlWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
@@ -361,103 +588,210 @@ export async function runDailyPipeline(
     coverReview: cover.review,
     logger,
     writeOutputs: true,
-    now: options.now
+    now: input.now
   });
 
-  logger.info("11/12 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
+  logger.info("7/7 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
   const wechatDraft = await saveWechatDraftWithReport({
     outputDir,
+    articleMarkdown: articleForNextStages.markdown,
+    articleMeta: articleMetaForNextStages,
+    articleReview: articleReview.review,
+    cover: cover.cover,
+    coverReview: cover.review,
+    wechatHtml: wechatLayout.html,
+    wechatLayout: wechatLayout.layout,
     logger,
     writeOutputs: true,
-    now: options.now
+    now: input.now
   });
-
-  logger.info(
-    "12/12 saveWechatDraftApi: generating WeChat official API draft request preview."
-  );
-  const wechatApiDraft = await saveWechatDraftApiWithReport({
-    outputDir,
-    logger,
-    env: options.env,
-    fetchImpl: options.fetchImpl,
-    writeOutputs: true,
-    now: options.now
-  });
-
-  const files: PipelineOutputFiles = {
-    sourceHealth: sourceHealth.files.result,
-    sourceHealthReport: sourceHealth.files.report,
-    rawNews: collection.files.rawNews,
-    normalizedNews: collection.files.normalizedNews,
-    rejectedNews: collection.files.rejectedNews,
-    candidateNews: collection.files.candidateNews,
-    collectionReport: collection.files.collectionReport,
-    shortlistedNews: shortlist.files.shortlistedNews,
-    shortlistReport: shortlist.files.shortlistReport,
-    selectedTopic: topicSelection.files.selectedTopic,
-    topicSelectionReport: topicSelection.files.topicSelectionReport,
-    topicFactPackJson: factPack.files.topicFactPackJson,
-    topicFactPackReport: factPack.files.topicFactPackReport,
-    article: article.files.article,
-    articleMeta: article.files.articleMeta,
-    articleWritingReport: article.files.articleWritingReport,
-    titleCandidates: titleGeneration.files.titleCandidates,
-    titleSelectionReport: titleGeneration.files.titleSelectionReport,
-    articleReview: articleReview.files.articleReview,
-    articleReviewReport: articleReview.files.articleReviewReport,
-    cover: cover.files.cover,
-    coverPrompt: cover.files.coverPrompt,
-    coverReview: cover.files.coverReview,
-    coverImageDir: cover.files.coverImageDir,
-    wechatHtml: wechatLayout.files.wechatHtml,
-    wechatLayout: wechatLayout.files.wechatLayout,
-    wechatLayoutReport: wechatLayout.files.wechatLayoutReport,
-    wechatDraftResult: wechatDraft.files.wechatDraftResult,
-    wechatDraftReport: wechatDraft.files.wechatDraftReport,
-    wechatApiDraftResult: wechatApiDraft.files.wechatApiDraftResult,
-    wechatApiDraftReport: wechatApiDraft.files.wechatApiDraftReport,
-    wechatApiPreflight: wechatApiDraft.files.wechatApiPreflight,
-    dailyReport: join(outputDir, "daily-report.md")
+  const artifacts: DailyPipelineArtifacts = {
+    candidates: briefArtifacts.candidates,
+    shortlisted: briefArtifacts.shortlisted,
+    selectedTopic,
+    editorialStyle,
+    editorialFeedback,
+    editorialBrief: existingBrief,
+    editorialApproval,
+    topicFactPack: factPack.factPack,
+    article: articleForNextStages,
+    articleMeta: articleMetaForNextStages,
+    titleCandidates: titleGeneration.candidates,
+    titleSelection: titleGeneration.selection,
+    articleReview: articleReview.review,
+    cover: cover.cover,
+    coverReview: cover.review,
+    wechatLayout: wechatLayout.layout,
+    wechatDraft: wechatDraft.result
   };
-
-  const partialResult = {
+  const partial = {
     outputDir,
     files,
-    artifacts: {
-      candidates: collection.candidates,
-      shortlisted: shortlist.shortlisted,
-      selectedTopic: topicSelection.topic,
-      manualTopic,
-      editorialStyle,
-      editorialFeedback,
-      sourceHealth,
-      topicFactPack: factPack.factPack,
-      article: articleForNextStages,
-      articleMeta: articleMetaForNextStages,
-      titleCandidates: titleGeneration.candidates,
-      titleSelection: titleGeneration.selection,
-      articleReview: articleReview.review,
-      cover: cover.cover,
-      coverReview: cover.review,
-      wechatLayout: wechatLayout.layout,
-      wechatDraft: wechatDraft.result,
-      wechatApiDraft: wechatApiDraft.result,
-      wechatApiPreflight: wechatApiDraft.preflight
-    },
-    collectionStats: collection.stats,
-    shortlistStats: shortlist.stats
+    artifacts,
+    currentStage: "draft-dry-run",
+    stoppedAt: "draft-dry-run",
+    nextCommand: "pnpm preflight:final"
   };
-  const report = createDailyReport(partialResult);
-  await writeFile(files.dailyReport, report, "utf8");
+
+  await writeReport(partial);
+  return partial;
+}
+
+async function runLayoutStage(input: {
+  outputDir: string;
+  files: PipelineOutputFiles;
+  logger: Logger;
+  fetchImpl?: FetchLike;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+  approvalFile?: string;
+}): Promise<Omit<DailyPipelineResult, "durationMs">> {
+  const { outputDir, files, logger } = input;
+  const [articleMarkdown, articleMeta, selectedTopic, factPack, cover] =
+    await Promise.all([
+      readFile(files.article, "utf8"),
+      readJsonFile<ArticleMeta>(files.articleMeta),
+      readJsonFile<SelectedTopic>(files.selectedTopic),
+      readJsonFile<TopicFactPack>(files.topicFactPackJson),
+      readJsonFile<CoverResult>(files.cover)
+    ]);
+  const [editorialStyle, editorialFeedback, approval] = await Promise.all([
+    loadEditorialStyle({ logger }),
+    loadEditorialFeedback({ logger }),
+    loadEditorialApproval({ approvalFile: input.approvalFile, logger })
+  ]);
+
+  logger.info("1/4 reviewArticle: rechecking existing article artifacts.");
+  const articleReview = await reviewArticleWithReport({
+    outputDir,
+    articleMarkdown,
+    articleMeta,
+    factPack,
+    selectedTopic,
+    logger,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
+    writeOutputs: true,
+    now: input.now
+  });
+
+  logger.info("2/4 coverReview: reviewing existing cover.json.");
+  const coverReview = await reviewExistingCoverWithReport({
+    outputDir,
+    files,
+    cover,
+    env: input.env,
+    logger,
+    now: input.now
+  });
+
+  logger.info("3/4 renderWechatHtml: creating WeChat HTML layout.");
+  const wechatLayout = await renderWechatHtmlWithReport({
+    outputDir,
+    articleMarkdown,
+    articleMeta,
+    articleReview: articleReview.review,
+    cover: coverReview.cover,
+    coverReview: coverReview.review,
+    logger,
+    writeOutputs: true,
+    now: input.now
+  });
+
+  logger.info("4/4 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
+  const wechatDraft = await saveWechatDraftWithReport({
+    outputDir,
+    articleMarkdown,
+    articleMeta,
+    articleReview: articleReview.review,
+    cover: coverReview.cover,
+    coverReview: coverReview.review,
+    wechatHtml: wechatLayout.html,
+    wechatLayout: wechatLayout.layout,
+    logger,
+    writeOutputs: true,
+    now: input.now
+  });
+  const artifacts: DailyPipelineArtifacts = {
+    selectedTopic,
+    editorialStyle,
+    editorialFeedback,
+    editorialApproval: approval,
+    topicFactPack: factPack,
+    articleMeta,
+    articleReview: articleReview.review,
+    cover: coverReview.cover,
+    coverReview: coverReview.review,
+    wechatLayout: wechatLayout.layout,
+    wechatDraft: wechatDraft.result
+  };
+  const partial = {
+    outputDir,
+    files,
+    artifacts,
+    currentStage: "draft-dry-run",
+    stoppedAt: "draft-dry-run",
+    nextCommand: "pnpm preflight:final"
+  };
+
+  await writeReport(partial);
+  return partial;
+}
+
+export async function runDailyPipeline(
+  options: RunDailyPipelineOptions = {}
+): Promise<DailyPipelineResult> {
+  const startedAt = Date.now();
+  const logger = options.logger ?? createLogger("dry-run");
+  const outputDir = options.outputDir ?? defaultOutputDir;
+  const files = createOutputFiles(outputDir);
+
+  if (options.until && options.from) {
+    throw new Error("Use either --until or --from, not both.");
+  }
+
+  await mkdir(outputDir, { recursive: true });
+  logger.info(`Output directory ready: ${outputDir}`);
+
+  const partial =
+    options.from === "article"
+      ? await runArticleStage({
+          outputDir,
+          files,
+          logger,
+          fetchImpl: options.fetchImpl,
+          env: options.env,
+          now: options.now,
+          approvalFile: options.approvalFile
+        })
+      : options.from === "layout"
+        ? await runLayoutStage({
+            outputDir,
+            files,
+            logger,
+            fetchImpl: options.fetchImpl,
+            env: options.env,
+            now: options.now,
+            approvalFile: options.approvalFile
+          })
+        : await runBriefStage({
+            outputDir,
+            files,
+            logger,
+            fetchImpl: options.fetchImpl,
+            env: options.env,
+            now: options.now,
+            useMockRss: options.useMockRss,
+            manualTopicFile: options.manualTopicFile
+          });
 
   const durationMs = Date.now() - startedAt;
-  logger.info(`Dry-run completed in ${durationMs}ms.`);
   logger.info(
-    `Shortlisted ${shortlist.stats.shortlistedCount} items; selected topic: ${topicSelection.topic.selected.title}; article review passed=${articleReview.review.passed}; cover review passed=${cover.review.passed}; HTML compatible=${wechatLayout.layout.compatibleWithWechat}; mock draft status=${wechatDraft.result.status}; API draft mode=${wechatApiDraft.result.mode}.`
+    `run:daily stopped at ${partial.stoppedAt} in ${durationMs}ms; next=${partial.nextCommand}.`
   );
 
   return {
-    ...partialResult,
+    ...partial,
     durationMs
   };
 }

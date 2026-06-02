@@ -1,5 +1,6 @@
 import type { NewsItem } from "./news.js";
 import type { LlmRunMetadata } from "./llm.js";
+import type { EditorialApproval } from "./editorial.js";
 
 export interface SelectedTopic {
   news: NewsItem;
@@ -43,6 +44,7 @@ export interface ArticleMeta {
   articleThesis: string;
   usedClaims: ArticleUsedClaim[];
   riskControls: string[];
+  editorialApproval?: EditorialApproval;
   llm?: LlmRunMetadata;
   generatedAt: string;
 }

@@ -12,7 +12,10 @@ import {
 import { loadEditorialFeedback } from "./loadEditorialFeedback.js";
 import { loadEditorialStyle } from "./loadEditorialStyle.js";
 import type { ArticleMeta } from "../types/article.js";
-import type { EditorialStyleLoadResult } from "../types/editorial.js";
+import type {
+  EditorialApproval,
+  EditorialStyleLoadResult
+} from "../types/editorial.js";
 import type { EditorialFeedbackLoadResult } from "../types/feedback.js";
 import type { TopicFactPack } from "../types/factPack.js";
 import type { SelectedTopic } from "../types/news.js";
@@ -26,11 +29,11 @@ import type {
 } from "../types/title.js";
 import type {
   LlmChatCompletionClient,
-  LlmChatCompletionResult,
   LlmFetch,
   LlmRunMetadata
 } from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { requestLlmJsonWithRepair } from "../utils/llmJson.js";
 
 export interface GenerateTitlesOptions {
   outputDir?: string;
@@ -43,6 +46,7 @@ export interface GenerateTitlesOptions {
   selectedTopic?: SelectedTopic;
   factPack?: TopicFactPack;
   editorialStyle?: EditorialStyleLoadResult;
+  editorialApproval?: EditorialApproval;
   feedback?: EditorialFeedbackLoadResult;
   logger?: Logger;
   env?: NodeJS.ProcessEnv;
@@ -180,7 +184,10 @@ function findForbiddenTerms(
   return [...new Set(violations)];
 }
 
-function createRawCandidates(topic: SelectedTopic): Array<{
+function createRawCandidates(
+  topic: SelectedTopic,
+  approvedTitleReference?: string
+): Array<{
   kind: TitleCandidateKind;
   title: string;
   rationale: string;
@@ -191,11 +198,17 @@ function createRawCandidates(topic: SelectedTopic): Array<{
   );
 
   if (!isCodingAgentTopic) {
-    return [
+    const genericCandidates: Array<{
+      kind: TitleCandidateKind;
+      title: string;
+      rationale: string;
+    }> = [
       {
         kind: "judgement",
-        title: "AI 工具真正改变的，不是功能，而是工作流",
-        rationale: "用判断句压住观点，避免复述资讯。"
+        title: approvedTitleReference || "AI 工具真正改变的，不是功能，而是工作流",
+        rationale: approvedTitleReference
+          ? "来自人工确认标题参考，仍会经过 forbidden terms 检查。"
+          : "用判断句压住观点，避免复述资讯。"
       },
       {
         kind: "contrast",
@@ -218,13 +231,17 @@ function createRawCandidates(topic: SelectedTopic): Array<{
         rationale: "给技术读者留下讨论空间。"
       }
     ];
+    return genericCandidates;
   }
 
   return [
     {
       kind: "judgement",
-      title: "AI 编码代理真正卷到的，不是价格，而是工作流",
-      rationale: "判断明确，贴合文章中心论点，避免胜负式标题。"
+      title:
+        approvedTitleReference || "AI 编码代理真正卷到的，不是价格，而是工作流",
+      rationale: approvedTitleReference
+        ? "来自人工确认标题参考，仍会经过 forbidden terms 检查。"
+        : "判断明确，贴合文章中心论点，避免胜负式标题。"
     },
     {
       kind: "contrast",
@@ -339,6 +356,7 @@ function createSelection(
     generatedAt: string;
     editorialStyle: EditorialStyleLoadResult;
     feedback: EditorialFeedbackLoadResult;
+    editorialApproval?: EditorialApproval;
     llm: LlmRunMetadata;
   }
 ): TitleSelectionSummary {
@@ -361,6 +379,7 @@ function createSelection(
     selectionReason: createSelectionReason(selected),
     candidates,
     forbiddenTerms: [...FORBIDDEN_TITLE_TERMS],
+    approvedTitleReference: input.editorialApproval?.approvedTitle || undefined,
     editorialStyleRead: input.editorialStyle.loaded,
     feedbackRead: input.feedback.feedbackRead,
     feedbackSummary: createFeedbackSummary(input.feedback),
@@ -394,6 +413,7 @@ function createReport(selection: TitleSelectionSummary): string {
     `- editorialStyleRead: ${selection.editorialStyleRead ? "yes" : "no"}`,
     `- feedbackRead: ${selection.feedbackRead ? "yes" : "no"}`,
     `- feedbackSummary: ${selection.feedbackSummary ?? "none"}`,
+    `- approvedTitleReference: ${selection.approvedTitleReference ?? "none"}`,
     `- llmProvider: ${selection.llm?.provider ?? "minimax"}`,
     `- llmModel: ${selection.llm?.model ?? "unknown"}`,
     `- llmMode: ${selection.llm?.mode ?? "mock"}`,
@@ -424,9 +444,13 @@ export function generateTitleCandidates(input: {
   factPack: TopicFactPack;
   articleMarkdown: string;
   articleMeta: ArticleMeta;
+  editorialApproval?: EditorialApproval;
   feedback?: EditorialFeedbackLoadResult;
 }): TitleCandidate[] {
-  return createRawCandidates(input.topic).map((candidate) =>
+  return createRawCandidates(
+    input.topic,
+    input.editorialApproval?.approvedTitle
+  ).map((candidate) =>
     scoreCandidate({
       ...candidate,
       articleMarkdown: input.articleMarkdown,
@@ -440,11 +464,40 @@ export function generateTitleCandidates(input: {
 function createTitleGeneratorSystemPrompt(): string {
   return [
     "你是安全的微信公众号标题生成器。",
-    "只返回 JSON object，不要输出 Markdown 围栏。",
+    "只返回 JSON。",
+    "不要 Markdown。",
+    "不要解释。",
+    "不要代码块。",
+    "不要前后缀文本。",
+    "不要输出 <think> 或任何思考过程。",
+    "必须符合给定字段结构。",
+    "中文内容放在 JSON 字段值里。",
     "必须遵守 fact pack 安全边界，不得标题党。",
     "不得写免费平替、完全替代、能力相同、零成本、发布、群发等 forbidden terms。"
   ].join("\n");
 }
+
+const titleGeneratorExpectedJsonShape = JSON.stringify(
+  {
+    candidates: [
+      {
+        type: "judgement",
+        title: "标题",
+        rationale: "生成理由",
+        scores: {
+          spread: 80,
+          accuracy: 90,
+          nonClickbait: 90,
+          wechatFit: 85,
+          thesisMatch: 88
+        }
+      }
+    ],
+    finalSelectedTitle: "必须是 candidates 中的一个 title"
+  },
+  null,
+  2
+);
 
 function createTitleGeneratorUserPrompt(input: {
   topic: SelectedTopic;
@@ -453,23 +506,16 @@ function createTitleGeneratorUserPrompt(input: {
   articleMeta: ArticleMeta;
   editorialStyle: EditorialStyleLoadResult;
   feedback: EditorialFeedbackLoadResult;
+  editorialApproval?: EditorialApproval;
 }): string {
   return [
-    "请生成 5 个中文公众号标题候选，必须各 1 个 kind：judgement, contrast, trend, publicImpact, techDiscussion。",
-    "返回 JSON：",
-    JSON.stringify(
-      {
-        candidates: [
-          {
-            kind: "judgement",
-            title: "标题",
-            rationale: "生成理由"
-          }
-        ]
-      },
-      null,
-      2
-    ),
+    "请生成 5 个中文公众号标题候选，必须各 1 个 type：judgement, contrast, trend, publicImpact, techDiscussion。",
+    "只返回 JSON，不要 Markdown，不要解释，不要代码块，不要前后缀文本，不要输出 <think> 或任何思考过程。",
+    "字段 type 必须使用 judgement, contrast, trend, publicImpact, techDiscussion 之一。",
+    "每个候选必须包含 type、title、rationale、scores。",
+    "finalSelectedTitle 必须存在，且必须是 candidates 中的一个 title。",
+    "返回 JSON 结构：",
+    titleGeneratorExpectedJsonShape,
     "",
     "article.md:",
     input.articleMarkdown,
@@ -487,16 +533,16 @@ function createTitleGeneratorUserPrompt(input: {
     input.editorialStyle.content,
     "",
     "feedback:",
-    input.feedback.latest ? JSON.stringify(input.feedback.latest, null, 2) : "none"
+    input.feedback.latest ? JSON.stringify(input.feedback.latest, null, 2) : "none",
+    "",
+    "editorial-approval.json:",
+    input.editorialApproval
+      ? JSON.stringify(input.editorialApproval, null, 2)
+      : "not provided",
+    "",
+    "approved title reference:",
+    input.editorialApproval?.approvedTitle || "none"
   ].join("\n");
-}
-
-function parseJsonContent<T>(completion: LlmChatCompletionResult): T {
-  try {
-    return JSON.parse(completion.content) as T;
-  } catch {
-    throw new Error("MiniMax title-generator response was not valid JSON.");
-  }
 }
 
 function isTitleCandidateKind(value: unknown): value is TitleCandidateKind {
@@ -507,6 +553,28 @@ function isTitleCandidateKind(value: unknown): value is TitleCandidateKind {
     value === "publicImpact" ||
     value === "techDiscussion"
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasTitleScores(record: Record<string, unknown>): boolean {
+  if (isRecord(record.scores)) {
+    return Object.values(record.scores).some(
+      (value) => typeof value === "number" && Number.isFinite(value)
+    );
+  }
+
+  return [
+    "spreadScore",
+    "accuracyScore",
+    "nonClickbaitScore",
+    "wechatFitScore",
+    "thesisMatchScore",
+    "finalScore",
+    "score"
+  ].some((key) => typeof record[key] === "number" && Number.isFinite(record[key]));
 }
 
 function parseRawTitleCandidates(value: unknown): Array<{
@@ -524,16 +592,23 @@ function parseRawTitleCandidates(value: unknown): Array<{
     }
 
     const record = candidate as Record<string, unknown>;
-    if (!isTitleCandidateKind(record.kind)) {
-      throw new Error(`MiniMax title candidate ${index + 1} has invalid kind.`);
+    const kind = record.type ?? record.kind;
+    if (!isTitleCandidateKind(kind)) {
+      throw new Error(
+        `MiniMax title candidate ${index + 1} is missing valid type.`
+      );
     }
 
     if (typeof record.title !== "string" || !record.title.trim()) {
       throw new Error(`MiniMax title candidate ${index + 1} is missing title.`);
     }
 
+    if (!hasTitleScores(record)) {
+      throw new Error(`MiniMax title candidate ${index + 1} is missing scores.`);
+    }
+
     return {
-      kind: record.kind,
+      kind,
       title: record.title.trim(),
       rationale:
         typeof record.rationale === "string" && record.rationale.trim()
@@ -563,30 +638,69 @@ function parseRawTitleCandidates(value: unknown): Array<{
   );
 }
 
+function validateTitleGeneratorPayload(value: unknown): {
+  candidates: Array<{
+    kind: TitleCandidateKind;
+    title: string;
+    rationale: string;
+  }>;
+  finalSelectedTitle: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("MiniMax title-generator response must be a JSON object.");
+  }
+
+  const candidates = parseRawTitleCandidates(value.candidates);
+  const finalSelectedTitle =
+    typeof value.finalSelectedTitle === "string" && value.finalSelectedTitle.trim()
+      ? value.finalSelectedTitle.trim()
+      : typeof value.selectedTitle === "string" && value.selectedTitle.trim()
+        ? value.selectedTitle.trim()
+        : "";
+
+  if (!finalSelectedTitle) {
+    throw new Error("MiniMax title-generator response is missing finalSelectedTitle.");
+  }
+
+  if (!candidates.some((candidate) => candidate.title === finalSelectedTitle)) {
+    throw new Error(
+      "MiniMax title-generator finalSelectedTitle must match one candidate title."
+    );
+  }
+
+  return {
+    candidates,
+    finalSelectedTitle
+  };
+}
+
 async function generateTitleCandidatesWithMiniMax(input: {
+  outputDir: string;
   topic: SelectedTopic;
   factPack: TopicFactPack;
   articleMarkdown: string;
   articleMeta: ArticleMeta;
   editorialStyle: EditorialStyleLoadResult;
   feedback: EditorialFeedbackLoadResult;
+  editorialApproval?: EditorialApproval;
   env: NodeJS.ProcessEnv;
   fetchImpl?: LlmFetch;
   chatCompletion: LlmChatCompletionClient;
 }): Promise<{ candidates: TitleCandidate[]; llm: LlmRunMetadata }> {
   const config = resolveLlmStageConfig("title-generator", input.env);
-  const completion = await input.chatCompletion({
-    model: config.model,
+  const { value: payload, completion } = await requestLlmJsonWithRepair({
+    failedStep: "title-generator",
+    outputDir: input.outputDir,
+    config,
     systemPrompt: createTitleGeneratorSystemPrompt(),
     userPrompt: createTitleGeneratorUserPrompt(input),
-    temperature: config.temperature,
-    maxCompletionTokens: config.maxCompletionTokens,
-    responseFormat: "json_object",
+    expectedJsonShape: titleGeneratorExpectedJsonShape,
     env: input.env,
-    fetchImpl: input.fetchImpl
+    fetchImpl: input.fetchImpl,
+    chatCompletion: input.chatCompletion,
+    validate: validateTitleGeneratorPayload
   });
-  const payload = parseJsonContent<Record<string, unknown>>(completion);
-  const rawCandidates = parseRawTitleCandidates(payload.candidates);
+  const rawCandidates = payload.candidates;
 
   return {
     candidates: rawCandidates.map((candidate) =>
@@ -613,6 +727,7 @@ function createTitleCandidatesFile(selection: TitleSelectionSummary): TitleCandi
     selectedKind: selection.selectedKind,
     candidates: selection.candidates,
     forbiddenTerms: selection.forbiddenTerms,
+    approvedTitleReference: selection.approvedTitleReference,
     llm: selection.llm
   };
 }
@@ -648,12 +763,14 @@ export async function generateTitlesWithReport(
   const { candidates, llm } =
     llmConfig.mode === "real"
       ? await generateTitleCandidatesWithMiniMax({
+          outputDir,
           topic,
           factPack,
           articleMarkdown,
           articleMeta,
           editorialStyle,
           feedback,
+          editorialApproval: options.editorialApproval,
           env,
           fetchImpl: options.fetchImpl,
           chatCompletion
@@ -664,6 +781,7 @@ export async function generateTitlesWithReport(
             factPack,
             articleMarkdown,
             articleMeta,
+            editorialApproval: options.editorialApproval,
             feedback
           }),
           llm: mockLlmMetadata(llmConfig)
@@ -672,6 +790,7 @@ export async function generateTitlesWithReport(
     generatedAt,
     editorialStyle,
     feedback,
+    editorialApproval: options.editorialApproval,
     llm
   });
   const selectedCandidate = candidates.find(

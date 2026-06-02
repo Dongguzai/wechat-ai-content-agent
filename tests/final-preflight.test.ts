@@ -27,7 +27,7 @@ async function writeFinalPreflightFixture(outputDir: string): Promise<void> {
     passed: true,
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "mock",
       usage: {
         promptTokens: null,
@@ -46,7 +46,7 @@ async function writeFinalPreflightFixture(outputDir: string): Promise<void> {
     generatedAt: "2026-05-29T00:00:00.000Z",
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "mock",
       usage: {
         promptTokens: null,
@@ -63,7 +63,7 @@ async function writeFinalPreflightFixture(outputDir: string): Promise<void> {
     forbiddenTerms: [],
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "mock",
       usage: {
         promptTokens: null,
@@ -212,7 +212,7 @@ async function writeProductionPreflightFixture(
     generatedAt: "2026-05-29T00:00:00.000Z",
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "real",
       usage: {
         promptTokens: 10,
@@ -229,7 +229,7 @@ async function writeProductionPreflightFixture(
     forbiddenTerms: [],
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "real",
       usage: {
         promptTokens: 11,
@@ -242,7 +242,7 @@ async function writeProductionPreflightFixture(
     passed: true,
     llm: {
       provider: "minimax",
-      model: "MiniMax-M2.7",
+      model: "minimax-m3-test",
       mode: "rules+real",
       usage: {
         promptTokens: 13,
@@ -572,7 +572,7 @@ test("REAL_PRODUCTION_MODE=true blocks mock article LLM mode in final preflight"
       generatedAt: "2026-05-29T00:00:00.000Z",
       llm: {
         provider: "minimax",
-        model: "MiniMax-M2.7",
+        model: "minimax-m3-test",
         mode: "mock",
         usage: {
           promptTokens: null,

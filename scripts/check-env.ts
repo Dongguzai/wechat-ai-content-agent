@@ -3,6 +3,7 @@ import { extname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   formatDotEnvParseErrors,
+  miniMaxDotEnvOverrideKeys,
   parseDotEnv,
   projectRoot as defaultProjectRoot,
   type DotEnvEntry
@@ -152,10 +153,13 @@ function duplicateEnvKeys(entries: DotEnvEntry[]): string[] {
 
 function applyEntriesToEnv(
   entries: DotEnvEntry[],
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  overrideKeys: readonly string[] = []
 ): void {
+  const overrideKeySet = new Set(overrideKeys);
+
   for (const entry of entries) {
-    if (env[entry.key] === undefined) {
+    if (overrideKeySet.has(entry.key) || env[entry.key] === undefined) {
       env[entry.key] = entry.value;
     }
   }
@@ -368,6 +372,18 @@ function validateConditionalEnv(
     if (!envValue(env, "MINIMAX_API_KEY")) {
       errors.push("Real MiniMax LLM mode requires MINIMAX_API_KEY.");
     }
+
+    for (const [stageName, stageModelKey] of [
+      ["article-writer", "ARTICLE_WRITER_MODEL"],
+      ["title-generator", "TITLE_GENERATOR_MODEL"],
+      ["article-reviewer", "ARTICLE_REVIEWER_MODEL"]
+    ] as const) {
+      if (!envValue(env, stageModelKey) && !envValue(env, "MINIMAX_MODEL")) {
+        errors.push(
+          `Real MiniMax LLM mode requires ${stageModelKey} or MINIMAX_MODEL for ${stageName}.`
+        );
+      }
+    }
   }
 
   if (isExplicitTrue(env, "SEARCH_ENABLE_REAL_API")) {
@@ -562,7 +578,7 @@ export async function checkEnvironment(
       if (parsed.errors.length > 0) {
         errors.push(formatDotEnvParseErrors(dotenvPath, parsed.errors));
       } else {
-        applyEntriesToEnv(parsed.entries, runtimeEnv);
+        applyEntriesToEnv(parsed.entries, runtimeEnv, miniMaxDotEnvOverrideKeys);
         info.push(`Loaded ${relative(root, dotenvPath)} (${parsed.entries.length} keys).`);
       }
 

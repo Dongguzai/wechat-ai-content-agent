@@ -6,7 +6,11 @@ import {
   createNotificationConfig,
   sendNotification
 } from "../src/adapters/notification.js";
-import { loadDotEnv, projectRoot } from "../src/config/env.js";
+import {
+  loadDotEnv,
+  miniMaxDotEnvOverrideKeys,
+  projectRoot
+} from "../src/config/env.js";
 import { verifyWechatDraftOnlyApiGuard } from "../src/hooks/forbidWechatPublishApi.js";
 import { archiveRunOutputs } from "../src/pipeline/archiveRun.js";
 import { auditRealData } from "../src/pipeline/auditRealData.js";
@@ -28,6 +32,7 @@ import type { SelectedTopic } from "../src/types/news.js";
 import type { LlmRunMetadata } from "../src/types/llm.js";
 import type { TitleCandidatesFile } from "../src/types/title.js";
 import { formatRunArchiveTimestamp } from "../src/utils/dateFormat.js";
+import type { LlmJsonErrorReport } from "../src/utils/llmJson.js";
 import type { Logger } from "../src/utils/logger.js";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -245,6 +250,20 @@ function assertRequiredEnv(env: NodeJS.ProcessEnv): string {
     );
   }
 
+  const missingMiniMaxModelStages = [
+    ["article-writer", env.ARTICLE_WRITER_MODEL],
+    ["title-generator", env.TITLE_GENERATOR_MODEL],
+    ["article-reviewer", env.ARTICLE_REVIEWER_MODEL]
+  ]
+    .filter(([, stageModel]) => !trimEnv(stageModel) && !trimEnv(env.MINIMAX_MODEL))
+    .map(([stage]) => stage);
+
+  if (missingMiniMaxModelStages.length > 0) {
+    throw new Error(
+      `REAL_PRODUCTION_MODE=true requires MINIMAX_MODEL or stage-specific MiniMax model env values for: ${missingMiniMaxModelStages.join(", ")}.`
+    );
+  }
+
   return env.WECHAT_DRAFT_DRY_RUN === "false"
     ? "Required real-draft environment is present; WECHAT_DRAFT_DRY_RUN=false."
     : "Required production environment is present; real draft stage will force WECHAT_DRAFT_DRY_RUN=false.";
@@ -278,6 +297,7 @@ async function defaultRunDaily(
     outputDir: context.outputDir,
     logger: context.logger,
     fetchImpl: context.fetchImpl,
+    from: "article",
     env: {
       ...context.env,
       WECHAT_DRAFT_DRY_RUN: "true",
@@ -294,9 +314,9 @@ async function defaultRunDaily(
     : undefined;
 
   return {
-    selectedTitle: result.artifacts.titleSelection.selectedTitle,
-    selectedTopicUrl: result.artifacts.selectedTopic.selected.url,
-    coverImagePath: result.artifacts.cover.imagePath,
+    selectedTitle: result.artifacts.titleSelection?.selectedTitle,
+    selectedTopicUrl: result.artifacts.selectedTopic?.selected.url,
+    coverImagePath: result.artifacts.cover?.imagePath,
     message: archive
       ? `Daily pipeline completed; output=${result.outputDir}; archived=${archive.archiveDir}.`
       : `Daily pipeline completed; output=${result.outputDir}.`
@@ -391,6 +411,32 @@ async function readOptionalJsonFile<T>(path: string): Promise<T | undefined> {
   }
 }
 
+async function readCurrentLlmJsonErrorReport(input: {
+  outputDir: string;
+  startedAt: string;
+}): Promise<LlmJsonErrorReport | null> {
+  const report = await readOptionalJsonFile<LlmJsonErrorReport>(
+    join(input.outputDir, "llm-json-error.json")
+  );
+
+  if (!report) {
+    return null;
+  }
+
+  const reportTime = Date.parse(report.generatedAt);
+  const startedTime = Date.parse(input.startedAt);
+
+  if (
+    Number.isFinite(reportTime) &&
+    Number.isFinite(startedTime) &&
+    reportTime < startedTime
+  ) {
+    return null;
+  }
+
+  return report;
+}
+
 async function readSummaryArtifacts(outputDir: string): Promise<{
   articleTitle: string | null;
   selectedTopicTitle: string | null;
@@ -483,6 +529,7 @@ function createReport(input: {
   result: DailyAutoResult;
   files: DailyAutoOutputFiles;
   force: boolean;
+  llmJsonError?: LlmJsonErrorReport | null;
 }): string {
   const sameDayLockStep = input.result.steps.find(
     (step) => step.name === "same-day draft lock"
@@ -502,6 +549,12 @@ function createReport(input: {
           "## 失败原因与建议处理方式",
           "",
           `- 失败原因: ${input.result.error ?? "未记录具体错误。"}`,
+          ...(input.llmJsonError
+            ? [
+                `- LLM JSON 阻断: MiniMax 返回非合法 JSON，已阻断正式草稿创建。failedStep=${input.llmJsonError.failedStep}; retryAttempted=${input.llmJsonError.retryAttempted ? "true" : "false"}; retrySucceeded=${input.llmJsonError.retrySucceeded ? "true" : "false"}。`,
+                "- LLM JSON 报告: `outputs/llm-json-error-report.md` 和 `outputs/llm-json-error.json`。"
+              ]
+            : []),
           stoppedBySameDayLock
             ? "- 建议处理: 今日已经创建过真实草稿。默认不要重复运行；如确需手动重跑，只能人工执行 `pnpm run:daily:auto -- --force`。"
             : "- 建议处理: 先查看本报告和 `logs/daily-auto.log`，修复失败步骤对应的配置、数据源或审核产物后再手动重跑。"
@@ -735,7 +788,7 @@ export async function runDailyAuto(
   try {
     await runStep("env:check", async () => {
       if (options.loadEnv ?? options.env === undefined) {
-        await loadDotEnv({ env });
+        await loadDotEnv({ env, overrideKeys: [...miniMaxDotEnvOverrideKeys] });
       }
 
       return {
@@ -837,7 +890,11 @@ export async function runDailyAuto(
     llm,
     error
   });
-  const report = createReport({ result, files, force });
+  const llmJsonError =
+    status === "failed"
+      ? await readCurrentLlmJsonErrorReport({ outputDir, startedAt })
+      : null;
+  const report = createReport({ result, files, force, llmJsonError });
 
   if (writeOutputs) {
     await writeJson(files.result, result);

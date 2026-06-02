@@ -32,6 +32,8 @@ export const CORE_OUTPUT_ARCHIVE_PATHS = [
   "shortlist-report.md",
   "selected-topic.json",
   "topic-selection-report.md",
+  "editorial-brief.md",
+  "editorial-brief.json",
   "topic-fact-pack.json",
   "topic-fact-pack.md",
   "article.md",
@@ -53,6 +55,23 @@ export const CORE_OUTPUT_ARCHIVE_PATHS = [
   "wechat-api-preflight.json",
   "wechat-api-draft-result.json",
   "wechat-api-draft-report.md",
+  "daily-report.md"
+] as const;
+
+export const BRIEF_OUTPUT_ARCHIVE_PATHS = [
+  "source-health.json",
+  "source-health-report.md",
+  "raw-news.json",
+  "normalized-news.json",
+  "rejected-news.json",
+  "candidate-news.json",
+  "collection-report.md",
+  "shortlisted-news.json",
+  "shortlist-report.md",
+  "selected-topic.json",
+  "topic-selection-report.md",
+  "editorial-brief.md",
+  "editorial-brief.json",
   "daily-report.md"
 ] as const;
 

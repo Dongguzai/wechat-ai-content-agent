@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createChatCompletion } from "../src/adapters/minimax.js";
 import { formatLlmUsage } from "../src/adapters/llm.js";
-import { loadDotEnv } from "../src/config/env.js";
+import {
+  loadDotEnv,
+  miniMaxDotEnvOverrideKeys
+} from "../src/config/env.js";
 import type { LlmFetch, LlmUsage } from "../src/types/llm.js";
 
 export interface MiniMaxSmokeOptions {
@@ -163,6 +166,6 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  await loadDotEnv();
+  await loadDotEnv({ overrideKeys: [...miniMaxDotEnvOverrideKeys] });
   process.exitCode = await minimaxSmokeCli();
 }

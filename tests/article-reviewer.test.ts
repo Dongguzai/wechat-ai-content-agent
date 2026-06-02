@@ -82,6 +82,27 @@ async function createReviewFixture(outputDir: string): Promise<{
   };
 }
 
+function validAuxiliaryReviewPayload(): Record<string, unknown> {
+  return {
+    passed: true,
+    score: 92,
+    summary: "MiniMax auxiliary review passed.",
+    issues: [],
+    factBoundaryCheck: {
+      passed: true,
+      violations: []
+    },
+    qualityCheck: {
+      wordCountOk: true,
+      hasTitle: true,
+      hasHeadings: true,
+      thirdPersonPerspective: true,
+      notNewsRelease: true,
+      themesCovered: ["开源", "工作流", "成本"]
+    }
+  };
+}
+
 function assertReviewContract(review: ArticleReviewResult): void {
   assert.equal(typeof review.passed, "boolean");
   assert.equal(typeof review.score, "number");
@@ -156,20 +177,32 @@ test("reviewArticleWithReport real mode calls MiniMax but hard rules still block
         LLM_ENABLE_REAL_API: "true",
         LLM_DRY_RUN: "false",
         ARTICLE_REVIEWER_PROVIDER: "minimax",
-        ARTICLE_REVIEWER_MODEL: "MiniMax-M2.7"
+        ARTICLE_REVIEWER_MODEL: "minimax-m3-test"
       },
       chatCompletion: async (input: LlmChatCompletionInput) => {
         called += 1;
-        assert.equal(input.model, "MiniMax-M2.7");
+        assert.equal(input.model, "minimax-m3-test");
         assert.match(input.userPrompt ?? "", /article-meta\.json/);
         return {
           provider: "minimax",
-          model: "MiniMax-M2.7",
+          model: "minimax-m3-test",
           content: JSON.stringify({
             passed: true,
             score: 99,
             summary: "MiniMax auxiliary review passed.",
-            issues: []
+            issues: [],
+            factBoundaryCheck: {
+              passed: true,
+              violations: []
+            },
+            qualityCheck: {
+              wordCountOk: true,
+              hasTitle: true,
+              hasHeadings: true,
+              thirdPersonPerspective: true,
+              notNewsRelease: true,
+              themesCovered: ["开源", "工作流", "成本"]
+            }
           }),
           usage: {
             promptTokens: 91,
@@ -196,6 +229,53 @@ test("reviewArticleWithReport real mode calls MiniMax but hard rules still block
     assert.ok(
       result.review.issues.some((issue) => issue.evidence.includes("完全替代"))
     );
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("reviewArticleWithReport real mode parses MiniMax explanation plus JSON", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-reviewer-explained-json-"));
+  let called = 0;
+
+  try {
+    const fixture = await createReviewFixture(outputDir);
+    const result = await reviewArticleWithReport({
+      outputDir,
+      articleMarkdown: fixture.articleMarkdown,
+      articleMeta: fixture.articleMeta,
+      factPack: fixture.factPack,
+      selectedTopic: fixture.topic,
+      topicFactPackReport: "# Topic Fact Pack",
+      env: {
+        LLM_PROVIDER: "minimax",
+        LLM_ENABLE_REAL_API: "true",
+        LLM_DRY_RUN: "false",
+        ARTICLE_REVIEWER_PROVIDER: "minimax",
+        ARTICLE_REVIEWER_MODEL: "minimax-m3-test"
+      },
+      chatCompletion: async () => {
+        called += 1;
+        return {
+          provider: "minimax",
+          model: "minimax-m3-test",
+          content: `好的，以下是审稿结果：\n${JSON.stringify(validAuxiliaryReviewPayload())}`,
+          usage: {
+            promptTokens: 91,
+            completionTokens: 34,
+            totalTokens: 125
+          },
+          finishReason: "stop",
+          generatedAt: "2026-05-29T00:00:00.000Z"
+        };
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assert.equal(called, 1);
+    assert.equal(result.review.llm?.mode, "rules+real");
+    assert.equal(result.review.passed, true);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
