@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { forceApimartImage } from "../hooks/forceApimartImage.js";
+import { forceApimartImage } from "../hooks/forceApimartImage";
 import type {
   CoverGenerationMode,
   CoverImageProvider,
@@ -16,6 +16,7 @@ export interface GenerateApimartImageOptions {
   coverText: string;
   imageSize: CoverImageSize;
   outputDir: string;
+  fileNamePrefix?: string;
   env?: NodeJS.ProcessEnv;
   now?: Date;
   fetchImpl?: typeof fetch;
@@ -74,6 +75,11 @@ function timestampForFile(now: Date): string {
   return now.toISOString().replace(/[^0-9A-Za-z]/g, "-");
 }
 
+function imageFileNamePrefix(options: GenerateApimartImageOptions, fallback: string): string {
+  const prefix = options.fileNamePrefix?.trim() || fallback;
+  return prefix.replace(/[^0-9A-Za-z_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || fallback;
+}
+
 function escapeSvgText(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -122,7 +128,7 @@ async function createMockApimartImage(
 
   const imagePath = join(
     options.outputDir,
-    `cover-apimart-mock-${timestampForFile(options.now ?? new Date())}.svg`
+    `${imageFileNamePrefix(options, "cover-apimart-mock")}-${timestampForFile(options.now ?? new Date())}.svg`
   );
   await writeFile(imagePath, createMockSvg(options.coverText), "utf8");
 
@@ -183,7 +189,7 @@ async function createRealApimartImage(
 
   const imagePath = join(
     options.outputDir,
-    `cover-apimart-real-${timestampForFile(options.now ?? new Date())}.${image.format}`
+    `${imageFileNamePrefix(options, "cover-apimart-real")}-${timestampForFile(options.now ?? new Date())}.${image.format}`
   );
   await writeFile(imagePath, image.bytes);
 

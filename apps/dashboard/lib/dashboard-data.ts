@@ -82,6 +82,10 @@ export interface CoverData {
     relativePath: string;
     updatedAt?: string;
     source: string;
+    provider?: string;
+    mode?: string;
+    instruction?: string;
+    isCurrent?: boolean;
   }>;
 }
 
@@ -339,11 +343,11 @@ export async function getTitlesData(options: DashboardFsOptions = {}): Promise<J
 }
 
 export async function getCoverData(options: DashboardFsOptions = {}): Promise<CoverData> {
-  const [cover, review, history] = await Promise.all([
+  const [cover, review] = await Promise.all([
     readJsonFile<JsonObject>("outputs/cover.json", options),
-    readJsonFile<JsonObject>("outputs/cover-review.json", options),
-    getCoverHistory(options)
+    readJsonFile<JsonObject>("outputs/cover-review.json", options)
   ]);
+  const history = await getCoverHistory(options, cover);
   const image = await readImageAsDataUrl(
     cover?.imagePath ?? review?.imagePath,
     options
@@ -432,9 +436,37 @@ export async function getFeedbackData(
 }
 
 async function getCoverHistory(
-  options: DashboardFsOptions = {}
+  options: DashboardFsOptions = {},
+  cover?: JsonObject
 ): Promise<CoverData["history"]> {
+  const historyFile = await readJsonFile<{ items?: JsonObject[] }>("outputs/cover-history.json", options);
   const root = getRepoRoot(options);
+  const currentRelative = relativePathFromMaybeAbsolute(String(cover?.imagePath ?? ""), options);
+
+  if (Array.isArray(historyFile?.items)) {
+    return historyFile.items
+      .filter((item) => typeof item?.imagePath === "string")
+      .map((item) => {
+        const relativePath = relativePathFromMaybeAbsolute(String(item.imagePath), options) ?? String(item.imagePath);
+        return {
+          imagePath: relativePath,
+          relativePath,
+          updatedAt: typeof item.createdAt === "string" ? item.createdAt : undefined,
+          source: String(item.provider ?? item.mode ?? "history"),
+          provider: typeof item.provider === "string" ? item.provider : undefined,
+          mode: typeof item.mode === "string" ? item.mode : undefined,
+          instruction: typeof item.instruction === "string" ? item.instruction : undefined,
+          isCurrent: Boolean(item.isCurrent) || relativePath === currentRelative
+        };
+      })
+      .sort((a, b) => {
+        if (a.isCurrent !== b.isCurrent) {
+          return a.isCurrent ? -1 : 1;
+        }
+        return String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? ""));
+      });
+  }
+
   const entries = await listDirectory("outputs/covers", options).catch(() => []);
   const versions = await Promise.all(
     entries
@@ -443,10 +475,11 @@ async function getCoverHistory(
         const absolutePath = path.join(root, "outputs", "covers", entry);
         const stats = await stat(absolutePath).catch(() => undefined);
         return {
-          imagePath: absolutePath,
+          imagePath: toPosixPath(path.relative(root, absolutePath)),
           relativePath: toPosixPath(path.relative(root, absolutePath)),
           updatedAt: stats?.mtime.toISOString(),
-          source: entry.includes("real") ? "real" : entry.includes("crop") ? "crop" : "mock"
+          source: entry.includes("real") ? "real" : entry.includes("crop") ? "crop" : "mock",
+          isCurrent: toPosixPath(path.relative(root, absolutePath)) === currentRelative
         };
       })
   );

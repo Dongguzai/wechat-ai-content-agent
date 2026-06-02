@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertCircle,
   AlignCenter,
   AlignLeft,
   Bold,
@@ -36,13 +37,29 @@ interface ArticleWorkbenchProps {
   cover: CoverData;
 }
 
+type CoverHistoryItem = CoverData["history"][number];
+type CoverRegenerateStatus = "idle" | "loading" | "success" | "failed";
+
 export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbenchProps) {
   const router = useRouter();
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const coverRegenerateInFlight = useRef(false);
   const [title, setTitle] = useState(String(article.meta?.title ?? titleData?.selectedTitle ?? ""));
   const [content, setContent] = useState(stripMarkdownTitle(article.markdown ?? ""));
   const [titlesOpen, setTitlesOpen] = useState(false);
   const [coverPrompt, setCoverPrompt] = useState("");
+  const [coverJson, setCoverJson] = useState<JsonObject | undefined>(cover.cover);
+  const [coverHistory, setCoverHistory] = useState<CoverHistoryItem[]>(cover.history);
+  const [coverImage, setCoverImage] = useState({
+    src: cover.image?.dataUrl ?? "",
+    relativePath: cover.image?.relativePath ?? relativeImagePath(String(cover.cover?.imagePath ?? ""))
+  });
+  const [coverRegenerateStatus, setCoverRegenerateStatus] = useState<CoverRegenerateStatus>("idle");
+  const [coverRegenerateError, setCoverRegenerateError] = useState("");
+  const [coverVersionAction, setCoverVersionAction] = useState<{
+    action: "set-current" | "delete";
+    imagePath: string;
+  } | null>(null);
   const [rewriteInstruction, setRewriteInstruction] = useState("");
   const [cropOpen, setCropOpen] = useState(false);
   const [crop, setCrop] = useState({ x: 0, y: 0, width: 900, height: 383, scale: 1 });
@@ -52,8 +69,9 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
   const pending = busy || isPending;
 
   const candidates = Array.isArray(titleData?.candidates) ? titleData.candidates.slice(0, 5) : [];
-  const coverIsMock = String(cover.cover?.mode ?? "").toLowerCase() === "mock" ||
-    String(cover.image?.relativePath ?? cover.cover?.imagePath ?? "").toLowerCase().endsWith(".svg");
+  const coverIsMock = String(coverJson?.mode ?? "").toLowerCase() === "mock" ||
+    String(coverImage.relativePath ?? coverJson?.imagePath ?? "").toLowerCase().endsWith(".svg");
+  const coverRegenerating = coverRegenerateStatus === "loading";
 
   async function saveDraft() {
     setMessage("");
@@ -113,11 +131,33 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
   }
 
   async function regenerateCover() {
+    if (coverRegenerateInFlight.current) {
+      return;
+    }
+
+    coverRegenerateInFlight.current = true;
     setMessage("");
-    const payload = await postJson("/api/cover/regenerate", { instruction: coverPrompt });
-    setMessage(payload.ok ? "封面已重新生成，正在刷新页面。" : payload.error ?? "封面生成失败。");
-    if (payload.ok) {
+    setCoverRegenerateStatus("loading");
+    setCoverRegenerateError("");
+
+    try {
+      const payload = await postJson("/api/cover/regenerate", { instruction: coverPrompt });
+      if (!payload.ok) {
+        throw new Error(String(payload.error ?? "封面生成失败。"));
+      }
+
+      await refreshCoverFromFiles(String(payload.imagePath ?? ""));
+      setCoverPrompt("");
+      setCoverRegenerateStatus("success");
+      setMessage("封面已重新生成。");
       router.refresh();
+    } catch (error) {
+      const reason = errorMessage(error, "封面生成失败。");
+      setCoverRegenerateStatus("failed");
+      setCoverRegenerateError(reason);
+      setMessage(`封面生成失败：${reason}`);
+    } finally {
+      coverRegenerateInFlight.current = false;
     }
   }
 
@@ -131,12 +171,65 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
     }
   }
 
-  async function updateCoverVersion(action: "set-current" | "delete", imagePath: string) {
+  async function updateCoverVersion(action: "set-current" | "delete", item: CoverHistoryItem) {
     setMessage("");
-    const payload = await postJson("/api/cover/version", { action, imagePath });
-    setMessage(payload.ok ? "封面版本已更新。" : payload.error ?? "封面版本更新失败。");
-    if (payload.ok) {
+    setCoverRegenerateError("");
+    const imagePath = item.imagePath;
+    const currentPath = coverImage.relativePath ?? relativeImagePath(String(coverJson?.imagePath ?? ""));
+
+    if (action === "delete") {
+      if (item.isCurrent || item.relativePath === currentPath || imagePath === currentPath) {
+        setMessage("当前封面不能删除，请先切换到其他历史版本。");
+        return;
+      }
+      if (!window.confirm("确认删除这个历史封面吗？删除后不会影响当前封面。")) {
+        return;
+      }
+    }
+
+    setCoverVersionAction({ action, imagePath });
+    try {
+      const payload = await postJson("/api/cover/version", { action, imagePath });
+      if (!payload.ok) {
+        throw new Error(String(payload.error ?? "封面版本更新失败。"));
+      }
+
+      if (action === "set-current") {
+        await refreshCoverFromFiles(String(payload.imagePath ?? imagePath));
+        setMessage("已设为当前封面。");
+      } else {
+        await refreshCoverFromFiles(currentPath);
+        setMessage("封面历史版本已删除。");
+      }
       router.refresh();
+    } catch (error) {
+      const reason = errorMessage(error, "封面版本更新失败。");
+      setMessage(reason);
+    } finally {
+      setCoverVersionAction(null);
+    }
+  }
+
+  async function refreshCoverFromFiles(nextImagePath: string) {
+    const [nextCover, nextHistory] = await Promise.all([
+      fetchDashboardJson("outputs/cover.json"),
+      fetchDashboardJson("outputs/cover-history.json").catch(() => undefined)
+    ]);
+    const nextRelativePath =
+      relativeImagePath(nextImagePath) ||
+      relativeImagePath(String(nextCover?.imagePath ?? "")) ||
+      coverImage.relativePath;
+
+    setCoverJson(nextCover);
+    if (nextRelativePath) {
+      setCoverImage({
+        src: rawFileUrl(nextRelativePath, Date.now()),
+        relativePath: nextRelativePath
+      });
+    }
+
+    if (Array.isArray(nextHistory?.items)) {
+      setCoverHistory(normalizeHistoryItems(nextHistory.items, nextRelativePath));
     }
   }
 
@@ -205,9 +298,9 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
                 <Crop className="size-4" aria-hidden="true" />
               </button>
             </div>
-            {cover.image ? (
+            {coverImage.src ? (
               <img
-                src={cover.image.dataUrl}
+                src={coverImage.src}
                 alt="当前封面"
                 className="aspect-[900/383] w-full border border-line object-cover"
               />
@@ -216,7 +309,7 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
                 暂无封面
               </div>
             )}
-            <p className="mt-2 break-all text-xs text-stone-500">{cover.image?.relativePath ?? cover.cover?.imagePath ?? "无 imagePath"}</p>
+            <p className="mt-2 break-all text-xs text-stone-500">{coverImage.relativePath ?? coverJson?.imagePath ?? "无 imagePath"}</p>
             {coverIsMock ? (
               <p className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
                 当前封面是 mock/svg，占位图需要人工核验。
@@ -238,41 +331,80 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
             <button
               type="button"
               onClick={() => run(regenerateCover)}
-              disabled={pending}
+              disabled={pending || coverRegenerating}
               className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-ink px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
-              重新生成
+              <RefreshCw className={`size-4 ${coverRegenerating ? "animate-spin" : ""}`} aria-hidden="true" />
+              {coverRegenerating ? "正在生成..." : "重新生成"}
             </button>
+            {coverRegenerateStatus === "success" ? (
+              <div className="mt-3 flex gap-2 border border-moss/25 bg-moss/5 px-3 py-2 text-xs font-semibold text-moss">
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                <span>封面已重新生成</span>
+              </div>
+            ) : null}
+            {coverRegenerateStatus === "failed" ? (
+              <div className="mt-3 flex gap-2 border border-oxblood/25 bg-oxblood/5 px-3 py-2 text-xs leading-5 text-oxblood">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <span>封面生成失败：{coverRegenerateError || "请查看日志后重试。"}</span>
+              </div>
+            ) : null}
           </section>
 
           <section className="border border-line bg-white p-4">
             <h3 className="text-sm font-bold text-ink">历史版本</h3>
             <div className="mt-3 space-y-3">
-              {cover.history.length ? cover.history.map((item) => (
-                <div key={item.relativePath} className="border-t border-line pt-3 first:border-t-0 first:pt-0">
-                  <p className="text-xs font-semibold text-stone-700">{formatDate(item.updatedAt)} / {item.source}</p>
-                  <p className="mt-1 break-all text-xs text-stone-500">{item.relativePath}</p>
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => run(() => updateCoverVersion("set-current", item.imagePath))}
-                      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs font-semibold text-stone-700 hover:border-ink"
-                    >
-                      <ImageIcon className="size-3.5" aria-hidden="true" />
-                      设为当前
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => run(() => updateCoverVersion("delete", item.imagePath))}
-                      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs font-semibold text-stone-700 hover:border-oxblood hover:text-oxblood"
-                    >
-                      <Trash2 className="size-3.5" aria-hidden="true" />
-                      删除
-                    </button>
-                  </div>
-                </div>
-              )) : <p className="text-xs text-stone-500">暂无历史封面。</p>}
+              {coverHistory.length ? (
+                coverHistory.map((item) => {
+                  const settingCurrent =
+                    coverVersionAction?.action === "set-current" &&
+                    coverVersionAction.imagePath === item.imagePath;
+                  const deleting =
+                    coverVersionAction?.action === "delete" &&
+                    coverVersionAction.imagePath === item.imagePath;
+                  const isCurrent =
+                    Boolean(item.isCurrent) ||
+                    item.relativePath === coverImage.relativePath ||
+                    item.imagePath === coverImage.relativePath;
+
+                  return (
+                    <div key={item.relativePath} className="border-t border-line pt-3 first:border-t-0 first:pt-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-stone-700">{formatDate(item.updatedAt)} / {item.source}</p>
+                        {isCurrent ? (
+                          <span className="shrink-0 border border-moss/25 bg-moss/5 px-1.5 py-0.5 text-[11px] font-semibold text-moss">
+                            当前
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 break-all text-xs text-stone-500">{item.relativePath}</p>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => run(() => updateCoverVersion("set-current", item))}
+                          disabled={pending || settingCurrent || isCurrent}
+                          className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs font-semibold text-stone-700 hover:border-ink"
+                        >
+                          <ImageIcon className={`size-3.5 ${settingCurrent ? "animate-pulse" : ""}`} aria-hidden="true" />
+                          {settingCurrent ? "设置中..." : "设为当前"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => run(() => updateCoverVersion("delete", item))}
+                          disabled={pending || deleting || isCurrent}
+                          className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs font-semibold text-stone-700 hover:border-oxblood hover:text-oxblood"
+                          title={isCurrent ? "当前封面不能删除" : "删除历史封面"}
+                        >
+                          <Trash2 className={`size-3.5 ${deleting ? "animate-pulse" : ""}`} aria-hidden="true" />
+                          {deleting ? "删除中..." : "删除"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-stone-500">暂无历史封面。</p>
+              )}
             </div>
           </section>
         </aside>
@@ -334,14 +466,23 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
             <h3 className="text-sm font-bold text-ink">轻量状态</h3>
             <dl className="mt-3 space-y-3 text-sm">
               <StatusLine label="文章审核" value={article.review?.passed === true ? "通过" : article.review ? "未通过" : "未生成"} />
-              <StatusLine label="封面审核" value={cover.review?.passed === true ? "通过" : cover.review ? "未通过" : "未生成"} />
-              <StatusLine label="封面模式" value={String(cover.cover?.mode ?? "-")} />
+              <StatusLine
+                label="封面审核"
+                value={
+                  coverJson?.review?.passed === true
+                    ? "通过"
+                    : coverJson?.review || cover.review
+                      ? "未通过"
+                      : "未生成"
+                }
+              />
+              <StatusLine label="封面模式" value={String(coverJson?.mode ?? "-")} />
               <StatusLine label="LLM" value={`${article.meta?.llm?.provider ?? "-"} / ${article.meta?.llm?.mode ?? "-"}`} />
             </dl>
             <details className="mt-4">
               <summary className="cursor-pointer text-xs font-semibold text-stone-600">查看详情</summary>
               <pre className="mt-3 max-h-80 overflow-auto bg-stone-950 p-3 text-xs leading-5 text-stone-100">
-                {JSON.stringify({ articleMeta: article.meta, articleReview: article.review, cover: cover.cover }, null, 2)}
+                {JSON.stringify({ articleMeta: article.meta, articleReview: article.review, cover: coverJson }, null, 2)}
               </pre>
             </details>
           </section>
@@ -393,9 +534,9 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
               </button>
             </div>
             <div className="relative mt-4 aspect-[900/383] overflow-hidden border border-line bg-paper">
-              {cover.image ? (
+              {coverImage.src ? (
                 <img
-                  src={cover.image.dataUrl}
+                  src={coverImage.src}
                   alt="封面裁剪预览"
                   className="size-full object-cover"
                   style={{ transform: `scale(${crop.scale})` }}
@@ -524,7 +665,65 @@ async function postJson(url: string, body?: unknown): Promise<JsonObject> {
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
-  return await response.json();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok && !payload.ok) {
+    return {
+      ...payload,
+      ok: false,
+      error: payload.error ?? `HTTP ${response.status}`
+    };
+  }
+  return payload;
+}
+
+async function fetchDashboardJson(relativePath: string): Promise<JsonObject> {
+  const response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(String(payload.error ?? `读取 ${relativePath} 失败。`));
+  }
+  return JSON.parse(String(payload.content ?? "{}")) as JsonObject;
+}
+
+function rawFileUrl(relativePath: string, cacheKey: number): string {
+  return `/api/file?path=${encodeURIComponent(relativePath)}&raw=1&t=${cacheKey}`;
+}
+
+function relativeImagePath(imagePath: string): string {
+  if (!imagePath) {
+    return "";
+  }
+  const outputsIndex = imagePath.replaceAll("\\", "/").lastIndexOf("outputs/covers/");
+  return outputsIndex === -1 ? imagePath : imagePath.replaceAll("\\", "/").slice(outputsIndex);
+}
+
+function normalizeHistoryItems(items: unknown[], currentPath: string): CoverHistoryItem[] {
+  return items
+    .filter((item): item is JsonObject => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => {
+      const imagePath = relativeImagePath(String(item.imagePath ?? ""));
+      return {
+        imagePath,
+        relativePath: imagePath,
+        updatedAt: typeof item.createdAt === "string" ? item.createdAt : undefined,
+        source: String(item.provider ?? item.mode ?? "history"),
+        provider: typeof item.provider === "string" ? item.provider : undefined,
+        mode: typeof item.mode === "string" ? item.mode : undefined,
+        instruction: typeof item.instruction === "string" ? item.instruction : undefined,
+        isCurrent: Boolean(item.isCurrent) || imagePath === currentPath
+      };
+    })
+    .filter((item) => item.imagePath)
+    .sort((a, b) => {
+      if (a.isCurrent !== b.isCurrent) {
+        return a.isCurrent ? -1 : 1;
+      }
+      return String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? ""));
+    });
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
 function stripMarkdownTitle(markdown: string): string {

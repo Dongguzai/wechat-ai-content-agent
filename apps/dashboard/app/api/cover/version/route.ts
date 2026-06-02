@@ -22,10 +22,10 @@ export async function POST(request: Request) {
     return NextResponse.json(redactJson({ ok: true, ...result }));
   } catch (error) {
     return NextResponse.json(
-      {
+      redactJson({
         ok: false,
         error: error instanceof Error ? error.message : "Cover version update failed."
-      },
+      }),
       { status: 400 }
     );
   }

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
@@ -8,9 +8,12 @@ import { getBriefData, getDashboardStatus, getSettingsStatus, readFileForApi } f
 import {
   createCurrentFeedback,
   cropCover,
+  deleteCoverVersion,
+  regenerateCover,
   saveArticleDraft,
   selectArticleTitle,
-  selectBriefTopic
+  selectBriefTopic,
+  setCurrentCoverVersion
 } from "../apps/dashboard/lib/editor-workflow";
 import { saveApproval, saveFeedback } from "../apps/dashboard/lib/forms";
 
@@ -29,6 +32,61 @@ async function createTempRoot(): Promise<string> {
 
 async function writeJson(root: string, relativePath: string, value: unknown): Promise<void> {
   await writeFile(join(root, relativePath), JSON.stringify(value, null, 2), "utf8");
+}
+
+const tinyPngBase64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+function apimartEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    COVER_IMAGE_PROVIDER: "apimart",
+    COVER_ENABLE_REAL_API: "true",
+    APIMART_API_KEY: "apimart-secret-value",
+    APIMART_IMAGE_API_URL: "https://apimart.example/v1/images/generations",
+    APIMART_TASK_INITIAL_DELAY_MS: "0",
+    APIMART_TASK_POLL_INTERVAL_MS: "0",
+    APIMART_COVER_STYLE: "Pixar-inspired clean cover",
+    ...overrides
+  };
+}
+
+async function seedCoverRegenerateFiles(root: string): Promise<string> {
+  await mkdir(join(root, "outputs/covers"), { recursive: true });
+  const currentCoverPath = join(root, "outputs/covers/current.png");
+  await writeFile(currentCoverPath, Buffer.from(tinyPngBase64, "base64"));
+  await writeJson(root, "outputs/article-meta.json", {
+    title: "当前文章标题",
+    articleThesis: "核心观点是 AI 编码代理竞争正在转向工作流入口。"
+  });
+  await writeFile(join(root, "outputs/article.md"), "# 当前文章标题\n\n正文内容。", "utf8");
+  await writeJson(root, "outputs/cover.json", {
+    provider: "apimart",
+    mode: "real",
+    title: "当前文章标题",
+    coverText: "AI 工作流\n入口之争",
+    imagePrompt: "Current prompt with $200 and 免费平替 should be sanitized.",
+    negativePrompt: "low resolution",
+    imageSize: "900x383",
+    imagePath: currentCoverPath,
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    review: { passed: true, issues: [], riskNotes: [] }
+  });
+  return currentCoverPath;
+}
+
+function fakeApimartFetch(calls: string[] = []): typeof fetch {
+  return (async (url: string | URL | Request) => {
+    calls.push(String(url));
+    return new Response(
+      JSON.stringify({
+        data: [{ b64_json: tinyPngBase64 }]
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  }) as typeof fetch;
 }
 
 test("dashboard status reads outputs state", async () => {
@@ -339,6 +397,40 @@ test("article workbench has collapsed title candidates, editable article, AI rew
   assert.match(source, /确认下一步/);
 });
 
+test("article workbench cover regenerate keeps loading on the button and refreshes cover files", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/components/article-workbench.tsx"),
+    "utf8"
+  );
+
+  assert.match(source, /CoverRegenerateStatus = "idle" \| "loading" \| "success" \| "failed"/);
+  assert.match(source, /coverRegenerateInFlight/);
+  assert.match(source, /正在生成\.\.\./);
+  assert.match(source, /disabled=\{pending \|\| coverRegenerating\}/);
+  assert.doesNotMatch(source, /正在调用 APIMart 生成新封面，可能需要几十秒/);
+  assert.match(source, /封面已重新生成/);
+  assert.match(source, /封面生成失败/);
+  assert.match(source, /fetchDashboardJson\("outputs\/cover\.json"\)/);
+  assert.match(source, /fetchDashboardJson\("outputs\/cover-history\.json"\)/);
+  assert.match(source, /raw=1&t=/);
+  assert.match(source, /setCoverPrompt\(""\)/);
+  assert.match(source, /已设为当前封面/);
+  assert.match(source, /window\.confirm/);
+  assert.match(source, /当前封面不能删除/);
+});
+
+test("cover regenerate route returns ok true payload and redacted failed payload", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/app/api/cover/regenerate/route.ts"),
+    "utf8"
+  );
+
+  assert.match(source, /regenerateCover\(body\)/);
+  assert.match(source, /\{ ok: true, \.\.\.result \}/);
+  assert.match(source, /ok: false/);
+  assert.match(source, /redactJson/);
+});
+
 test("only preview page exposes the write-to-draft action button", async () => {
   const previewSource = await readFile(
     join(process.cwd(), "apps/dashboard/app/preview/page.tsx"),
@@ -381,6 +473,213 @@ test("cover crop updates cover json without calling WeChat APIs", async () => {
     assert.match(result.imagePath, /^outputs\/covers\/cover-crop-/);
     assert.equal(saved.crop.scale, 1.1);
     assert.doesNotMatch(JSON.stringify(saved), /freepublish|mass|sendall/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover regenerate returns imagePath and updates cover json plus history", async () => {
+  const root = await createTempRoot();
+  try {
+    const previousCoverPath = await seedCoverRegenerateFiles(root);
+    const calls: string[] = [];
+
+    const result = await regenerateCover(
+      { instruction: "标题更清晰，视觉中心更突出" },
+      {
+        rootDir: root,
+        env: apimartEnv(),
+        fetchImpl: fakeApimartFetch(calls),
+        now: new Date("2026-06-02T01:02:03.000Z")
+      }
+    );
+    const savedCover = JSON.parse(await readFile(join(root, "outputs/cover.json"), "utf8"));
+    const history = JSON.parse(await readFile(join(root, "outputs/cover-history.json"), "utf8"));
+    const log = await readFile(join(root, "logs/dashboard-actions.log"), "utf8");
+
+    assert.equal(result.message, "cover regenerated");
+    assert.match(result.imagePath, /^outputs\/covers\/cover-apimart-regenerated-.*\.png$/);
+    assert.equal(savedCover.imagePath, result.imagePath);
+    assert.equal(savedCover.provider, "apimart");
+    assert.equal(savedCover.mode, "real");
+    assert.equal(savedCover.regenerateInstruction, "标题更清晰，视觉中心更突出");
+    assert.equal(savedCover.previousImagePath, "outputs/covers/current.png");
+    assert.equal(savedCover.review.passed, true);
+    assert.equal(history.items[0].imagePath, result.imagePath);
+    assert.equal(history.items[0].isCurrent, true);
+    assert.equal(history.items.some((item: any) => item.imagePath === "outputs/covers/current.png"), true);
+    assert.equal(result.historyCount, history.items.length);
+    assert.equal(calls.length, 1);
+    assert.doesNotMatch(JSON.stringify(savedCover), /freepublish|mass|sendall/i);
+    assert.doesNotMatch(log, /apimart-secret-value/);
+    await access(join(root, result.imagePath));
+    await access(previousCoverPath);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover regenerate failure returns readable APIMart errors and preserves current cover", async () => {
+  const root = await createTempRoot();
+  try {
+    await seedCoverRegenerateFiles(root);
+    const beforeCover = await readFile(join(root, "outputs/cover.json"), "utf8");
+
+    await assert.rejects(
+      () =>
+        regenerateCover(
+          { instruction: "换一版" },
+          {
+            rootDir: root,
+            env: apimartEnv(),
+            fetchImpl: (async () =>
+              new Response(JSON.stringify({ error: "upstream failed" }), {
+                status: 502,
+                statusText: "Bad Gateway",
+                headers: { "content-type": "application/json" }
+              })) as typeof fetch
+          }
+        ),
+      /APIMart 请求失败.*HTTP 502/
+    );
+
+    const afterCover = await readFile(join(root, "outputs/cover.json"), "utf8");
+    const covers = await readdir(join(root, "outputs/covers"));
+    const log = await readFile(join(root, "logs/dashboard-actions.log"), "utf8");
+
+    assert.equal(afterCover, beforeCover);
+    assert.equal(covers.some((file) => file.includes("cover-apimart-regenerated")), false);
+    assert.match(log, /"status":"failed"/);
+    assert.doesNotMatch(log, /apimart-secret-value/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover regenerate reports missing APIMART_API_KEY without leaking secrets", async () => {
+  const root = await createTempRoot();
+  try {
+    await seedCoverRegenerateFiles(root);
+
+    await assert.rejects(
+      () =>
+        regenerateCover(
+          { instruction: "更温暖" },
+          {
+            rootDir: root,
+            env: apimartEnv({ APIMART_API_KEY: "" }),
+            fetchImpl: fakeApimartFetch()
+          }
+        ),
+      /请先配置 APIMART_API_KEY/
+    );
+
+    const log = await readFile(join(root, "logs/dashboard-actions.log"), "utf8");
+    assert.match(log, /请先配置 APIMART_API_KEY/);
+    assert.doesNotMatch(log, /apimart-secret-value|Bearer/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover regenerate does not call WeChat or publish endpoints", async () => {
+  const root = await createTempRoot();
+  try {
+    await seedCoverRegenerateFiles(root);
+    const calls: string[] = [];
+
+    await regenerateCover(
+      { instruction: "" },
+      {
+        rootDir: root,
+        env: apimartEnv(),
+        fetchImpl: fakeApimartFetch(calls)
+      }
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls.some((url) => /wechat|freepublish|mass|sendall|publish/i.test(url)), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover version set-current updates cover json and history", async () => {
+  const root = await createTempRoot();
+  try {
+    await seedCoverRegenerateFiles(root);
+    const nextPath = join(root, "outputs/covers/next.png");
+    await writeFile(nextPath, Buffer.from(tinyPngBase64, "base64"));
+    await writeJson(root, "outputs/cover-history.json", {
+      items: [
+        {
+          imagePath: "outputs/covers/current.png",
+          provider: "apimart",
+          mode: "real",
+          instruction: "old",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          isCurrent: true
+        },
+        {
+          imagePath: "outputs/covers/next.png",
+          provider: "apimart",
+          mode: "real",
+          instruction: "new",
+          createdAt: "2026-06-02T00:00:00.000Z",
+          isCurrent: false
+        }
+      ]
+    });
+
+    const result = await setCurrentCoverVersion({ imagePath: "outputs/covers/next.png" }, { rootDir: root });
+    const savedCover = JSON.parse(await readFile(join(root, "outputs/cover.json"), "utf8"));
+    const history = JSON.parse(await readFile(join(root, "outputs/cover-history.json"), "utf8"));
+
+    assert.equal(result.message, "cover version set current");
+    assert.equal(savedCover.imagePath, "outputs/covers/next.png");
+    assert.equal(history.items.find((item: any) => item.imagePath === "outputs/covers/next.png").isCurrent, true);
+    assert.equal(history.items.find((item: any) => item.imagePath === "outputs/covers/current.png").isCurrent, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cover version delete blocks current cover and removes non-current history", async () => {
+  const root = await createTempRoot();
+  try {
+    await seedCoverRegenerateFiles(root);
+    const oldPath = join(root, "outputs/covers/old.png");
+    await writeFile(oldPath, Buffer.from(tinyPngBase64, "base64"));
+    await writeJson(root, "outputs/cover-history.json", {
+      items: [
+        {
+          imagePath: "outputs/covers/current.png",
+          provider: "apimart",
+          mode: "real",
+          instruction: "current",
+          createdAt: "2026-06-02T00:00:00.000Z",
+          isCurrent: true
+        },
+        {
+          imagePath: "outputs/covers/old.png",
+          provider: "apimart",
+          mode: "real",
+          instruction: "old",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          isCurrent: false
+        }
+      ]
+    });
+
+    await assert.rejects(
+      () => deleteCoverVersion({ imagePath: "outputs/covers/current.png" }, { rootDir: root }),
+      /current cover cannot be deleted/i
+    );
+    const result = await deleteCoverVersion({ imagePath: "outputs/covers/old.png" }, { rootDir: root });
+    const history = JSON.parse(await readFile(join(root, "outputs/cover-history.json"), "utf8"));
+
+    assert.equal(result.message, "cover version deleted");
+    assert.equal(history.items.some((item: any) => item.imagePath === "outputs/covers/old.png"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
