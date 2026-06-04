@@ -175,6 +175,8 @@ account id，也就是 Cloudflare 账户概览里的 32 位十六进制值；不
 API token、Access Key、bucket 名、`https://`、公共访问域名或
 `.r2.cloudflarestorage.com`。
 `R2_PUBLIC_BASE_URL` 只用于生成公开访问 URL，不能用于上传。
+`R2_BUCKET` 只能填写 bucket 名，例如 `briefs`；不要粘贴 `R2_ENDPOINT=https://...`
+整行，也不要填写 endpoint URL。
 
 cron-job.org 配置：
 

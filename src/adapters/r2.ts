@@ -59,6 +59,20 @@ function validateR2AccountId(accountId: string): void {
   }
 }
 
+function validateR2Bucket(bucket: string): void {
+  if (
+    /^[A-Z0-9_]+=/.test(bucket) ||
+    /^https?:\/\//i.test(bucket) ||
+    bucket.includes("/") ||
+    bucket.includes("\\") ||
+    bucket.includes(".r2.cloudflarestorage.com")
+  ) {
+    throw new Error(
+      "R2_BUCKET must be only the R2 bucket name, not a KEY=value env line, endpoint URL, public URL, or custom domain."
+    );
+  }
+}
+
 function r2EndpointForAccount(accountId: string): string {
   return `https://${accountId}.r2.cloudflarestorage.com`;
 }
@@ -110,6 +124,8 @@ export function resolveR2AdapterConfig(
   if (!accessKeyId || !secretAccessKey || !bucket) {
     throw new Error("R2 adapter requires R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET.");
   }
+
+  validateR2Bucket(bucket);
 
   return {
     accountId,

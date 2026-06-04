@@ -728,6 +728,32 @@ test("cloud brief env rejects API tokens in R2_ACCOUNT_ID", () => {
   assert.match(result.errors.join(" "), /not an API token/);
 });
 
+test("cloud brief env rejects pasted env lines in R2_BUCKET", () => {
+  const result = validateCloudBriefEnv({
+    DATABASE_URL: "postgresql://user:password@example.neon.tech/db?sslmode=require",
+    R2_ACCOUNT_ID: validR2AccountId,
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_BUCKET: "R2_ENDPOINT=https://abcdef1234567890abcdef1234567890.r2.cloudflarestorage.com"
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(" "), /R2_BUCKET must be only the R2 bucket name/);
+});
+
+test("R2 adapter rejects endpoint values in R2_BUCKET before upload", () => {
+  assert.throws(
+    () =>
+      resolveR2AdapterConfig({
+        R2_ACCOUNT_ID: validR2AccountId,
+        R2_ACCESS_KEY_ID: "r2-access-key",
+        R2_SECRET_ACCESS_KEY: "r2-secret-key",
+        R2_BUCKET: "https://abcdef1234567890abcdef1234567890.r2.cloudflarestorage.com"
+      }),
+    /R2_BUCKET must be only the R2 bucket name/
+  );
+});
+
 test("cloud brief generation returns already_exists for successful same-day run", async () => {
   const db = new MemoryBriefDb([
     {

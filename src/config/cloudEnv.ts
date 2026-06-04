@@ -97,6 +97,20 @@ function validateR2AccountId(value: string, errors: string[]): void {
   }
 }
 
+function validateR2Bucket(value: string, errors: string[]): void {
+  if (
+    /^[A-Z0-9_]+=/.test(value) ||
+    /^https?:\/\//i.test(value) ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    value.includes(".r2.cloudflarestorage.com")
+  ) {
+    errors.push(
+      "R2_BUCKET must be only the R2 bucket name, not a KEY=value env line, endpoint URL, public URL, or custom domain."
+    );
+  }
+}
+
 export function validateCloudBriefEnv(
   env: NodeJS.ProcessEnv = process.env
 ): CloudBriefEnvValidationResult {
@@ -105,6 +119,7 @@ export function validateCloudBriefEnv(
   const databaseUrl = envValue(env, "DATABASE_URL");
   const r2Endpoint = envValue(env, "R2_ENDPOINT");
   const r2AccountId = envValue(env, "R2_ACCOUNT_ID");
+  const r2Bucket = envValue(env, "R2_BUCKET");
   const cloudIntent = hasAnyValue(env, [
     ...requiredCloudBriefEnvKeys,
     "R2_ENDPOINT",
@@ -131,6 +146,9 @@ export function validateCloudBriefEnv(
 
   if (r2AccountId) {
     validateR2AccountId(r2AccountId, errors);
+  }
+  if (r2Bucket) {
+    validateR2Bucket(r2Bucket, errors);
   }
   if (r2Endpoint) {
     warnings.push(
