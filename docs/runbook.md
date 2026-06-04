@@ -158,7 +158,6 @@ http://localhost:3000
 ```env
 DATABASE_URL=
 DATABASE_MAX_CONNECTIONS=1
-R2_ENDPOINT=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -170,9 +169,10 @@ AUTH_SECRET=
 BRIEF_TIME_ZONE=Asia/Shanghai
 ```
 
-R2 推荐填写 `R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`。如果使用
-`R2_ACCOUNT_ID`，只能填写纯 account id，不要包含 `https://` 或
-`.r2.cloudflarestorage.com`。
+R2 上传 endpoint 只由 `R2_ACCOUNT_ID` 生成，格式固定为
+`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`。`R2_ACCOUNT_ID` 只能填写纯
+account id，不要包含 `https://`、bucket 名或 `.r2.cloudflarestorage.com`。
+`R2_PUBLIC_BASE_URL` 只用于生成公开访问 URL，不能用于上传。
 
 cron-job.org 配置：
 

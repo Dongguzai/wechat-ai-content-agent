@@ -397,6 +397,8 @@ test("/brief rerun asks for confirmation and displays step-level failures", asyn
   assert.match(viewSource, /收集失败/);
   assert.match(viewSource, /失败阶段：/);
   assert.match(viewSource, /错误摘要：/);
+  assert.match(viewSource, /排查提示：/);
+  assert.match(viewSource, /Endpoint：/);
   assert.match(viewSource, /result\.step \?\? "unknown"/);
   assert.match(viewSource, /result\.error \?\? "Brief generation failed\."/);
 });

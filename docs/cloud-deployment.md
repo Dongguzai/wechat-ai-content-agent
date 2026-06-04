@@ -27,7 +27,6 @@ cron-job.org
 ```env
 DATABASE_URL=
 DATABASE_MAX_CONNECTIONS=1
-R2_ENDPOINT=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -42,8 +41,8 @@ BRIEF_TIME_ZONE=Asia/Shanghai
 说明：
 
 - `DATABASE_URL` 使用 Neon Postgres 连接串。
-- `R2_ENDPOINT` 可直接填写 Cloudflare R2 S3 API endpoint，例如 `https://<account-id>.r2.cloudflarestorage.com`。
-- 如果不填 `R2_ENDPOINT`，则必须填写纯 account id 到 `R2_ACCOUNT_ID`；不要把完整 URL 填进 `R2_ACCOUNT_ID`。
+- `R2_ACCOUNT_ID` 必须填写纯 Cloudflare account id；上传 endpoint 固定由 adapter 生成：`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`。
+- 不要把 bucket 名拼进 endpoint，不要把 `R2_PUBLIC_BASE_URL` 用作上传 endpoint；`R2_PUBLIC_BASE_URL` 只用于生成公开访问 URL。
 - R2 凭据只在服务端 adapter 使用，不输出到日志或前端。
 - `CRON_SECRET` 只用于 cron-job.org 调用 `/api/cron/generate-brief`。
 - `DASHBOARD_PASSWORD` 和 `AUTH_SECRET` 用于 Dashboard 登录保护。
@@ -116,3 +115,5 @@ pnpm typecheck
 pnpm test
 pnpm dashboard:build
 ```
+
+R2 配置可通过 `GET /api/health/r2` 做最小写入检查；响应只返回脱敏配置，不返回 access key 或 secret。

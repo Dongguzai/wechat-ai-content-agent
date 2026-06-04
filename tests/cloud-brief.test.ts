@@ -3,9 +3,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { handleCronGenerateBrief } from "../apps/dashboard/lib/cron-generate-brief";
 import { handleManualGenerateBrief } from "../apps/dashboard/lib/manual-generate-brief";
+import { handleR2Health } from "../apps/dashboard/lib/r2-health";
 import { redactJson } from "../apps/dashboard/lib/redaction";
 import type { EditorialBriefDbAdapter } from "../src/adapters/neon";
-import type { R2StorageAdapter, R2UploadInput } from "../src/adapters/r2";
+import {
+  createR2S3ClientConfig,
+  getR2ConfigDiagnostics,
+  resolveR2AdapterConfig,
+  R2_UPLOAD_ENDPOINT_HINT,
+  R2_UPLOAD_FAILURE_HINT,
+  type R2StorageAdapter,
+  type R2UploadInput
+} from "../src/adapters/r2";
 import { validateCloudBriefEnv } from "../src/config/cloudEnv";
 import {
   CloudBriefStepError,
@@ -149,6 +158,14 @@ class MemoryR2 implements R2StorageAdapter {
   async putText(input: R2UploadInput) {
     this.uploads.push(input);
     return { key: input.key };
+  }
+}
+
+class FailingR2 implements R2StorageAdapter {
+  async putText(_input: R2UploadInput): Promise<never> {
+    throw new Error(
+      "write EPROTO R2_SECRET_ACCESS_KEY r2-secret-key getaddrinfo ENOTFOUND abcdef1234567890.r2.cloudflarestorage.com SSL/TLS handshake failure"
+    );
   }
 }
 
@@ -307,6 +324,125 @@ function fakePipeline() {
   } as any;
 }
 
+test("R2 adapter upload endpoint is derived from R2_ACCOUNT_ID only", () => {
+  const env = {
+    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_BUCKET: "briefs",
+    R2_PUBLIC_BASE_URL: "https://cdn.example.com/briefs"
+  };
+  const config = resolveR2AdapterConfig(env);
+
+  assert.equal(config.endpoint, "https://abcdef1234567890.r2.cloudflarestorage.com");
+  assert.notEqual(config.endpoint, env.R2_PUBLIC_BASE_URL);
+  assert.notEqual(config.endpoint, "https://briefs.abcdef1234567890.r2.cloudflarestorage.com");
+});
+
+test("R2 adapter ignores R2_PUBLIC_BASE_URL for upload endpoint", () => {
+  const config = resolveR2AdapterConfig({
+    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_BUCKET: "briefs",
+    R2_PUBLIC_BASE_URL: "https://public.example.com/briefs"
+  });
+
+  assert.equal(config.endpoint, "https://abcdef1234567890.r2.cloudflarestorage.com");
+  assert.equal(config.publicBaseUrl, "https://public.example.com/briefs");
+  assert.notEqual(config.endpoint, config.publicBaseUrl);
+});
+
+test("R2 S3Client config uses region auto and forcePathStyle true", () => {
+  const config = resolveR2AdapterConfig({
+    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_BUCKET: "briefs"
+  });
+  const clientConfig = createR2S3ClientConfig(config);
+
+  assert.equal(clientConfig.region, "auto");
+  assert.equal(clientConfig.endpoint, "https://abcdef1234567890.r2.cloudflarestorage.com");
+  assert.equal(clientConfig.forcePathStyle, true);
+  assert.deepEqual(clientConfig.credentials, {
+    accessKeyId: "r2-access-key",
+    secretAccessKey: "r2-secret-key"
+  });
+});
+
+test("R2 diagnostics returns masked config only", () => {
+  const config = getR2ConfigDiagnostics({
+    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCESS_KEY_ID: "r2-access-key-value",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key-value",
+    R2_BUCKET: "briefs",
+    R2_PUBLIC_BASE_URL: "https://cdn.example.com/briefs"
+  });
+  const serialized = JSON.stringify(config);
+
+  assert.equal(config.hasAccountId, true);
+  assert.equal(config.accountIdPreview, "abcdef***7890");
+  assert.equal(config.endpointHost, "abcdef***7890.r2.cloudflarestorage.com");
+  assert.equal(config.hasAccessKeyId, true);
+  assert.equal(config.hasSecretAccessKey, true);
+  assert.equal(config.bucket, "briefs");
+  assert.equal(config.hasPublicBaseUrl, true);
+  assert.doesNotMatch(serialized, /r2-access-key-value|r2-secret-key-value|abcdef1234567890/);
+});
+
+test("/api/health/r2 writes a minimal object and returns masked config", async () => {
+  const r2 = new MemoryR2();
+  const response = await handleR2Health({
+    env: {
+      R2_ACCOUNT_ID: "abcdef1234567890",
+      R2_ACCESS_KEY_ID: "r2-access-key-value",
+      R2_SECRET_ACCESS_KEY: "r2-secret-key-value",
+      R2_BUCKET: "briefs",
+      R2_PUBLIC_BASE_URL: "https://cdn.example.com/briefs"
+    },
+    now: new Date("2026-06-02T00:00:00.000Z"),
+    r2
+  });
+  const payload = await response.json();
+  const serialized = JSON.stringify(payload);
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.step, "r2.putObject");
+  assert.equal(payload.message, "R2 write succeeded");
+  assert.equal(payload.config.accountIdPreview, "abcdef***7890");
+  assert.equal(payload.config.endpointHost, "abcdef***7890.r2.cloudflarestorage.com");
+  assert.equal(r2.uploads.length, 1);
+  assert.equal(r2.uploads[0].key, "health-check/2026-06-02T00-00-00-000Z.txt");
+  assert.equal(r2.uploads[0].body, "ok");
+  assert.doesNotMatch(serialized, /r2-secret-key-value|R2_SECRET_ACCESS_KEY/);
+  assert.doesNotMatch(serialized, /r2-access-key-value|R2_ACCESS_KEY_ID/);
+});
+
+test("/api/health/r2 failure returns endpoint hint without secrets", async () => {
+  const response = await handleR2Health({
+    env: {
+      R2_ACCOUNT_ID: "ABCDEF1234567890",
+      R2_ACCESS_KEY_ID: "r2-access-key",
+      R2_SECRET_ACCESS_KEY: "r2-secret-key",
+      R2_BUCKET: "briefs"
+    },
+    r2: new FailingR2()
+  });
+  const payload = await response.json();
+  const serialized = JSON.stringify(payload);
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.step, "r2.putObject");
+  assert.equal(payload.endpointHint, R2_UPLOAD_ENDPOINT_HINT);
+  assert.match(payload.error, /SSL\/TLS handshake failure/);
+  assert.doesNotMatch(serialized, /abcdef1234567890/);
+  assert.doesNotMatch(serialized, /ABCDEF1234567890/);
+  assert.doesNotMatch(serialized, /r2-secret-key|R2_SECRET_ACCESS_KEY/);
+});
+
 test("cron generate brief rejects missing Authorization header", async () => {
   let called = false;
   const response = await handleCronGenerateBrief(new Request("http://localhost/api/cron/generate-brief", {
@@ -389,7 +525,7 @@ test("cron generate brief validates cloud env before external adapters", async (
     env: {
       CRON_SECRET: "cron-secret",
       DATABASE_URL: "https://neon.example.com/dashboard",
-      R2_ENDPOINT: "https://account-id.r2.cloudflarestorage.com",
+      R2_ACCOUNT_ID: "accountid",
       R2_ACCESS_KEY_ID: "r2-access-key",
       R2_SECRET_ACCESS_KEY: "r2-secret-key",
       R2_BUCKET: "briefs"
@@ -507,7 +643,43 @@ test("manual generate brief returns failed step and redacted error summary", asy
   );
 });
 
-test("cloud brief env accepts R2_ENDPOINT and rejects endpoint-shaped account id", () => {
+test("generate brief returns R2 upload step and endpoint hint on R2 upload failure", async () => {
+  const response = await handleManualGenerateBrief(
+    new Request("http://localhost/api/brief/generate", {
+      method: "POST"
+    }),
+    {
+      env: {
+        R2_ACCOUNT_ID: "ABCDEF1234567890",
+        R2_ACCESS_KEY_ID: "r2-access-key-value",
+        R2_SECRET_ACCESS_KEY: "r2-secret-key-value"
+      },
+      isAuthorized: async () => true,
+      generate: async () => {
+        throw new CloudBriefStepError(
+          "r2.uploadBriefReport",
+          new Error(
+            "write EPROTO r2-access-key-value r2-secret-key-value getaddrinfo ENOTFOUND abcdef1234567890.r2.cloudflarestorage.com SSL/TLS handshake failure"
+          )
+        );
+      }
+    }
+  );
+  const payload = await response.json();
+  const serialized = JSON.stringify(payload);
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.step, "r2.uploadBriefReport");
+  assert.match(payload.error, /SSL\/TLS handshake failure/);
+  assert.equal(payload.hint, R2_UPLOAD_FAILURE_HINT);
+  assert.equal(payload.endpointHint, R2_UPLOAD_ENDPOINT_HINT);
+  assert.doesNotMatch(serialized, /abcdef1234567890/);
+  assert.doesNotMatch(serialized, /ABCDEF1234567890/);
+  assert.doesNotMatch(serialized, /r2-access-key-value|r2-secret-key-value/);
+});
+
+test("cloud brief env requires R2_ACCOUNT_ID and ignores R2_ENDPOINT for uploads", () => {
   const baseEnv = {
     DATABASE_URL: "postgresql://user:password@example.neon.tech/db?sslmode=require",
     R2_ACCESS_KEY_ID: "r2-access-key",
@@ -515,13 +687,20 @@ test("cloud brief env accepts R2_ENDPOINT and rejects endpoint-shaped account id
     R2_BUCKET: "briefs"
   };
 
-  assert.equal(
-    validateCloudBriefEnv({
-      ...baseEnv,
-      R2_ENDPOINT: "https://account-id.r2.cloudflarestorage.com"
-    }).ok,
-    true
-  );
+  const missingAccountId = validateCloudBriefEnv({
+    ...baseEnv,
+    R2_ENDPOINT: "https://account-id.r2.cloudflarestorage.com"
+  });
+  assert.equal(missingAccountId.ok, false);
+  assert.match(missingAccountId.errors.join(" "), /R2_ACCOUNT_ID/);
+
+  const valid = validateCloudBriefEnv({
+    ...baseEnv,
+    R2_ACCOUNT_ID: "accountid",
+    R2_ENDPOINT: "this old value is ignored"
+  });
+  assert.equal(valid.ok, true);
+  assert.match(valid.warnings.join(" "), /R2_ENDPOINT is ignored/);
 
   const invalid = validateCloudBriefEnv({
     ...baseEnv,
@@ -710,6 +889,18 @@ test("cloud brief UI empty state uses friendly prompt and not missing", async ()
   assert.doesNotMatch(source, /missing/i);
 });
 
+test("R2 upload API routes force Node.js runtime", async () => {
+  const files = await Promise.all([
+    readFile("apps/dashboard/app/api/cron/generate-brief/route.ts", "utf8"),
+    readFile("apps/dashboard/app/api/brief/generate/route.ts", "utf8"),
+    readFile("apps/dashboard/app/api/health/r2/route.ts", "utf8")
+  ]);
+
+  for (const source of files) {
+    assert.match(source, /export const runtime = "nodejs"/);
+  }
+});
+
 test("cloud brief code does not call WeChat APIs or publish endpoints", async () => {
   const files = await Promise.all([
     readFile("src/pipeline/generateCloudEditorialBrief.ts", "utf8"),
@@ -717,6 +908,8 @@ test("cloud brief code does not call WeChat APIs or publish endpoints", async ()
     readFile("apps/dashboard/lib/cron-generate-brief.ts", "utf8"),
     readFile("apps/dashboard/app/api/brief/generate/route.ts", "utf8"),
     readFile("apps/dashboard/lib/manual-generate-brief.ts", "utf8"),
+    readFile("apps/dashboard/app/api/health/r2/route.ts", "utf8"),
+    readFile("apps/dashboard/lib/r2-health.ts", "utf8"),
     readFile("apps/dashboard/lib/brief-generate-response.ts", "utf8")
   ]);
   const source = files.join("\n");

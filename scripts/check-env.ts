@@ -79,7 +79,7 @@ const envSpecs: EnvSpec[] = [
   { name: "MIN_REAL_SEARCH_ITEMS", kind: "integer" },
   { name: "DATABASE_URL", kind: "string" },
   { name: "DATABASE_MAX_CONNECTIONS", kind: "integer" },
-  { name: "R2_ENDPOINT", kind: "url" },
+  { name: "R2_ENDPOINT", kind: "string" },
   { name: "R2_ACCOUNT_ID", kind: "string" },
   { name: "R2_ACCESS_KEY_ID", kind: "string" },
   { name: "R2_SECRET_ACCESS_KEY", kind: "string" },

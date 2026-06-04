@@ -3,6 +3,7 @@ import { verifyBearerToken } from "@/lib/auth";
 import { asObject, sanitizeBriefGenerationErrorMessage } from "@/lib/brief-generate-response";
 import { generateCloudBriefForToday } from "@/lib/cloud-brief-server";
 import { redactJson } from "@/lib/redaction";
+import { R2_UPLOAD_ENDPOINT_HINT, R2_UPLOAD_FAILURE_HINT } from "../../../src/adapters/r2";
 import { getCloudBriefGenerationStep } from "../../../src/pipeline/generateCloudEditorialBrief";
 import type { CloudBriefGenerationStep } from "../../../src/types/cloud";
 
@@ -52,11 +53,20 @@ export async function handleCronGenerateBrief(
     const message = sanitizeBriefGenerationErrorMessage(error, env);
     console.error(`[cron.generate-brief] failed step=${step} error=${message}`);
 
+    const r2Hint =
+      step === "r2.uploadBriefReport"
+        ? {
+            hint: R2_UPLOAD_FAILURE_HINT,
+            endpointHint: R2_UPLOAD_ENDPOINT_HINT
+          }
+        : {};
+
     return NextResponse.json(
       redactJson({
         ok: false,
         step,
-        error: message
+        error: message,
+        ...r2Hint
       }),
       { status: 500 }
     );

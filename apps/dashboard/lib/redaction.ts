@@ -16,6 +16,7 @@ const KNOWN_SECRET_ENV_KEYS = [
   "TAVILY_API_KEY",
   "EXA_API_KEY",
   "DATABASE_URL",
+  "R2_ACCOUNT_ID",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
   "CRON_SECRET",
@@ -84,7 +85,7 @@ export function redactSecrets(
     ...collectKnownSecretValues(),
     ...extraSecretValues.filter((value) => value.length >= 6)
   ]) {
-    output = output.split(secretValue).join("[REDACTED]");
+    output = output.replace(new RegExp(escapeRegExp(secretValue), "gi"), "[REDACTED]");
   }
 
   return output;
@@ -92,4 +93,8 @@ export function redactSecrets(
 
 export function hasSecretLikeKey(key: string): boolean {
   return SECRET_KEY_PATTERN.test(key);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

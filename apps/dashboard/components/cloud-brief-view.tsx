@@ -13,6 +13,8 @@ type GenerateState = "idle" | "loading" | "success" | "failed";
 interface GenerateFailure {
   step: string;
   error: string;
+  hint?: string;
+  endpointHint?: string;
 }
 
 interface GenerateBriefResponse {
@@ -20,6 +22,8 @@ interface GenerateBriefResponse {
   status?: "already_exists" | "created";
   step?: string;
   error?: string;
+  hint?: string;
+  endpointHint?: string;
 }
 
 export function CloudBriefView() {
@@ -126,7 +130,9 @@ export function CloudBriefView() {
         setGenerateState("failed");
         setGenerateFailure({
           step: result.step ?? "unknown",
-          error: result.error ?? "Brief generation failed."
+          error: result.error ?? "Brief generation failed.",
+          hint: result.hint,
+          endpointHint: result.endpointHint
         });
         return;
       }
@@ -194,6 +200,12 @@ export function CloudBriefView() {
           <div className="mt-3 grid gap-2 text-xs font-medium text-stone-600 md:grid-cols-2">
             <p>失败阶段：{generateFailure?.step ?? "unknown"}</p>
             <p className="break-words md:col-span-2">错误摘要：{generateFailure?.error ?? "Brief generation failed."}</p>
+            {generateFailure?.hint ? (
+              <p className="break-words md:col-span-2">排查提示：{generateFailure.hint}</p>
+            ) : null}
+            {generateFailure?.endpointHint ? (
+              <p className="break-words md:col-span-2">Endpoint：{generateFailure.endpointHint}</p>
+            ) : null}
           </div>
         </StatePanel>
       ) : null}

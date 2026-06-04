@@ -6,6 +6,7 @@ export interface CloudBriefEnvValidationResult {
 
 const requiredCloudBriefEnvKeys = [
   "DATABASE_URL",
+  "R2_ACCOUNT_ID",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
   "R2_BUCKET"
@@ -81,35 +82,10 @@ function validateHttpUrlEnv(
   }
 }
 
-function validateR2Endpoint(value: string, errors: string[], warnings: string[]): void {
-  const parsed = parseUrl(value);
-
-  if (!parsed) {
-    errors.push("R2_ENDPOINT must be a valid URL.");
-    return;
-  }
-
-  if (parsed.protocol !== "https:") {
-    errors.push("R2_ENDPOINT must use https://.");
-  }
-
-  if (parsed.username || parsed.password) {
-    errors.push("R2_ENDPOINT must not include credentials.");
-  }
-
-  if (parsed.pathname && parsed.pathname !== "/") {
-    errors.push("R2_ENDPOINT must not include a path; put the bucket in R2_BUCKET.");
-  }
-
-  if (!parsed.hostname.endsWith(".r2.cloudflarestorage.com")) {
-    warnings.push("R2_ENDPOINT should normally end with .r2.cloudflarestorage.com.");
-  }
-}
-
 function validateR2AccountId(value: string, errors: string[]): void {
   if (/^https?:\/\//i.test(value) || value.includes("/") || value.includes(".")) {
     errors.push(
-      "R2_ACCOUNT_ID must be only the Cloudflare account id; put the full S3 endpoint URL in R2_ENDPOINT."
+      "R2_ACCOUNT_ID must be only the Cloudflare account id; upload endpoint is derived as https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com."
     );
   }
 }
@@ -142,18 +118,17 @@ export function validateCloudBriefEnv(
     }
   }
 
-  if (!r2Endpoint && !r2AccountId) {
-    errors.push("R2_ENDPOINT or R2_ACCOUNT_ID is required for cloud brief generation.");
-  }
-
   if (databaseUrl) {
     validateDatabaseUrl(databaseUrl, errors, warnings);
   }
 
-  if (r2Endpoint) {
-    validateR2Endpoint(r2Endpoint, errors, warnings);
-  } else if (r2AccountId) {
+  if (r2AccountId) {
     validateR2AccountId(r2AccountId, errors);
+  }
+  if (r2Endpoint) {
+    warnings.push(
+      "R2_ENDPOINT is ignored for uploads; the R2 adapter derives the S3 endpoint from R2_ACCOUNT_ID."
+    );
   }
 
   validatePositiveIntegerEnv(env, "DATABASE_MAX_CONNECTIONS", errors);
