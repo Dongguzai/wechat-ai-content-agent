@@ -41,6 +41,9 @@ import type {
   ShortlistScoreDimensions
 } from "../src/types/news";
 
+const validR2AccountId = "abcdef1234567890abcdef1234567890";
+const validR2AccountIdUpper = "ABCDEF1234567890ABCDEF1234567890";
+
 class MemoryBriefDb implements EditorialBriefDbAdapter {
   runs: CloudRunRecord[] = [];
   newsItems: CloudNewsItemRecord[] = [];
@@ -164,7 +167,7 @@ class MemoryR2 implements R2StorageAdapter {
 class FailingR2 implements R2StorageAdapter {
   async putText(_input: R2UploadInput): Promise<never> {
     throw new Error(
-      "write EPROTO R2_SECRET_ACCESS_KEY r2-secret-key getaddrinfo ENOTFOUND abcdef1234567890.r2.cloudflarestorage.com SSL/TLS handshake failure"
+      `write EPROTO R2_SECRET_ACCESS_KEY r2-secret-key getaddrinfo ENOTFOUND ${validR2AccountId}.r2.cloudflarestorage.com SSL/TLS handshake failure`
     );
   }
 }
@@ -326,7 +329,7 @@ function fakePipeline() {
 
 test("R2 adapter upload endpoint is derived from R2_ACCOUNT_ID only", () => {
   const env = {
-    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCOUNT_ID: validR2AccountId,
     R2_ACCESS_KEY_ID: "r2-access-key",
     R2_SECRET_ACCESS_KEY: "r2-secret-key",
     R2_BUCKET: "briefs",
@@ -334,28 +337,28 @@ test("R2 adapter upload endpoint is derived from R2_ACCOUNT_ID only", () => {
   };
   const config = resolveR2AdapterConfig(env);
 
-  assert.equal(config.endpoint, "https://abcdef1234567890.r2.cloudflarestorage.com");
+  assert.equal(config.endpoint, `https://${validR2AccountId}.r2.cloudflarestorage.com`);
   assert.notEqual(config.endpoint, env.R2_PUBLIC_BASE_URL);
-  assert.notEqual(config.endpoint, "https://briefs.abcdef1234567890.r2.cloudflarestorage.com");
+  assert.notEqual(config.endpoint, `https://briefs.${validR2AccountId}.r2.cloudflarestorage.com`);
 });
 
 test("R2 adapter ignores R2_PUBLIC_BASE_URL for upload endpoint", () => {
   const config = resolveR2AdapterConfig({
-    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCOUNT_ID: validR2AccountId,
     R2_ACCESS_KEY_ID: "r2-access-key",
     R2_SECRET_ACCESS_KEY: "r2-secret-key",
     R2_BUCKET: "briefs",
     R2_PUBLIC_BASE_URL: "https://public.example.com/briefs"
   });
 
-  assert.equal(config.endpoint, "https://abcdef1234567890.r2.cloudflarestorage.com");
+  assert.equal(config.endpoint, `https://${validR2AccountId}.r2.cloudflarestorage.com`);
   assert.equal(config.publicBaseUrl, "https://public.example.com/briefs");
   assert.notEqual(config.endpoint, config.publicBaseUrl);
 });
 
 test("R2 S3Client config uses region auto and forcePathStyle true", () => {
   const config = resolveR2AdapterConfig({
-    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCOUNT_ID: validR2AccountId,
     R2_ACCESS_KEY_ID: "r2-access-key",
     R2_SECRET_ACCESS_KEY: "r2-secret-key",
     R2_BUCKET: "briefs"
@@ -363,7 +366,7 @@ test("R2 S3Client config uses region auto and forcePathStyle true", () => {
   const clientConfig = createR2S3ClientConfig(config);
 
   assert.equal(clientConfig.region, "auto");
-  assert.equal(clientConfig.endpoint, "https://abcdef1234567890.r2.cloudflarestorage.com");
+  assert.equal(clientConfig.endpoint, `https://${validR2AccountId}.r2.cloudflarestorage.com`);
   assert.equal(clientConfig.forcePathStyle, true);
   assert.deepEqual(clientConfig.credentials, {
     accessKeyId: "r2-access-key",
@@ -373,7 +376,7 @@ test("R2 S3Client config uses region auto and forcePathStyle true", () => {
 
 test("R2 diagnostics returns masked config only", () => {
   const config = getR2ConfigDiagnostics({
-    R2_ACCOUNT_ID: "abcdef1234567890",
+    R2_ACCOUNT_ID: validR2AccountId,
     R2_ACCESS_KEY_ID: "r2-access-key-value",
     R2_SECRET_ACCESS_KEY: "r2-secret-key-value",
     R2_BUCKET: "briefs",
@@ -388,14 +391,14 @@ test("R2 diagnostics returns masked config only", () => {
   assert.equal(config.hasSecretAccessKey, true);
   assert.equal(config.bucket, "briefs");
   assert.equal(config.hasPublicBaseUrl, true);
-  assert.doesNotMatch(serialized, /r2-access-key-value|r2-secret-key-value|abcdef1234567890/);
+  assert.doesNotMatch(serialized, new RegExp(`r2-access-key-value|r2-secret-key-value|${validR2AccountId}`));
 });
 
 test("/api/health/r2 writes a minimal object and returns masked config", async () => {
   const r2 = new MemoryR2();
   const response = await handleR2Health({
     env: {
-      R2_ACCOUNT_ID: "abcdef1234567890",
+      R2_ACCOUNT_ID: validR2AccountId,
       R2_ACCESS_KEY_ID: "r2-access-key-value",
       R2_SECRET_ACCESS_KEY: "r2-secret-key-value",
       R2_BUCKET: "briefs",
@@ -423,7 +426,7 @@ test("/api/health/r2 writes a minimal object and returns masked config", async (
 test("/api/health/r2 failure returns endpoint hint without secrets", async () => {
   const response = await handleR2Health({
     env: {
-      R2_ACCOUNT_ID: "ABCDEF1234567890",
+      R2_ACCOUNT_ID: validR2AccountIdUpper,
       R2_ACCESS_KEY_ID: "r2-access-key",
       R2_SECRET_ACCESS_KEY: "r2-secret-key",
       R2_BUCKET: "briefs"
@@ -438,8 +441,8 @@ test("/api/health/r2 failure returns endpoint hint without secrets", async () =>
   assert.equal(payload.step, "r2.putObject");
   assert.equal(payload.endpointHint, R2_UPLOAD_ENDPOINT_HINT);
   assert.match(payload.error, /SSL\/TLS handshake failure/);
-  assert.doesNotMatch(serialized, /abcdef1234567890/);
-  assert.doesNotMatch(serialized, /ABCDEF1234567890/);
+  assert.doesNotMatch(serialized, new RegExp(validR2AccountId));
+  assert.doesNotMatch(serialized, new RegExp(validR2AccountIdUpper));
   assert.doesNotMatch(serialized, /r2-secret-key|R2_SECRET_ACCESS_KEY/);
 });
 
@@ -525,7 +528,7 @@ test("cron generate brief validates cloud env before external adapters", async (
     env: {
       CRON_SECRET: "cron-secret",
       DATABASE_URL: "https://neon.example.com/dashboard",
-      R2_ACCOUNT_ID: "accountid",
+      R2_ACCOUNT_ID: validR2AccountId,
       R2_ACCESS_KEY_ID: "r2-access-key",
       R2_SECRET_ACCESS_KEY: "r2-secret-key",
       R2_BUCKET: "briefs"
@@ -650,7 +653,7 @@ test("generate brief returns R2 upload step and endpoint hint on R2 upload failu
     }),
     {
       env: {
-        R2_ACCOUNT_ID: "ABCDEF1234567890",
+        R2_ACCOUNT_ID: validR2AccountIdUpper,
         R2_ACCESS_KEY_ID: "r2-access-key-value",
         R2_SECRET_ACCESS_KEY: "r2-secret-key-value"
       },
@@ -659,7 +662,7 @@ test("generate brief returns R2 upload step and endpoint hint on R2 upload failu
         throw new CloudBriefStepError(
           "r2.uploadBriefReport",
           new Error(
-            "write EPROTO r2-access-key-value r2-secret-key-value getaddrinfo ENOTFOUND abcdef1234567890.r2.cloudflarestorage.com SSL/TLS handshake failure"
+            `write EPROTO r2-access-key-value r2-secret-key-value getaddrinfo ENOTFOUND ${validR2AccountId}.r2.cloudflarestorage.com SSL/TLS handshake failure`
           )
         );
       }
@@ -674,8 +677,8 @@ test("generate brief returns R2 upload step and endpoint hint on R2 upload failu
   assert.match(payload.error, /SSL\/TLS handshake failure/);
   assert.equal(payload.hint, R2_UPLOAD_FAILURE_HINT);
   assert.equal(payload.endpointHint, R2_UPLOAD_ENDPOINT_HINT);
-  assert.doesNotMatch(serialized, /abcdef1234567890/);
-  assert.doesNotMatch(serialized, /ABCDEF1234567890/);
+  assert.doesNotMatch(serialized, new RegExp(validR2AccountId));
+  assert.doesNotMatch(serialized, new RegExp(validR2AccountIdUpper));
   assert.doesNotMatch(serialized, /r2-access-key-value|r2-secret-key-value/);
 });
 
@@ -696,7 +699,7 @@ test("cloud brief env requires R2_ACCOUNT_ID and ignores R2_ENDPOINT for uploads
 
   const valid = validateCloudBriefEnv({
     ...baseEnv,
-    R2_ACCOUNT_ID: "accountid",
+    R2_ACCOUNT_ID: validR2AccountId,
     R2_ENDPOINT: "this old value is ignored"
   });
   assert.equal(valid.ok, true);
@@ -709,6 +712,20 @@ test("cloud brief env requires R2_ACCOUNT_ID and ignores R2_ENDPOINT for uploads
 
   assert.equal(invalid.ok, false);
   assert.match(invalid.errors.join(" "), /R2_ACCOUNT_ID/);
+});
+
+test("cloud brief env rejects API tokens in R2_ACCOUNT_ID", () => {
+  const result = validateCloudBriefEnv({
+    DATABASE_URL: "postgresql://user:password@example.neon.tech/db?sslmode=require",
+    R2_ACCOUNT_ID: "cfat_1234567890abcdef1234567890abcdef1234567890abc",
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_BUCKET: "briefs"
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(" "), /32-character hexadecimal Cloudflare account id/);
+  assert.match(result.errors.join(" "), /not an API token/);
 });
 
 test("cloud brief generation returns already_exists for successful same-day run", async () => {

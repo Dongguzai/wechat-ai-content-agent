@@ -11,6 +11,7 @@ const requiredCloudBriefEnvKeys = [
   "R2_SECRET_ACCESS_KEY",
   "R2_BUCKET"
 ] as const;
+const r2AccountIdPattern = /^[a-f0-9]{32}$/i;
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name]?.trim();
@@ -86,6 +87,12 @@ function validateR2AccountId(value: string, errors: string[]): void {
   if (/^https?:\/\//i.test(value) || value.includes("/") || value.includes(".")) {
     errors.push(
       "R2_ACCOUNT_ID must be only the Cloudflare account id; upload endpoint is derived as https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com."
+    );
+  }
+
+  if (!r2AccountIdPattern.test(value)) {
+    errors.push(
+      "R2_ACCOUNT_ID must be the 32-character hexadecimal Cloudflare account id, not an API token, access key, bucket name, URL, or public/custom domain."
     );
   }
 }

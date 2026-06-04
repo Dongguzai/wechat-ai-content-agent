@@ -41,7 +41,7 @@ BRIEF_TIME_ZONE=Asia/Shanghai
 说明：
 
 - `DATABASE_URL` 使用 Neon Postgres 连接串。
-- `R2_ACCOUNT_ID` 必须填写纯 Cloudflare account id；上传 endpoint 固定由 adapter 生成：`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`。
+- `R2_ACCOUNT_ID` 必须填写 Cloudflare 账户概览里的 32 位十六进制 account id；上传 endpoint 固定由 adapter 生成：`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`。不要填写 `cfat_` API token、Access Key、bucket 名、公共访问 URL 或自定义域名。
 - 不要把 bucket 名拼进 endpoint，不要把 `R2_PUBLIC_BASE_URL` 用作上传 endpoint；`R2_PUBLIC_BASE_URL` 只用于生成公开访问 URL。
 - R2 凭据只在服务端 adapter 使用，不输出到日志或前端。
 - `CRON_SECRET` 只用于 cron-job.org 调用 `/api/cron/generate-brief`。

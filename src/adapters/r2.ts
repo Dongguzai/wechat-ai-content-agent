@@ -17,7 +17,8 @@ export interface R2StorageAdapter {
 
 export const R2_UPLOAD_ENDPOINT_HINT = "expected https://<ACCOUNT_ID>.r2.cloudflarestorage.com";
 export const R2_UPLOAD_FAILURE_HINT =
-  "Check R2_ACCOUNT_ID, endpoint, region=auto, forcePathStyle=true, and do not use R2_PUBLIC_BASE_URL as upload endpoint.";
+  "Check R2_ACCOUNT_ID is the 32-character hexadecimal Cloudflare account id, endpoint, region=auto, forcePathStyle=true, and do not use R2_PUBLIC_BASE_URL as upload endpoint.";
+const R2_ACCOUNT_ID_PATTERN = /^[a-f0-9]{32}$/i;
 
 export interface R2ResolvedConfig {
   accountId: string;
@@ -48,6 +49,12 @@ function validateR2AccountId(accountId: string): void {
   if (/^https?:\/\//i.test(accountId) || accountId.includes("/") || accountId.includes(".")) {
     throw new Error(
       "R2_ACCOUNT_ID must be only the Cloudflare account id; upload endpoint is derived as https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com."
+    );
+  }
+
+  if (!R2_ACCOUNT_ID_PATTERN.test(accountId)) {
+    throw new Error(
+      "R2_ACCOUNT_ID must be the 32-character hexadecimal Cloudflare account id, not an API token, access key, bucket name, URL, or public/custom domain."
     );
   }
 }

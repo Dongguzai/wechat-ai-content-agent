@@ -126,7 +126,7 @@ EXA_API_KEY=...
 
 - 先确认已部署新版代码；新版响应会包含 `step`，例如 `db.connect`、`r2.uploadBriefReport` 或 `config.validate`。
 - 如果 `step=db.connect`，检查 `DATABASE_URL` 必须是 Neon/Postgres 连接串，协议为 `postgres://` 或 `postgresql://`，不要填 HTTP 控制台链接，也不要设置 `sslmode=disable`。
-- 如果 `step=r2.uploadBriefReport` 或 `step=config.validate`，检查 R2 配置：`R2_ACCOUNT_ID` 必须是纯 account id，上传 endpoint 固定为 `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`；不要使用 `R2_PUBLIC_BASE_URL` 作为上传 endpoint，也不要把 bucket 名拼进 endpoint。
+- 如果 `step=r2.uploadBriefReport` 或 `step=config.validate`，检查 R2 配置：`R2_ACCOUNT_ID` 必须是 Cloudflare 账户概览里的 32 位十六进制 account id，上传 endpoint 固定为 `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`；不要把 `cfat_` API token、Access Key、bucket 名、`R2_PUBLIC_BASE_URL` 或自定义域名填进 `R2_ACCOUNT_ID`。
 - 可访问 `GET /api/health/r2` 做最小 R2 写入检查；响应会显示脱敏 account id、endpoint host、bucket 和 key 是否存在，不会返回 access key 或 secret。
 - 本地可先运行 `pnpm env:check` 做形态检查；该命令不会调用 Neon、R2、微信或 MiniMax。
 
