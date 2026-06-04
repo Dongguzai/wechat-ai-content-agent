@@ -3,6 +3,25 @@ export const EDITORIAL_BRIEF_RUN_TYPE = "editorial_brief";
 export type CloudRunType = typeof EDITORIAL_BRIEF_RUN_TYPE;
 export type CloudRunStatus = "running" | "success" | "failed";
 
+export const CLOUD_BRIEF_GENERATION_STEPS = [
+  "auth",
+  "config.validate",
+  "db.connect",
+  "db.findExistingRun",
+  "db.createRun",
+  "collectNews",
+  "shortlistNews",
+  "selectTopic",
+  "db.saveNewsItems",
+  "db.saveShortlistedItems",
+  "db.saveEditorialBrief",
+  "r2.uploadBriefReport",
+  "db.markRunSuccess",
+  "db.markRunFailed"
+] as const;
+
+export type CloudBriefGenerationStep = typeof CLOUD_BRIEF_GENERATION_STEPS[number];
+
 export interface CloudRunRecord {
   id: string;
   runDate: string;

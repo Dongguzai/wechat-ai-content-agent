@@ -367,6 +367,77 @@ test("/brief page reads the cloud today API with friendly empty state", async ()
   assert.doesNotMatch(viewSource, /api\/brief\/select-topic/);
 });
 
+test("/brief page can manually generate and refresh today's cloud brief", async () => {
+  const viewSource = await readFile(
+    join(process.cwd(), "apps/dashboard/components/cloud-brief-view.tsx"),
+    "utf8"
+  );
+
+  assert.match(viewSource, /开始收集/);
+  assert.match(viewSource, /重新收集/);
+  assert.match(viewSource, /api\/brief\/generate/);
+  assert.match(viewSource, /method: "POST"/);
+  assert.match(viewSource, /JSON\.stringify\(force \? \{ force: true \} : \{\}\)/);
+  assert.match(viewSource, /disabled=\{generateState === "loading"\}/);
+  assert.match(viewSource, /正在收集\.\.\./);
+  assert.match(viewSource, /正在抓取资讯并筛选 10 条入围内容，通常需要 30～60 秒。/);
+  assert.match(viewSource, /收集完成/);
+  assert.match(viewSource, /await loadBrief\(\{ showLoading: false \}\)/);
+  assert.match(viewSource, /items\.slice\(0, 10\)\.map/);
+});
+
+test("/brief rerun asks for confirmation and displays step-level failures", async () => {
+  const viewSource = await readFile(
+    join(process.cwd(), "apps/dashboard/components/cloud-brief-view.tsx"),
+    "utf8"
+  );
+
+  assert.match(viewSource, /window\.confirm/);
+  assert.match(viewSource, /今天已经生成过简报，重新收集会覆盖今日入围资讯，是否继续？/);
+  assert.match(viewSource, /收集失败/);
+  assert.match(viewSource, /失败阶段：/);
+  assert.match(viewSource, /错误摘要：/);
+  assert.match(viewSource, /result\.step \?\? "unknown"/);
+  assert.match(viewSource, /result\.error \?\? "Brief generation failed\."/);
+});
+
+test("/api/brief/generate is dashboard-authenticated and not a cron-secret endpoint", async () => {
+  const routeSource = await readFile(
+    join(process.cwd(), "apps/dashboard/app/api/brief/generate/route.ts"),
+    "utf8"
+  );
+  const handlerSource = await readFile(
+    join(process.cwd(), "apps/dashboard/lib/manual-generate-brief.ts"),
+    "utf8"
+  );
+  const viewSource = await readFile(
+    join(process.cwd(), "apps/dashboard/components/cloud-brief-view.tsx"),
+    "utf8"
+  );
+  const source = `${routeSource}\n${handlerSource}`;
+
+  assert.match(source, /hasDashboardSession/);
+  assert.match(source, /generateCloudBriefForToday/);
+  assert.match(source, /manual force run/);
+  assert.match(source, /step/);
+  assert.match(source, /redactJson/);
+  assert.doesNotMatch(source, /verifyBearerToken/);
+  assert.doesNotMatch(viewSource, /CRON_SECRET|DATABASE_URL|R2_SECRET_ACCESS_KEY|API_KEY|APP_SECRET|ACCESS_TOKEN/);
+  assert.doesNotMatch(source, /wechatOfficialApi|saveWechatDraft|freepublish|mass|sendall|api\.weixin\.qq\.com|\/publish/i);
+});
+
+test("dashboard next config loads root .env for server-only auth settings", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/next.config.ts"),
+    "utf8"
+  );
+
+  assert.match(source, /loadRootDotEnv\(\)/);
+  assert.match(source, /join\(dashboardDir, "\.\.", "\.\.", "\.env"\)/);
+  assert.match(source, /process\.env\[key\] !== undefined/);
+  assert.doesNotMatch(source, /console\.log|DASHBOARD_PASSWORD|AUTH_SECRET/);
+});
+
 test("dashboard main nav only exposes brief, article, preview, and feedback", async () => {
   const shellSource = await readFile(
     join(process.cwd(), "apps/dashboard/components/shell.tsx"),

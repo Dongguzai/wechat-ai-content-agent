@@ -158,6 +158,7 @@ http://localhost:3000
 ```env
 DATABASE_URL=
 DATABASE_MAX_CONNECTIONS=1
+R2_ENDPOINT=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -168,6 +169,10 @@ DASHBOARD_PASSWORD=
 AUTH_SECRET=
 BRIEF_TIME_ZONE=Asia/Shanghai
 ```
+
+R2 推荐填写 `R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`。如果使用
+`R2_ACCOUNT_ID`，只能填写纯 account id，不要包含 `https://` 或
+`.r2.cloudflarestorage.com`。
 
 cron-job.org 配置：
 

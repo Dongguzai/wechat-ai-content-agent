@@ -8,6 +8,7 @@ import {
   projectRoot as defaultProjectRoot,
   type DotEnvEntry
 } from "../src/config/env.js";
+import { validateCloudBriefEnv } from "../src/config/cloudEnv.js";
 
 type EnvValueKind =
   | "boolean"
@@ -76,6 +77,18 @@ const envSpecs: EnvSpec[] = [
   { name: "MIN_REAL_NEWS_ITEMS", kind: "integer" },
   { name: "MIN_REAL_RSS_ITEMS", kind: "integer" },
   { name: "MIN_REAL_SEARCH_ITEMS", kind: "integer" },
+  { name: "DATABASE_URL", kind: "string" },
+  { name: "DATABASE_MAX_CONNECTIONS", kind: "integer" },
+  { name: "R2_ENDPOINT", kind: "url" },
+  { name: "R2_ACCOUNT_ID", kind: "string" },
+  { name: "R2_ACCESS_KEY_ID", kind: "string" },
+  { name: "R2_SECRET_ACCESS_KEY", kind: "string" },
+  { name: "R2_BUCKET", kind: "string" },
+  { name: "R2_PUBLIC_BASE_URL", kind: "url" },
+  { name: "CRON_SECRET", kind: "string" },
+  { name: "DASHBOARD_PASSWORD", kind: "string" },
+  { name: "AUTH_SECRET", kind: "string" },
+  { name: "BRIEF_TIME_ZONE", kind: "string" },
   { name: "COVER_ENABLE_REAL_API", kind: "boolean" },
   { name: "APIMART_API_KEY", kind: "string" },
   { name: "APIMART_IMAGE_API_URL", kind: "url" },
@@ -408,6 +421,10 @@ function validateConditionalEnv(
       }
     }
   }
+
+  const cloudBriefEnv = validateCloudBriefEnv(env);
+  errors.push(...cloudBriefEnv.errors);
+  warnings.push(...cloudBriefEnv.warnings);
 
   if (
     realProductionMode &&

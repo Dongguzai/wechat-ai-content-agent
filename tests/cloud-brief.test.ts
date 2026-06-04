@@ -2,15 +2,20 @@ import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleCronGenerateBrief } from "../apps/dashboard/lib/cron-generate-brief";
+import { handleManualGenerateBrief } from "../apps/dashboard/lib/manual-generate-brief";
 import { redactJson } from "../apps/dashboard/lib/redaction";
 import type { EditorialBriefDbAdapter } from "../src/adapters/neon";
 import type { R2StorageAdapter, R2UploadInput } from "../src/adapters/r2";
+import { validateCloudBriefEnv } from "../src/config/cloudEnv";
 import {
+  CloudBriefStepError,
   generateCloudEditorialBrief,
+  getCloudBriefGenerationStep,
   getTodayEditorialBrief
 } from "../src/pipeline/generateCloudEditorialBrief";
 import {
   EDITORIAL_BRIEF_RUN_TYPE,
+  type CloudBriefGenerationStep,
   type CloudEditorialBriefRecord,
   type CloudNewsItemRecord,
   type CloudRunRecord,
@@ -340,6 +345,193 @@ test("cron generate brief accepts correct CRON_SECRET", async () => {
   assert.equal(payload.status, "created");
 });
 
+test("cron generate brief returns failed step and redacted short error", async () => {
+  const response = await handleCronGenerateBrief(new Request("http://localhost/api/cron/generate-brief", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer cron-secret"
+    }
+  }), {
+    env: {
+      CRON_SECRET: "cron-secret",
+      DATABASE_URL: "postgres://user:database-secret@example.neon.tech/db",
+      CUSTOM_API_KEY: "custom-api-key-secret"
+    },
+    generate: async () => {
+      throw new CloudBriefStepError(
+        "db.connect",
+        new Error(
+          "write EPROTO DATABASE_URL R2_SECRET_ACCESS_KEY CRON_SECRET CUSTOM_API_KEY postgres://user:database-secret@example.neon.tech/db custom-api-key-secret SSL/TLS handshake failure"
+        )
+      );
+    }
+  });
+  const payload = await response.json();
+  const serialized = JSON.stringify(payload);
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.step, "db.connect");
+  assert.match(payload.error, /SSL\/TLS handshake failure/);
+  assert.doesNotMatch(
+    serialized,
+    /DATABASE_URL|R2_SECRET_ACCESS_KEY|CRON_SECRET|CUSTOM_API_KEY|database-secret|custom-api-key-secret|cron-secret/
+  );
+});
+
+test("cron generate brief validates cloud env before external adapters", async () => {
+  const response = await handleCronGenerateBrief(new Request("http://localhost/api/cron/generate-brief", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer cron-secret"
+    }
+  }), {
+    env: {
+      CRON_SECRET: "cron-secret",
+      DATABASE_URL: "https://neon.example.com/dashboard",
+      R2_ENDPOINT: "https://account-id.r2.cloudflarestorage.com",
+      R2_ACCESS_KEY_ID: "r2-access-key",
+      R2_SECRET_ACCESS_KEY: "r2-secret-key",
+      R2_BUCKET: "briefs"
+    }
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.step, "config.validate");
+  assert.match(payload.error, /Cloud brief env invalid/);
+  assert.match(payload.error, /postgres/);
+});
+
+test("manual generate brief rejects unauthenticated dashboard users", async () => {
+  let called = false;
+  const response = await handleManualGenerateBrief(
+    new Request("http://localhost/api/brief/generate", {
+      method: "POST"
+    }),
+    {
+      isAuthorized: async () => false,
+      generate: async () => {
+        called = true;
+        return { status: "created" };
+      }
+    }
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.step, "auth");
+  assert.equal(called, false);
+});
+
+test("manual generate brief uses dashboard auth and does not require CRON_SECRET", async () => {
+  let receivedForce: boolean | undefined;
+  const response = await handleManualGenerateBrief(
+    new Request("http://localhost/api/brief/generate", {
+      method: "POST"
+    }),
+    {
+      env: {},
+      isAuthorized: async () => true,
+      generate: async ({ force }) => {
+        receivedForce = force;
+        return { status: "created" };
+      }
+    }
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.status, "created");
+  assert.equal(receivedForce, false);
+});
+
+test("manual generate brief passes force true for dashboard reruns", async () => {
+  let receivedForce = false;
+  const response = await handleManualGenerateBrief(
+    new Request("http://localhost/api/brief/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ force: true })
+    }),
+    {
+      isAuthorized: async () => true,
+      generate: async ({ force }) => {
+        receivedForce = force;
+        return { status: "created" };
+      }
+    }
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(receivedForce, true);
+});
+
+test("manual generate brief returns failed step and redacted error summary", async () => {
+  const response = await handleManualGenerateBrief(
+    new Request("http://localhost/api/brief/generate", {
+      method: "POST"
+    }),
+    {
+      env: {
+        DATABASE_URL: "postgres://user:database-secret@example.neon.tech/db",
+        R2_SECRET_ACCESS_KEY: "r2-secret-key",
+        CUSTOM_API_KEY: "custom-api-key-secret"
+      },
+      isAuthorized: async () => true,
+      generate: async () => {
+        throw new CloudBriefStepError(
+          "db.connect",
+          new Error(
+            "write EPROTO DATABASE_URL R2_SECRET_ACCESS_KEY CUSTOM_API_KEY postgres://user:database-secret@example.neon.tech/db r2-secret-key custom-api-key-secret"
+          )
+        );
+      }
+    }
+  );
+  const payload = await response.json();
+  const serialized = JSON.stringify(payload);
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.step, "db.connect");
+  assert.match(payload.error, /write EPROTO/);
+  assert.doesNotMatch(
+    serialized,
+    /DATABASE_URL|R2_SECRET_ACCESS_KEY|CUSTOM_API_KEY|database-secret|r2-secret-key|custom-api-key-secret/
+  );
+});
+
+test("cloud brief env accepts R2_ENDPOINT and rejects endpoint-shaped account id", () => {
+  const baseEnv = {
+    DATABASE_URL: "postgresql://user:password@example.neon.tech/db?sslmode=require",
+    R2_ACCESS_KEY_ID: "r2-access-key",
+    R2_SECRET_ACCESS_KEY: "r2-secret-key",
+    R2_BUCKET: "briefs"
+  };
+
+  assert.equal(
+    validateCloudBriefEnv({
+      ...baseEnv,
+      R2_ENDPOINT: "https://account-id.r2.cloudflarestorage.com"
+    }).ok,
+    true
+  );
+
+  const invalid = validateCloudBriefEnv({
+    ...baseEnv,
+    R2_ACCOUNT_ID: "https://account-id.r2.cloudflarestorage.com"
+  });
+
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.errors.join(" "), /R2_ACCOUNT_ID/);
+});
+
 test("cloud brief generation returns already_exists for successful same-day run", async () => {
   const db = new MemoryBriefDb([
     {
@@ -371,6 +563,37 @@ test("cloud brief generation returns already_exists for successful same-day run"
   assert.equal(r2.uploads.length, 0);
 });
 
+test("cloud brief generation force rerun overwrites successful same-day run", async () => {
+  const db = new MemoryBriefDb([
+    {
+      id: "run-existing",
+      runDate: "2026-06-02",
+      runType: EDITORIAL_BRIEF_RUN_TYPE,
+      status: "success",
+      startedAt: "2026-06-02T00:00:00.000Z",
+      finishedAt: "2026-06-02T00:01:00.000Z",
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:01:00.000Z"
+    }
+  ]);
+  const r2 = new MemoryR2();
+  const result = await generateCloudEditorialBrief({
+    db,
+    r2,
+    now: new Date("2026-06-02T00:00:00.000Z"),
+    runDate: "2026-06-02",
+    force: true,
+    pipeline: fakePipeline()
+  });
+
+  assert.equal(result.status, "created");
+  assert.equal(db.runs.length, 1);
+  assert.equal(db.runs[0].id, "run-existing");
+  assert.equal(db.runs[0].status, "success");
+  assert.equal(db.shortlistedItems.length, 10);
+  assert.equal(r2.uploads.length, 1);
+});
+
 test("cloud brief generation writes run, 10 shortlisted items, editorial brief, and R2 report", async () => {
   const db = new MemoryBriefDb();
   const r2 = new MemoryR2();
@@ -392,6 +615,71 @@ test("cloud brief generation writes run, 10 shortlisted items, editorial brief, 
   assert.equal(db.briefs[0].reportR2Key, "reports/2026-06-02/editorial-brief.md");
   assert.equal(r2.uploads.length, 1);
   assert.equal(r2.uploads[0].key, "reports/2026-06-02/editorial-brief.md");
+});
+
+test("cloud brief generation reports step sequence on successful run", async () => {
+  const db = new MemoryBriefDb();
+  const r2 = new MemoryR2();
+  const steps: CloudBriefGenerationStep[] = [];
+
+  await generateCloudEditorialBrief({
+    db,
+    r2,
+    now: new Date("2026-06-02T00:00:00.000Z"),
+    runDate: "2026-06-02",
+    pipeline: fakePipeline(),
+    onStep: (step) => steps.push(step)
+  });
+
+  assert.deepEqual(steps, [
+    "db.connect",
+    "db.findExistingRun",
+    "db.createRun",
+    "collectNews",
+    "shortlistNews",
+    "selectTopic",
+    "db.saveNewsItems",
+    "db.saveShortlistedItems",
+    "db.saveEditorialBrief",
+    "r2.uploadBriefReport",
+    "db.markRunSuccess"
+  ]);
+});
+
+test("cloud brief generation marks failed run with failing step", async () => {
+  const db = new MemoryBriefDb();
+  const r2 = new MemoryR2();
+  const steps: CloudBriefGenerationStep[] = [];
+
+  await assert.rejects(
+    () =>
+      generateCloudEditorialBrief({
+        db,
+        r2,
+        now: new Date("2026-06-02T00:00:00.000Z"),
+        runDate: "2026-06-02",
+        pipeline: {
+          collectNewsWithReport: async () => {
+            throw new Error("write EPROTO SSL/TLS handshake failure");
+          }
+        } as any,
+        onStep: (step) => steps.push(step)
+      }),
+    (error) => {
+      assert.equal(getCloudBriefGenerationStep(error), "collectNews");
+      return true;
+    }
+  );
+
+  assert.equal(db.runs[0].status, "failed");
+  assert.equal(db.runs[0].error, "write EPROTO SSL/TLS handshake failure");
+  assert.deepEqual(steps, [
+    "db.connect",
+    "db.findExistingRun",
+    "db.createRun",
+    "collectNews",
+    "db.markRunFailed"
+  ]);
 });
 
 test("today cloud brief returns 10 shortlistedItems", async () => {
@@ -426,7 +714,10 @@ test("cloud brief code does not call WeChat APIs or publish endpoints", async ()
   const files = await Promise.all([
     readFile("src/pipeline/generateCloudEditorialBrief.ts", "utf8"),
     readFile("apps/dashboard/app/api/cron/generate-brief/route.ts", "utf8"),
-    readFile("apps/dashboard/lib/cron-generate-brief.ts", "utf8")
+    readFile("apps/dashboard/lib/cron-generate-brief.ts", "utf8"),
+    readFile("apps/dashboard/app/api/brief/generate/route.ts", "utf8"),
+    readFile("apps/dashboard/lib/manual-generate-brief.ts", "utf8"),
+    readFile("apps/dashboard/lib/brief-generate-response.ts", "utf8")
   ]);
   const source = files.join("\n");
 

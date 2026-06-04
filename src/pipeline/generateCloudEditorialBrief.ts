@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { EditorialBriefDbAdapter } from "../adapters/neon.js";
 import type { R2StorageAdapter } from "../adapters/r2.js";
 import {
+  CLOUD_BRIEF_GENERATION_STEPS,
+  type CloudBriefGenerationStep,
   EDITORIAL_BRIEF_RUN_TYPE,
   type CloudEditorialBriefRecord,
   type CloudNewsItemRecord,
@@ -31,6 +33,7 @@ import {
 } from "./selectTopic.js";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+type StepReporter = (step: CloudBriefGenerationStep) => void;
 
 export interface CloudBriefPipelineFns {
   collectNewsWithReport: typeof collectNewsWithReport;
@@ -49,6 +52,9 @@ export interface GenerateCloudEditorialBriefOptions {
   fetchImpl?: FetchLike;
   logger?: Logger;
   pipeline?: Partial<CloudBriefPipelineFns>;
+  force?: boolean;
+  onStep?: StepReporter;
+  sanitizeErrorMessage?: (message: string) => string;
 }
 
 export type GenerateCloudEditorialBriefResult =
@@ -194,12 +200,65 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isCloudBriefGenerationStep(value: unknown): value is CloudBriefGenerationStep {
+  return (
+    typeof value === "string" &&
+    CLOUD_BRIEF_GENERATION_STEPS.includes(value as CloudBriefGenerationStep)
+  );
+}
+
+export class CloudBriefStepError extends Error {
+  readonly step: CloudBriefGenerationStep;
+  readonly originalError: unknown;
+
+  constructor(step: CloudBriefGenerationStep, error: unknown) {
+    super(errorMessage(error));
+    this.name = "CloudBriefStepError";
+    this.step = step;
+    this.originalError = error;
+
+    if (error instanceof Error && error.stack) {
+      this.stack = error.stack;
+    }
+  }
+}
+
+export function getCloudBriefGenerationStep(error: unknown): CloudBriefGenerationStep | undefined {
+  if (error instanceof CloudBriefStepError) {
+    return error.step;
+  }
+
+  if (error && typeof error === "object" && "step" in error) {
+    const step = (error as { step?: unknown }).step;
+    if (isCloudBriefGenerationStep(step)) {
+      return step;
+    }
+  }
+
+  return undefined;
+}
+
+async function runStep<T>(
+  step: CloudBriefGenerationStep,
+  reportStep: StepReporter | undefined,
+  run: () => Promise<T>
+): Promise<T> {
+  reportStep?.(step);
+
+  try {
+    return await run();
+  } catch (error) {
+    throw new CloudBriefStepError(step, error);
+  }
+}
+
 async function runExistingBriefPipeline(input: {
   now: Date;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: FetchLike;
   logger: Logger;
   pipeline: CloudBriefPipelineFns;
+  onStep?: StepReporter;
 }) {
   const collectOptions: CollectNewsOptions = {
     env: input.env,
@@ -208,12 +267,16 @@ async function runExistingBriefPipeline(input: {
     logger: input.logger,
     writeOutputs: false
   };
-  const collection = await input.pipeline.collectNewsWithReport(collectOptions);
-  const candidates = collection.candidates.slice(0, 20);
+  const { candidates } = await runStep("collectNews", input.onStep, async () => {
+    const collection = await input.pipeline.collectNewsWithReport(collectOptions);
+    const candidates = collection.candidates.slice(0, 20);
 
-  if (candidates.length !== 20) {
-    throw new Error(`Cloud editorial brief requires 20 candidates, got ${candidates.length}.`);
-  }
+    if (candidates.length !== 20) {
+      throw new Error(`Cloud editorial brief requires 20 candidates, got ${candidates.length}.`);
+    }
+
+    return { candidates };
+  });
 
   const shortlistOptions: ShortlistNewsOptions = {
     candidates,
@@ -221,11 +284,15 @@ async function runExistingBriefPipeline(input: {
     logger: input.logger,
     writeOutputs: false
   };
-  const shortlistResult = await input.pipeline.shortlistNewsWithReport(shortlistOptions);
+  const shortlistResult = await runStep("shortlistNews", input.onStep, async () => {
+    const shortlistResult = await input.pipeline.shortlistNewsWithReport(shortlistOptions);
 
-  if (shortlistResult.shortlisted.length !== 10) {
-    throw new Error(`Cloud editorial brief requires 10 shortlisted items, got ${shortlistResult.shortlisted.length}.`);
-  }
+    if (shortlistResult.shortlisted.length !== 10) {
+      throw new Error(`Cloud editorial brief requires 10 shortlisted items, got ${shortlistResult.shortlisted.length}.`);
+    }
+
+    return shortlistResult;
+  });
 
   const selectOptions: SelectTopicOptions = {
     shortlisted: shortlistResult.shortlisted,
@@ -233,16 +300,20 @@ async function runExistingBriefPipeline(input: {
     logger: input.logger,
     writeOutputs: false
   };
-  const topicResult = await input.pipeline.selectTopicWithReport(selectOptions);
-  const briefOptions: GenerateEditorialBriefOptions = {
-    candidates,
-    shortlisted: shortlistResult.shortlisted,
-    selectedTopic: topicResult.topic,
-    now: input.now,
-    logger: input.logger,
-    writeOutputs: false
-  };
-  const briefResult = await input.pipeline.generateEditorialBrief(briefOptions);
+  const { topicResult, briefResult } = await runStep("selectTopic", input.onStep, async () => {
+    const topicResult = await input.pipeline.selectTopicWithReport(selectOptions);
+    const briefOptions: GenerateEditorialBriefOptions = {
+      candidates,
+      shortlisted: shortlistResult.shortlisted,
+      selectedTopic: topicResult.topic,
+      now: input.now,
+      logger: input.logger,
+      writeOutputs: false
+    };
+    const briefResult = await input.pipeline.generateEditorialBrief(briefOptions);
+
+    return { topicResult, briefResult };
+  });
 
   return {
     candidates,
@@ -260,24 +331,39 @@ export async function generateCloudEditorialBrief(
   const runDate = options.runDate ?? formatRunDate(now, options.env?.BRIEF_TIME_ZONE);
   const runType = options.runType ?? EDITORIAL_BRIEF_RUN_TYPE;
   const pipeline = { ...defaultPipeline, ...options.pipeline };
+  const force = options.force === true;
+  let currentStep: CloudBriefGenerationStep = "db.connect";
+  const reportStep: StepReporter = (step) => {
+    currentStep = step;
+    options.onStep?.(step);
+  };
 
-  await options.db.ensureSchema();
-  const existing = await options.db.getSuccessfulRun(runDate, runType);
-  if (existing) {
+  await runStep("db.connect", reportStep, async () => {
+    await options.db.ensureSchema();
+  });
+  const existing = await runStep("db.findExistingRun", reportStep, async () =>
+    await options.db.getSuccessfulRun(runDate, runType)
+  );
+  if (existing && !force) {
     logger.info(`Cloud editorial brief already exists for ${runDate}.`);
     return {
       status: "already_exists",
       run: existing
     };
   }
+  if (existing && force) {
+    logger.info(`Cloud editorial brief manual force run will overwrite ${runDate}; runId=${existing.id}.`);
+  }
 
   const startedAt = now.toISOString();
-  const run = await options.db.startRun({
-    id: randomUUID(),
-    runDate,
-    runType,
-    startedAt
-  });
+  const run = await runStep("db.createRun", reportStep, async () =>
+    await options.db.startRun({
+      id: randomUUID(),
+      runDate,
+      runType,
+      startedAt
+    })
+  );
 
   try {
     await options.db.clearRunArtifacts(run.id);
@@ -286,45 +372,60 @@ export async function generateCloudEditorialBrief(
       env: options.env,
       fetchImpl: options.fetchImpl,
       logger,
-      pipeline
+      pipeline,
+      onStep: reportStep
     });
     const createdAt = now.toISOString();
-    const newsRows = createNewsRows({
-      runId: run.id,
-      candidates: generated.candidates,
-      createdAt
+    const newsRows = await runStep("db.saveNewsItems", reportStep, async () => {
+      const newsRows = createNewsRows({
+        runId: run.id,
+        candidates: generated.candidates,
+        createdAt
+      });
+      await options.db.insertNewsItems(newsRows.rows);
+      return newsRows;
     });
-    const shortlistedRows = createShortlistedRows({
-      runId: run.id,
-      shortlisted: generated.shortlisted,
-      idByOriginalId: newsRows.idByOriginalId,
-      createdAt
+    const shortlistedRows = await runStep("db.saveShortlistedItems", reportStep, async () => {
+      const shortlistedRows = createShortlistedRows({
+        runId: run.id,
+        shortlisted: generated.shortlisted,
+        idByOriginalId: newsRows.idByOriginalId,
+        createdAt
+      });
+      await options.db.insertShortlistedItems(shortlistedRows.rows);
+      return shortlistedRows;
     });
     const recommendedOriginalId = generated.selectedTopic.selected.id;
     const recommendedTopicId = shortlistedRows.idByOriginalId.get(recommendedOriginalId);
 
     if (!recommendedTopicId) {
-      throw new Error(`Recommended topic is not in persisted shortlist: ${recommendedOriginalId}`);
+      throw new CloudBriefStepError(
+        "selectTopic",
+        new Error(`Recommended topic is not in persisted shortlist: ${recommendedOriginalId}`)
+      );
     }
 
-    await options.db.insertNewsItems(newsRows.rows);
-    await options.db.insertShortlistedItems(shortlistedRows.rows);
-
     const reportR2Key = `reports/${runDate}/editorial-brief.md`;
-    const upload = await options.r2.putText({
-      key: reportR2Key,
-      body: generated.briefResult.markdown,
-      contentType: "text/markdown; charset=utf-8"
+    const brief = await runStep("db.saveEditorialBrief", reportStep, async () => {
+      const briefRow = createBriefRow({
+        runId: run.id,
+        recommendedTopicId,
+        reportR2Key,
+        createdAt,
+        briefResult: generated.briefResult
+      });
+      return await options.db.insertEditorialBrief(briefRow);
     });
-    const briefRow = createBriefRow({
-      runId: run.id,
-      recommendedTopicId,
-      reportR2Key: upload.key,
-      createdAt,
-      briefResult: generated.briefResult
-    });
-    const brief = await options.db.insertEditorialBrief(briefRow);
-    const successRun = await options.db.markRunSuccess(run.id, new Date().toISOString());
+    const upload = await runStep("r2.uploadBriefReport", reportStep, async () =>
+      await options.r2.putText({
+        key: reportR2Key,
+        body: generated.briefResult.markdown,
+        contentType: "text/markdown; charset=utf-8"
+      })
+    );
+    const successRun = await runStep("db.markRunSuccess", reportStep, async () =>
+      await options.db.markRunSuccess(run.id, new Date().toISOString())
+    );
 
     logger.info(`Cloud editorial brief generated for ${runDate}; reportR2Key=${upload.key}.`);
 
@@ -336,10 +437,22 @@ export async function generateCloudEditorialBrief(
       reportR2Key: upload.key
     };
   } catch (error) {
-    const message = errorMessage(error);
-    await options.db.markRunFailed(run.id, new Date().toISOString(), message);
-    logger.error(`Cloud editorial brief failed for ${runDate}: ${message}`);
-    throw error;
+    const failedStep = getCloudBriefGenerationStep(error) ?? currentStep;
+    const message = options.sanitizeErrorMessage?.(errorMessage(error)) ?? errorMessage(error);
+
+    try {
+      await runStep("db.markRunFailed", reportStep, async () =>
+        await options.db.markRunFailed(run.id, new Date().toISOString(), message)
+      );
+    } catch (markError) {
+      logger.error(`Cloud editorial brief failed for ${runDate}; step=db.markRunFailed.`);
+      throw markError;
+    }
+
+    logger.error(`Cloud editorial brief failed for ${runDate}; step=${failedStep}.`);
+    throw getCloudBriefGenerationStep(error)
+      ? error
+      : new CloudBriefStepError(failedStep, error);
   }
 }
 

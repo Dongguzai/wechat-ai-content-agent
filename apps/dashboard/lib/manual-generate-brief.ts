@@ -1,56 +1,64 @@
 import { NextResponse } from "next/server";
-import { verifyBearerToken } from "@/lib/auth";
+import { hasDashboardSession } from "@/lib/auth";
 import { asObject, sanitizeBriefGenerationErrorMessage } from "@/lib/brief-generate-response";
 import { generateCloudBriefForToday } from "@/lib/cloud-brief-server";
 import { redactJson } from "@/lib/redaction";
 import { getCloudBriefGenerationStep } from "../../../src/pipeline/generateCloudEditorialBrief";
 import type { CloudBriefGenerationStep } from "../../../src/types/cloud";
 
-export interface CronGenerateBriefHandlerOptions {
+export interface ManualGenerateBriefHandlerOptions {
   env?: NodeJS.ProcessEnv;
-  generate?: () => Promise<unknown>;
+  generate?: (input: { force: boolean }) => Promise<unknown>;
+  isAuthorized?: () => Promise<boolean>;
 }
 
-export async function handleCronGenerateBrief(
+export async function handleManualGenerateBrief(
   request: Request,
-  options: CronGenerateBriefHandlerOptions = {}
+  options: ManualGenerateBriefHandlerOptions = {}
 ) {
   const env = options.env ?? process.env;
-  const cronSecret = env.CRON_SECRET?.trim();
   let currentStep: CloudBriefGenerationStep = "auth";
   const logStep = (step: CloudBriefGenerationStep) => {
     currentStep = step;
-    console.log(`[cron.generate-brief] step=${step}`);
+    console.log(`[dashboard.generate-brief] step=${step}`);
   };
 
   logStep("auth");
 
-  if (!cronSecret) {
-    return NextResponse.json(
-      { ok: false, step: currentStep, error: "Cron credential is not configured." },
-      { status: 500 }
-    );
-  }
-
-  if (!verifyBearerToken(request.headers.get("authorization"), cronSecret)) {
+  const authorized = await (options.isAuthorized ? options.isAuthorized() : hasDashboardSession(env));
+  if (!authorized) {
     return NextResponse.json(
       { ok: false, step: currentStep, error: "Unauthorized." },
       { status: 401 }
     );
   }
 
+  const body = await request.json().catch(() => ({}));
+  const force = isObject(body) && body.force === true;
+
+  console.log(
+    force
+      ? "[dashboard.generate-brief] manual force run requested."
+      : "[dashboard.generate-brief] manual run requested."
+  );
+
   try {
-    const result = await (options.generate ??
-      (() =>
+    const generate =
+      options.generate ??
+      ((input: { force: boolean }) =>
         generateCloudBriefForToday(env, {
+          force: input.force,
+          runLabel: input.force ? "manual force run" : "manual run",
           onStep: logStep,
           sanitizeErrorMessage: (message) => sanitizeBriefGenerationErrorMessage(message, env)
-        })))();
+        }));
+    const result = await generate({ force });
+
     return NextResponse.json(redactJson({ ok: true, ...asObject(result) }));
   } catch (error) {
     const step = getCloudBriefGenerationStep(error) ?? currentStep;
     const message = sanitizeBriefGenerationErrorMessage(error, env);
-    console.error(`[cron.generate-brief] failed step=${step} error=${message}`);
+    console.error(`[dashboard.generate-brief] failed step=${step} error=${message}`);
 
     return NextResponse.json(
       redactJson({
@@ -61,4 +69,8 @@ export async function handleCronGenerateBrief(
       { status: 500 }
     );
   }
+}
+
+function isObject(value: unknown): value is { force?: unknown } {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

@@ -48,10 +48,22 @@ export function redactJson<T>(value: T): T {
 export function collectKnownSecretValues(
   env: NodeJS.ProcessEnv = process.env
 ): string[] {
-  return KNOWN_SECRET_ENV_KEYS.flatMap((key) => {
+  const values = new Set<string>();
+
+  for (const key of KNOWN_SECRET_ENV_KEYS) {
     const value = env[key];
-    return value && value.length >= 6 ? [value] : [];
-  });
+    if (value && value.length >= 6) {
+      values.add(value);
+    }
+  }
+
+  for (const [key, value] of Object.entries(env)) {
+    if (SECRET_KEY_PATTERN.test(key) && value && value.length >= 6) {
+      values.add(value);
+    }
+  }
+
+  return [...values];
 }
 
 export function redactSecrets(

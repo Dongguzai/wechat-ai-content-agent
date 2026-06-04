@@ -113,6 +113,22 @@ EXA_API_KEY=...
 - 缺少某个 key 时，对应 adapter 会保守回到 mock。
 - 搜索结果只是线索，不是事实来源。
 
+## 3.1 云端简报 cron
+
+### `/api/cron/generate-brief` 返回 `write EPROTO` 或 `SSL/TLS handshake failure`
+
+现象：
+
+- Vercel 返回 500。
+- 响应或日志里出现 `write EPROTO`、`ssl/tls alert handshake failure`。
+
+处理：
+
+- 先确认已部署新版代码；新版响应会包含 `step`，例如 `db.connect`、`r2.uploadBriefReport` 或 `config.validate`。
+- 如果 `step=db.connect`，检查 `DATABASE_URL` 必须是 Neon/Postgres 连接串，协议为 `postgres://` 或 `postgresql://`，不要填 HTTP 控制台链接，也不要设置 `sslmode=disable`。
+- 如果 `step=r2.uploadBriefReport` 或 `step=config.validate`，检查 R2 配置：推荐填写 `R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`；如果只填 `R2_ACCOUNT_ID`，它必须是纯 account id，不能包含 `https://`、斜杠或 `.r2.cloudflarestorage.com`。
+- 本地可先运行 `pnpm env:check` 做形态检查；该命令不会调用 Neon、R2、微信或 MiniMax。
+
 ## 4. APIMart 封面
 
 ### `COVER_ENABLE_REAL_API=true requires APIMART_API_KEY`

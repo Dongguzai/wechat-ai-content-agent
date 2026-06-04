@@ -27,6 +27,7 @@ cron-job.org
 ```env
 DATABASE_URL=
 DATABASE_MAX_CONNECTIONS=1
+R2_ENDPOINT=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -41,6 +42,8 @@ BRIEF_TIME_ZONE=Asia/Shanghai
 说明：
 
 - `DATABASE_URL` 使用 Neon Postgres 连接串。
+- `R2_ENDPOINT` 可直接填写 Cloudflare R2 S3 API endpoint，例如 `https://<account-id>.r2.cloudflarestorage.com`。
+- 如果不填 `R2_ENDPOINT`，则必须填写纯 account id 到 `R2_ACCOUNT_ID`；不要把完整 URL 填进 `R2_ACCOUNT_ID`。
 - R2 凭据只在服务端 adapter 使用，不输出到日志或前端。
 - `CRON_SECRET` 只用于 cron-job.org 调用 `/api/cron/generate-brief`。
 - `DASHBOARD_PASSWORD` 和 `AUTH_SECRET` 用于 Dashboard 登录保护。
