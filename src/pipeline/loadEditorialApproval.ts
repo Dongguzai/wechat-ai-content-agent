@@ -121,25 +121,31 @@ function approvedSelectionFor(
   item: ShortlistedNewsItem,
   approval: EditorialApprovalLoadResult
 ): SelectedTopicItem["selection"] {
-  const approvedTitle = approval.approvedTitle || item.title;
+  const itemTitle = item.titleZh?.trim() || item.title;
+  const itemSummary = item.summaryZh?.trim() || item.summary;
+  const topicAngle = item.topicAngleZh?.trim() || item.editorial.topicAngle;
+  const shortlistReason =
+    item.shortlistReasonZh?.trim() || item.editorial.shortlistReason;
+  const approvedTitle = approval.approvedTitle || itemTitle;
   const riskNotes = [
+    ...(item.riskNotesZh ?? []),
     item.editorial.riskNote,
     "该选题由 inputs/editorial-approval.json 人工确认，后续仍必须经过 fact pack、文章审核、封面审核、排版检查和草稿预检。"
   ].filter((value): value is string => Boolean(value?.trim()));
 
   return {
-    selectedReason: `用户确认入围资讯 ${item.id} 作为今日主选题。原入围理由：${item.editorial.shortlistReason}`,
-    whyMostWorthWriting: item.editorial.shortlistReason,
-    coreConflict: item.editorial.topicAngle,
-    publicInterest: item.summary,
+    selectedReason: `用户确认入围资讯 ${item.id} 作为今日主选题。原入围理由：${shortlistReason}`,
+    whyMostWorthWriting: shortlistReason,
+    coreConflict: topicAngle,
+    publicInterest: itemSummary,
     technicalSignificance: item.editorial.audienceFit,
-    businessImpact: item.editorial.topicAngle,
+    businessImpact: topicAngle,
     predictedImpact: "需要在 fact pack 与正文阶段继续核验具体影响范围。",
-    writingAngle: approval.notes || item.editorial.topicAngle,
-    suggestedTitles: [approvedTitle, item.title].filter(
+    writingAngle: approval.notes || topicAngle,
+    suggestedTitles: [approvedTitle, itemTitle].filter(
       (title, index, titles) => title.trim() && titles.indexOf(title) === index
     ),
-    articleThesis: item.editorial.topicAngle,
+    articleThesis: topicAngle,
     riskNotes,
     sourceReliability: reliabilityFromShortlisted(item),
     decisionScore: item.shortlistScore
@@ -158,7 +164,7 @@ function createApprovedTopicFromShortlisted(input: {
   ]
     .slice(0, 2)
     .map((item) => ({
-      title: item.title,
+      title: item.titleZh?.trim() || item.title,
       url: item.url,
       reason:
         "该资讯仍可作为备选，但本次人工确认选择了另一条入围资讯。",
@@ -191,7 +197,14 @@ function matchApproval(input: {
   const id = input.approval.approvedTopicId;
   const selected = input.selectedTopic.selected;
 
-  if (id && (id === selected.id || id === selected.title || id === selected.url)) {
+  if (
+    id &&
+    (id === selected.id ||
+      id === selected.title ||
+      id === selected.titleZh ||
+      id === selected.rawTitle ||
+      id === selected.url)
+  ) {
     return {
       kind: "selected-topic",
       item: selected,
@@ -200,7 +213,12 @@ function matchApproval(input: {
   }
 
   const shortlistedItem = input.shortlisted.find(
-    (item) => id === item.id || id === item.title || id === item.url
+    (item) =>
+      id === item.id ||
+      id === item.title ||
+      id === item.titleZh ||
+      id === item.rawTitle ||
+      id === item.url
   );
 
   if (shortlistedItem) {

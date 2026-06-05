@@ -8,7 +8,7 @@ export function ApprovalForm({ data }: { data: ApprovalData }) {
   const [approval, setApproval] = useState(data.approval);
   const [message, setMessage] = useState("");
 
-  const recommendedTitle = data.recommendedTopic?.title ?? "";
+  const recommendedTitle = data.recommendedTopic?.titleZh ?? data.recommendedTopic?.title ?? "";
   const recommendedId = data.recommendedTopic?.id ?? "";
 
   async function save() {
@@ -58,12 +58,12 @@ export function ApprovalForm({ data }: { data: ApprovalData }) {
                     ...current,
                     approvedByUser: false,
                     approvedTopicId: String(item.id ?? ""),
-                    approvedTitle: String(item.title ?? "")
+                    approvedTitle: String(item.titleZh ?? item.title ?? "")
                   }))
                 }
                 className="rounded-lg border border-line px-3 py-2 text-left text-sm font-semibold text-ink hover:bg-stone-50"
               >
-                {index + 1}. {item.title ?? "未命名资讯"}
+                {index + 1}. {item.titleZh ?? item.title ?? "未命名资讯"}
               </button>
             ))}
           </div>

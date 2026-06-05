@@ -12,6 +12,12 @@ export type SearchProvider = "tavily" | "exa" | "none";
 
 export type NewsDataMode = "real" | "mock";
 
+export type NewsLocalizationStatus =
+  | "not_required"
+  | "needs_localization"
+  | "localized"
+  | "failed";
+
 export type NewsTag =
   | "tooling"
   | "open-source"
@@ -66,6 +72,7 @@ export interface NewsRejection {
   hard: true;
   reason: string;
   detail?: string;
+  stage?: "basic" | "localization" | "editorial";
   rejectedAt: string;
 }
 
@@ -93,6 +100,8 @@ export interface NormalizedNewsItem {
   mock?: boolean;
   mockReason?: string;
   title: string;
+  rawTitle?: string;
+  titleZh?: string;
   url: string;
   sourceName: string;
   sourceType: NewsSourceType;
@@ -102,6 +111,14 @@ export interface NormalizedNewsItem {
   fetchedAt: string;
   snippet?: string;
   summary: string;
+  rawSummary?: string;
+  summaryZh?: string;
+  sourceLanguage?: "zh" | "en" | "unknown";
+  topicAngleZh?: string;
+  shortlistReasonZh?: string;
+  riskNotesZh?: string[];
+  localized?: boolean;
+  localizationStatus?: NewsLocalizationStatus;
   category: NewsCategory;
   evidence: string[];
   duplicateKey: string;
@@ -263,12 +280,17 @@ export interface CollectionOutputFiles {
 
 export interface NewsCollectionStats {
   rawCount: number;
+  realSourceCount?: number;
   rssRawCount: number;
   tavilyRawCount: number;
   exaRawCount: number;
   normalizedCount: number;
   dedupedCount: number;
   hardRejectionCount: number;
+  basicRejectionCount?: number;
+  localizedCount?: number;
+  localizationFailedCount?: number;
+  rejectedAfterLocalizationCount?: number;
   finalCandidateCount: number;
   rssCandidateCount: number;
   globalSearchCandidateCount: number;

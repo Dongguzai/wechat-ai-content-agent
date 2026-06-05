@@ -9,6 +9,10 @@ export {
   checkSourceHealthWithReport
 } from "./pipeline/checkSourceHealth.js";
 export { collectNews } from "./pipeline/collectNews.js";
+export {
+  detectNewsSourceLanguage,
+  localizeNewsItem
+} from "./pipeline/localizeNewsItem.js";
 export { shortlistNews, shortlistNewsWithReport } from "./pipeline/shortlistNews.js";
 export { selectTopic } from "./pipeline/selectTopic.js";
 export { writeArticle, writeArticleWithReport } from "./pipeline/writeArticle.js";

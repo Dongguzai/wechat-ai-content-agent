@@ -28,6 +28,9 @@ export interface AuditRealDataOptions {
 }
 
 interface LoadedAuditArtifacts {
+  rawItems: NormalizedNewsItem[];
+  normalizedItems: NormalizedNewsItem[];
+  rejectedItems: NormalizedNewsItem[];
   candidates: NormalizedNewsItem[];
   shortlisted: ShortlistedNewsItem[];
   selectedTopic?: SelectedTopic;
@@ -202,6 +205,18 @@ function productionPassed(realProductionMode: boolean, passed: boolean): boolean
 
 async function loadArtifacts(outputDir: string): Promise<LoadedAuditArtifacts> {
   return {
+    rawItems:
+      (await readOptionalJsonFile<NormalizedNewsItem[]>(
+        join(outputDir, "raw-news.json")
+      )) ?? [],
+    normalizedItems:
+      (await readOptionalJsonFile<NormalizedNewsItem[]>(
+        join(outputDir, "normalized-news.json")
+      )) ?? [],
+    rejectedItems:
+      (await readOptionalJsonFile<NormalizedNewsItem[]>(
+        join(outputDir, "rejected-news.json")
+      )) ?? [],
     candidates:
       (await readOptionalJsonFile<NormalizedNewsItem[]>(
         join(outputDir, "candidate-news.json")
@@ -228,6 +243,8 @@ function createSummary(artifacts: LoadedAuditArtifacts): RealDataAuditSummary {
   const realCandidates = artifacts.candidates.filter((item) => !isMockNewsItem(item));
   const mockCandidates = artifacts.candidates.filter(isMockNewsItem);
   const mockShortlisted = artifacts.shortlisted.filter(isMockNewsItem);
+  const sourceItems =
+    artifacts.rawItems.length > 0 ? artifacts.rawItems : artifacts.normalizedItems;
   const mockFallbackDetected =
     artifacts.candidates.some((item) => item.mockReason === "rss_fallback") ||
     /mock rss fallback|fallback items|added mock/i.test(
@@ -237,6 +254,15 @@ function createSummary(artifacts: LoadedAuditArtifacts): RealDataAuditSummary {
   return {
     candidateCount: artifacts.candidates.length,
     shortlistedCount: artifacts.shortlisted.length,
+    realSourceCount: sourceItems.filter((item) => !isMockNewsItem(item)).length,
+    localizedCount: artifacts.normalizedItems.filter((item) => item.localized === true)
+      .length,
+    localizationFailedCount: artifacts.rejectedItems.filter(
+      (item) => item.rejection?.reason === "localization_failed"
+    ).length,
+    rejectedAfterLocalizationCount: artifacts.rejectedItems.filter(
+      (item) => item.rejection?.stage === "editorial"
+    ).length,
     realRssCandidateCount: realCandidates.filter((item) => item.sourceType === "rss")
       .length,
     realTavilyCandidateCount: realCandidates.filter(
@@ -304,6 +330,10 @@ function buildChecks(input: {
       message:
         "candidate-news.json must include at least one real RSS, Tavily, or Exa source in production mode.",
       details: [
+        `realSourceCount=${summary.realSourceCount ?? 0}`,
+        `localizedCount=${summary.localizedCount ?? 0}`,
+        `localizationFailedCount=${summary.localizationFailedCount ?? 0}`,
+        `rejectedAfterLocalizationCount=${summary.rejectedAfterLocalizationCount ?? 0}`,
         `realRss=${summary.realRssCandidateCount}`,
         `realTavily=${summary.realTavilyCandidateCount}`,
         `realExa=${summary.realExaCandidateCount}`
@@ -440,6 +470,10 @@ function createReport(result: RealDataAuditResult): string {
     "",
     `- candidateCount: ${result.summary.candidateCount}`,
     `- shortlistedCount: ${result.summary.shortlistedCount}`,
+    `- realSourceCount: ${result.summary.realSourceCount ?? 0}`,
+    `- localizedCount: ${result.summary.localizedCount ?? 0}`,
+    `- localizationFailedCount: ${result.summary.localizationFailedCount ?? 0}`,
+    `- rejectedAfterLocalizationCount: ${result.summary.rejectedAfterLocalizationCount ?? 0}`,
     `- realRssCandidateCount: ${result.summary.realRssCandidateCount}`,
     `- realTavilyCandidateCount: ${result.summary.realTavilyCandidateCount}`,
     `- realExaCandidateCount: ${result.summary.realExaCandidateCount}`,

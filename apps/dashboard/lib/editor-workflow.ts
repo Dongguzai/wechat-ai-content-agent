@@ -94,7 +94,7 @@ export async function selectBriefTopic(
   const approval = {
     approvedByUser: true,
     approvedTopicId: topicId,
-    approvedTitle: stringValue(topic.title),
+    approvedTitle: stringValue(topic.titleZh) || stringValue(topic.title),
     notes: ""
   };
   const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);

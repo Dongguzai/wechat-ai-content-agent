@@ -263,33 +263,47 @@ export function CloudBriefView() {
         </section>
       ) : null}
 
-      {items.slice(0, 10).map((item) => (
-        <article key={item.id} className="border border-line bg-white p-5">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-stone-500">#{item.rank}</p>
-              <h3 className="mt-1 text-base font-bold leading-6 text-ink">{item.title}</h3>
-              <p className="mt-2 text-sm text-stone-600">{sourceLabel(item)}</p>
+      {items.slice(0, 10).map((item) => {
+        const title = item.titleZh ?? item.title;
+        const rawTitle = item.rawTitle ?? "";
+        const summary = item.summaryZh ?? item.summary;
+        const topicAngle = item.topicAngleZh ?? item.topicAngle;
+        const shortlistReason = item.shortlistReasonZh ?? item.shortlistReason;
+        const riskNotes = item.riskNotesZh?.length ? item.riskNotesZh : item.riskNotes;
+
+        return (
+          <article key={item.id} className="border border-line bg-white p-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-stone-500">#{item.rank}</p>
+                <h3 className="mt-1 text-base font-bold leading-6 text-ink">{title}</h3>
+                {rawTitle && rawTitle !== title ? (
+                  <p className="mt-2 text-sm leading-6 text-stone-600">原始标题：{rawTitle}</p>
+                ) : null}
+                <p className="mt-2 break-all text-sm text-stone-600">原文 URL：{item.url}</p>
+                <p className="mt-2 text-sm text-stone-600">{sourceLabel(item)}</p>
+              </div>
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold text-stone-700 hover:border-ink hover:text-ink"
+              >
+                <ExternalLink className="size-4" aria-hidden="true" />
+                阅读原文
+              </a>
             </div>
-            <a
-              href={item.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold text-stone-700 hover:border-ink hover:text-ink"
-            >
-              <ExternalLink className="size-4" aria-hidden="true" />
-              阅读原文
-            </a>
-          </div>
-          <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-            <Info label="score" value={String(item.shortlistScore)} />
-            <Info label="category / tags" value={[item.category, item.tags.join(", ")].filter(Boolean).join(" / ")} />
-            <Info label="topicAngle" value={item.topicAngle} wide />
-            <Info label="shortlistReason" value={item.shortlistReason} wide />
-            <Info label="riskNotes" value={item.riskNotes.length ? item.riskNotes.join("；") : "无"} wide />
-          </dl>
-        </article>
-      ))}
+            <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+              <Info label="score" value={String(item.shortlistScore)} />
+              <Info label="category / tags" value={[item.category, item.tags.join(", ")].filter(Boolean).join(" / ")} />
+              <Info label="中文摘要" value={summary} wide />
+              <Info label="中文选题角度" value={topicAngle} wide />
+              <Info label="中文入围理由" value={shortlistReason} wide />
+              <Info label="风险提醒" value={riskNotes.length ? riskNotes.join("；") : "无"} wide />
+            </dl>
+          </article>
+        );
+      })}
     </div>
   );
 }

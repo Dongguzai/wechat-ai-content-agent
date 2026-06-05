@@ -62,6 +62,14 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
 function toTimestamp(value: string | undefined): Date | null {
   if (!value) {
     return null;
@@ -105,12 +113,16 @@ function toNewsItem(row: Record<string, unknown>): CloudNewsItemRecord {
 }
 
 function toShortlistedItem(row: Record<string, unknown>): CloudShortlistedItemRecord {
+  const rawJson = isRecord(row.news_raw_json) ? row.news_raw_json : {};
+
   return {
     id: String(row.id),
     runId: String(row.run_id),
     newsItemId: String(row.news_item_id),
     rank: Number(row.rank),
     title: String(row.title),
+    rawTitle: optionalString(rawJson.rawTitle),
+    titleZh: optionalString(rawJson.titleZh) ?? String(row.title),
     url: String(row.url),
     sourceName: String(row.source_name),
     sourceType: String(row.source_type),
@@ -119,10 +131,22 @@ function toShortlistedItem(row: Record<string, unknown>): CloudShortlistedItemRe
     category: String(row.category),
     tags: asStringArray(row.tags),
     summary: String(row.summary),
+    rawSummary: optionalString(rawJson.rawSummary),
+    summaryZh: optionalString(rawJson.summaryZh) ?? String(row.summary),
     topicAngle: String(row.topic_angle),
+    topicAngleZh: optionalString(rawJson.topicAngleZh) ?? String(row.topic_angle),
     shortlistReason: String(row.shortlist_reason),
+    shortlistReasonZh: optionalString(rawJson.shortlistReasonZh) ?? String(row.shortlist_reason),
     shortlistScore: Number(row.shortlist_score),
     riskNotes: asStringArray(row.risk_notes),
+    riskNotesZh: asStringArray(rawJson.riskNotesZh),
+    sourceLanguage:
+      rawJson.sourceLanguage === "zh" ||
+      rawJson.sourceLanguage === "en" ||
+      rawJson.sourceLanguage === "unknown"
+        ? rawJson.sourceLanguage
+        : undefined,
+    localized: typeof rawJson.localized === "boolean" ? rawJson.localized : undefined,
     createdAt: iso(row.created_at)
   };
 }
@@ -377,7 +401,13 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
 
       const [briefRows, shortlistedRows] = await Promise.all([
         sql`select * from editorial_briefs where run_id = ${run.id} order by created_at desc limit 1`,
-        sql`select * from shortlisted_items where run_id = ${run.id} order by rank asc`
+        sql`
+          select shortlisted_items.*, news_items.raw_json as news_raw_json
+          from shortlisted_items
+          left join news_items on news_items.id = shortlisted_items.news_item_id
+          where shortlisted_items.run_id = ${run.id}
+          order by shortlisted_items.rank asc
+        `
       ]);
 
       return {

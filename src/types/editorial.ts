@@ -20,17 +20,23 @@ export interface ManualTopicLoadResult {
 export interface EditorialBriefCandidate {
   id: string;
   title: string;
+  rawTitle?: string;
+  titleZh?: string;
   sourceName: string;
   sourceType: string;
   url: string;
   score: number;
   summary: string;
+  rawSummary?: string;
+  summaryZh?: string;
 }
 
 export interface EditorialBriefShortlistedItem {
   id: string;
   rank: number;
   title: string;
+  rawTitle?: string;
+  titleZh?: string;
   url: string;
   sourceName: string;
   sourceType: NewsSourceType;
@@ -39,15 +45,23 @@ export interface EditorialBriefShortlistedItem {
   category: string;
   tags: string[];
   summary: string;
+  rawSummary?: string;
+  summaryZh?: string;
   riskNotes: string[];
   shortlistScore: number;
   topicAngle: string;
+  topicAngleZh?: string;
   shortlistReason: string;
+  shortlistReasonZh?: string;
+  sourceLanguage?: "zh" | "en" | "unknown";
+  localized?: boolean;
 }
 
 export interface EditorialBriefRecommendedTopic {
   id: string;
   title: string;
+  rawTitle?: string;
+  titleZh?: string;
   url: string;
   reason: string;
   coreConflict: string;

@@ -6,7 +6,11 @@ import type {
   LlmUsage
 } from "../types/llm.js";
 
-export type LlmStage = "article-writer" | "title-generator" | "article-reviewer";
+export type LlmStage =
+  | "article-writer"
+  | "title-generator"
+  | "article-reviewer"
+  | "news-localizer";
 
 export interface LlmStageConfig {
   stage: LlmStage;
@@ -25,13 +29,15 @@ const defaultMaxCompletionTokens = 2048;
 const stageProviderEnv: Record<LlmStage, string> = {
   "article-writer": "ARTICLE_WRITER_PROVIDER",
   "title-generator": "TITLE_GENERATOR_PROVIDER",
-  "article-reviewer": "ARTICLE_REVIEWER_PROVIDER"
+  "article-reviewer": "ARTICLE_REVIEWER_PROVIDER",
+  "news-localizer": "NEWS_LOCALIZER_PROVIDER"
 };
 
 const stageModelEnv: Record<LlmStage, string> = {
   "article-writer": "ARTICLE_WRITER_MODEL",
   "title-generator": "TITLE_GENERATOR_MODEL",
-  "article-reviewer": "ARTICLE_REVIEWER_MODEL"
+  "article-reviewer": "ARTICLE_REVIEWER_MODEL",
+  "news-localizer": "NEWS_LOCALIZER_MODEL"
 };
 
 const nullUsage: LlmUsage = {

@@ -93,6 +93,28 @@ function trimText(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function displayTitle(item: NormalizedNewsItem): string {
+  return trimText(item.titleZh) || trimText(item.title);
+}
+
+function displaySummary(item: NormalizedNewsItem): string {
+  return trimText(item.summaryZh) || trimText(item.summary);
+}
+
+function combinedText(item: NormalizedNewsItem): string {
+  return [
+    displayTitle(item),
+    displaySummary(item),
+    item.rawTitle,
+    item.rawSummary,
+    item.sourceName,
+    item.tags?.join(" ")
+  ]
+    .map(trimText)
+    .filter(Boolean)
+    .join(" ");
+}
+
 function hasRequiredSource(item: NormalizedNewsItem): boolean {
   return trimText(item.url).length > 0 && trimText(item.sourceName).length > 0;
 }
@@ -202,7 +224,7 @@ function familyFor(category: NewsCategory): TopicFamily {
 }
 
 function isShallowProductUpdate(item: NormalizedNewsItem): boolean {
-  const text = `${item.title} ${item.summary}`.toLowerCase();
+  const text = combinedText(item).toLowerCase();
 
   return [
     "minor update",
@@ -230,9 +252,7 @@ function audienceFitFor(category: NewsCategory): string {
 }
 
 function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
-  const text = `${item.title} ${item.summary} ${item.sourceName} ${
-    item.tags?.join(" ") ?? ""
-  }`.toLowerCase();
+  const text = combinedText(item).toLowerCase();
   const tags = new Set<NewsTag>();
 
   if (item.category === "model") {
@@ -303,7 +323,12 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
 }
 
 function topicAngleFor(item: NormalizedNewsItem): string {
-  const text = item.title.toLowerCase();
+  const localizedAngle = trimText(item.topicAngleZh);
+  if (localizedAngle) {
+    return localizedAngle;
+  }
+
+  const text = combinedText(item).toLowerCase();
 
   if (text.includes("claude code") && text.includes("goose")) {
     return "表面上是 Claude Code 与 Goose 的价格对比，真正的问题是编码代理会不会从昂贵订阅走向开源替代。对开发者来说，这关系到工具选型、团队成本和代码工作流是否被单一平台锁住。";
@@ -378,6 +403,11 @@ function shortlistReasonFor(
   metrics: ShortlistScoreDimensions,
   shortlistScore: number
 ): string {
+  const localizedReason = trimText(item.shortlistReasonZh);
+  if (localizedReason) {
+    return localizedReason;
+  }
+
   if (item.sourceType === "global_search") {
     return `来自 ${
       item.provider ?? "global_search"
@@ -431,17 +461,30 @@ function toShortlistedItem(item: NormalizedNewsItem): ShortlistedNewsItem {
   const shortlistMetrics = scoreShortlistDimensions(item);
   const shortlistScore = calculateShortlistScore(shortlistMetrics);
   const tags = canonicalTagsFor(item);
+  const topicAngle = topicAngleFor(item);
+  const shortlistReason = shortlistReasonFor(item, shortlistMetrics, shortlistScore);
+  const riskNotes = [
+    ...(item.riskNotesZh ?? []).map(trimText),
+    trimText(riskNoteFor(item, shortlistMetrics))
+  ].filter(Boolean);
 
   return {
     ...item,
+    title: displayTitle(item),
+    summary: displaySummary(item),
+    titleZh: trimText(item.titleZh) || displayTitle(item),
+    summaryZh: trimText(item.summaryZh) || displaySummary(item),
+    topicAngleZh: topicAngle,
+    shortlistReasonZh: shortlistReason,
+    riskNotesZh: [...new Set(riskNotes)],
     tags,
     shortlistScore,
     shortlistMetrics,
     editorial: {
-      shortlistReason: shortlistReasonFor(item, shortlistMetrics, shortlistScore),
+      shortlistReason,
       audienceFit: audienceFitFor(item.category),
-      topicAngle: topicAngleFor(item),
-      riskNote: riskNoteFor(item, shortlistMetrics),
+      topicAngle,
+      riskNote: riskNotes.length > 0 ? [...new Set(riskNotes)].join("；") : undefined,
       recommendedUse: recommendedUseFor(item, shortlistMetrics, shortlistScore)
     }
   };

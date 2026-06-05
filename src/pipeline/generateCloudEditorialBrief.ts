@@ -81,6 +81,11 @@ function fixedNumber(value: number | undefined, fallback = 0): number {
   return Number((value ?? fallback).toFixed(1));
 }
 
+function textFallback(primary: string | undefined, fallback: string): string {
+  const value = primary?.trim();
+  return value ? value : fallback;
+}
+
 function createNewsRows(input: {
   runId: string;
   candidates: NormalizedNewsItem[];
@@ -97,13 +102,13 @@ function createNewsRows(input: {
     return {
       id,
       runId: input.runId,
-      title: item.title,
+      title: textFallback(item.titleZh, item.title),
       url: item.url,
       sourceName: item.sourceName,
       sourceType: item.sourceType,
       provider: item.provider === "none" ? undefined : item.provider,
       query: item.query,
-      summary: item.summary,
+      summary: textFallback(item.summaryZh, item.summary),
       publishedAt: item.publishedAt,
       fetchedAt: item.fetchedAt,
       score: fixedNumber(item.scores.final),
@@ -116,8 +121,14 @@ function createNewsRows(input: {
 }
 
 function riskNotesFor(item: ShortlistedNewsItem): string[] {
-  const note = item.editorial.riskNote?.trim();
-  return note ? [note] : [];
+  const notes = [
+    ...(item.riskNotesZh ?? []),
+    item.editorial.riskNote
+  ]
+    .map((note) => note?.trim() ?? "")
+    .filter(Boolean);
+
+  return [...new Set(notes)];
 }
 
 function createShortlistedRows(input: {
@@ -148,7 +159,9 @@ function createShortlistedRows(input: {
       runId: input.runId,
       newsItemId,
       rank: index + 1,
-      title: item.title,
+      title: textFallback(item.titleZh, item.title),
+      rawTitle: item.rawTitle ?? item.title,
+      titleZh: textFallback(item.titleZh, item.title),
       url: item.url,
       sourceName: item.sourceName,
       sourceType: item.sourceType,
@@ -156,11 +169,18 @@ function createShortlistedRows(input: {
       query: item.query,
       category: item.category,
       tags: item.tags,
-      summary: item.summary,
-      topicAngle: item.editorial.topicAngle,
-      shortlistReason: item.editorial.shortlistReason,
+      summary: textFallback(item.summaryZh, item.summary),
+      rawSummary: item.rawSummary ?? item.summary,
+      summaryZh: textFallback(item.summaryZh, item.summary),
+      topicAngle: textFallback(item.topicAngleZh, item.editorial.topicAngle),
+      topicAngleZh: textFallback(item.topicAngleZh, item.editorial.topicAngle),
+      shortlistReason: textFallback(item.shortlistReasonZh, item.editorial.shortlistReason),
+      shortlistReasonZh: textFallback(item.shortlistReasonZh, item.editorial.shortlistReason),
       shortlistScore: fixedNumber(item.shortlistScore),
       riskNotes: riskNotesFor(item),
+      riskNotesZh: item.riskNotesZh,
+      sourceLanguage: item.sourceLanguage,
+      localized: item.localized,
       createdAt: input.createdAt
     };
   });

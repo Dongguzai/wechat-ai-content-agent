@@ -57,6 +57,8 @@ export interface CloudShortlistedItemRecord {
   newsItemId: string;
   rank: number;
   title: string;
+  rawTitle?: string;
+  titleZh?: string;
   url: string;
   sourceName: string;
   sourceType: string;
@@ -65,10 +67,17 @@ export interface CloudShortlistedItemRecord {
   category: string;
   tags: string[];
   summary: string;
+  rawSummary?: string;
+  summaryZh?: string;
   topicAngle: string;
+  topicAngleZh?: string;
   shortlistReason: string;
+  shortlistReasonZh?: string;
   shortlistScore: number;
   riskNotes: string[];
+  riskNotesZh?: string[];
+  sourceLanguage?: "zh" | "en" | "unknown";
+  localized?: boolean;
   createdAt: string;
 }
 

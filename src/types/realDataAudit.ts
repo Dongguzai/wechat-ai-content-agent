@@ -11,6 +11,10 @@ export interface RealDataAuditCheck {
 export interface RealDataAuditSummary {
   candidateCount: number;
   shortlistedCount: number;
+  realSourceCount?: number;
+  localizedCount?: number;
+  localizationFailedCount?: number;
+  rejectedAfterLocalizationCount?: number;
   realRssCandidateCount: number;
   realTavilyCandidateCount: number;
   realExaCandidateCount: number;

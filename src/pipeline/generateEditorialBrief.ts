@@ -41,15 +41,31 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function trimText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function displayTitle(item: NormalizedNewsItem): string {
+  return trimText(item.titleZh) || trimText(item.title);
+}
+
+function displaySummary(item: NormalizedNewsItem): string {
+  return trimText(item.summaryZh) || trimText(item.summary);
+}
+
 function toBriefCandidate(item: NormalizedNewsItem): EditorialBriefCandidate {
   return {
     id: item.id,
-    title: item.title,
+    title: displayTitle(item),
+    rawTitle: item.rawTitle ?? item.title,
+    titleZh: item.titleZh ?? displayTitle(item),
     sourceName: item.sourceName,
     sourceType: item.sourceType,
     url: item.url,
     score: Number(item.scores.final.toFixed(1)),
-    summary: item.summary
+    summary: displaySummary(item),
+    rawSummary: item.rawSummary ?? item.summary,
+    summaryZh: item.summaryZh ?? displaySummary(item)
   };
 }
 
@@ -62,7 +78,9 @@ function toBriefShortlisted(
   return {
     id: item.id,
     rank: index + 1,
-    title: item.title,
+    title: displayTitle(item),
+    rawTitle: item.rawTitle ?? item.title,
+    titleZh: item.titleZh ?? displayTitle(item),
     url: item.url,
     sourceName: item.sourceName,
     sourceType: item.sourceType,
@@ -70,11 +88,17 @@ function toBriefShortlisted(
     query: item.query ?? null,
     category: item.category,
     tags: item.tags,
-    summary: item.summary,
-    riskNotes: riskNote ? [riskNote] : [],
+    summary: displaySummary(item),
+    rawSummary: item.rawSummary ?? item.summary,
+    summaryZh: item.summaryZh ?? displaySummary(item),
+    riskNotes: riskNote ? [riskNote] : item.riskNotesZh ?? [],
     shortlistScore: Number(item.shortlistScore.toFixed(1)),
-    topicAngle: item.editorial.topicAngle,
-    shortlistReason: item.editorial.shortlistReason
+    topicAngle: item.topicAngleZh ?? item.editorial.topicAngle,
+    topicAngleZh: item.topicAngleZh ?? item.editorial.topicAngle,
+    shortlistReason: item.shortlistReasonZh ?? item.editorial.shortlistReason,
+    shortlistReasonZh: item.shortlistReasonZh ?? item.editorial.shortlistReason,
+    sourceLanguage: item.sourceLanguage,
+    localized: item.localized
   };
 }
 
@@ -187,7 +211,9 @@ function createBrief(input: {
     shortlisted: shortlistedItems,
     recommendedTopic: {
       id: selected.id,
-      title: selected.title,
+      title: displayTitle(selected),
+      rawTitle: selected.rawTitle ?? selected.title,
+      titleZh: selected.titleZh ?? displayTitle(selected),
       url: selected.url,
       reason: selection.selectedReason,
       coreConflict: selection.coreConflict,
@@ -230,16 +256,18 @@ function riskText(riskNotes: string[]): string {
 
 function createMarkdown(brief: EditorialBrief): string {
   const shortlistedLines = brief.shortlistedItems.flatMap((item, index) => [
-    `### ${index + 1}. ${item.title}`,
+    `### ${index + 1}. ${item.titleZh ?? item.title}`,
     "",
-    `- 原文链接：[${item.url}](${item.url})`,
+    `- 中文标题：${item.titleZh ?? item.title}`,
+    `- 原始标题：${item.rawTitle ?? item.title}`,
+    `- 原文 URL：[${item.url}](${item.url})`,
     `- 来源：${sourceLabel(item)}`,
     `- 分类：${item.category}`,
     `- 标签：${item.tags.join(", ")}`,
     `- 分数：${item.shortlistScore}`,
-    `- 简短摘要：${item.summary}`,
-    `- 选题角度：${item.topicAngle}`,
-    `- 入围理由：${item.shortlistReason}`,
+    `- 中文摘要：${item.summaryZh ?? item.summary}`,
+    `- 中文选题角度：${item.topicAngleZh ?? item.topicAngle}`,
+    `- 中文入围理由：${item.shortlistReasonZh ?? item.shortlistReason}`,
     `- 风险提醒：${riskText(item.riskNotes)}`,
     ""
   ]);

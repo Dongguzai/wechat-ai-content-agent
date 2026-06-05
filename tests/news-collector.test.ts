@@ -234,16 +234,16 @@ test("hard rejection fixtures cover invalid source scenarios", async () => {
   assert.equal(reasonsById.get("fixture-missing-title"), "missing_title");
   assert.equal(
     reasonsById.get("fixture-global-missing-provider"),
-    "global_search_missing_provider_or_query"
+    "global_search_missing_provider"
   );
   assert.equal(
     reasonsById.get("fixture-global-missing-query"),
-    "global_search_missing_provider_or_query"
+    "global_search_missing_query"
   );
   assert.equal(reasonsById.get("fixture-seo-aggregation"), "seo_aggregation_page");
   assert.equal(reasonsById.get("fixture-advertorial"), "advertorial");
   assert.equal(reasonsById.get("fixture-not-ai"), "not_ai_related");
-  assert.equal(reasonsById.get("fixture-snippet-only"), "missing_url");
+  assert.equal(reasonsById.get("fixture-snippet-only"), "snippet_only_without_url");
   assert.equal(reasonsById.get("fixture-old-not-high-heat"), "older_than_7_days");
   assert.equal(reasonsById.has("fixture-old-high-heat"), false);
   assert.ok(
@@ -251,7 +251,7 @@ test("hard rejection fixtures cover invalid source scenarios", async () => {
   );
 });
 
-test("collectNewsWithReport hard rejects untranslated English news language", async () => {
+test("collectNewsWithReport localizes English news instead of hard rejecting language", async () => {
   const now = new Date("2026-05-29T00:00:00.000Z");
   const fetchedAt = now.toISOString();
   const fixtureItems: RawNewsItem[] = [
@@ -290,11 +290,22 @@ test("collectNewsWithReport hard rejects untranslated English news language", as
     env: testEnv()
   });
 
-  const rejected = result.rejectedItems.find(
+  assert.equal(
+    result.rejectedItems.some(
+      (item) => item.rejection?.reason === "non_chinese_news_language"
+    ),
+    false
+  );
+  const localized = result.candidates.find(
     (item) => item.id === "fixture-english-language"
   );
-  assert.equal(rejected?.rejection?.reason, "non_chinese_news_language");
-  assert.match(rejected?.rejection?.detail ?? "", /workflow/);
+  assert.ok(localized);
+  assert.equal(localized.sourceLanguage, "en");
+  assert.equal(localized.localized, true);
+  assert.ok(localized.rawTitle?.includes("OpenAI launches"));
+  assert.ok(localized.titleZh);
+  assert.ok(localized.summaryZh);
+  assert.equal(localized.url, "https://openai.com/fixture-english-language");
   assert.ok(
     result.candidates.some(
       (candidate) => candidate.id === "fixture-chinese-with-proper-names"

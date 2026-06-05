@@ -18,13 +18,13 @@ import {
   type CollectionConfig,
   type RssSourceConfig
 } from "../config/sources.js";
-import {
-  checkChineseNewsLanguage,
-  formatChineseNewsLanguageViolation,
-  requireChineseNewsLanguage
-} from "../hooks/requireChineseNewsLanguage.js";
+import { checkChineseNewsLanguage } from "../hooks/requireChineseNewsLanguage.js";
 import { requireSourceUrl } from "../hooks/requireSourceUrl.js";
 import { createMockRssNews } from "../mock/mockNews.js";
+import {
+  detectNewsSourceLanguage,
+  localizeNewsItem
+} from "./localizeNewsItem.js";
 import type {
   CollectionOutputFiles,
   CollectionWarning,
@@ -59,6 +59,9 @@ interface BuildCollectionOptions {
   config: CollectionConfig;
   apiRealCall: boolean;
   now: Date;
+  env: NodeJS.ProcessEnv;
+  fetchImpl?: FetchLike;
+  outputDir: string;
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -239,17 +242,19 @@ function isGenericTitle(title: string): boolean {
 function createRejection(
   reason: string,
   now: Date,
-  detail?: string
+  detail?: string,
+  stage: NewsRejection["stage"] = "basic"
 ): NewsRejection {
   return {
     hard: true,
     reason,
     detail,
+    stage,
     rejectedAt: now.toISOString()
   };
 }
 
-function evaluateRejection(
+function evaluateBasicRejection(
   raw: RawNewsItem,
   normalized: Omit<NormalizedNewsItem, "rejection">,
   now: Date
@@ -258,6 +263,32 @@ function evaluateRejection(
   const url = normalized.url;
   const summary = normalized.summary;
   const text = `${title} ${summary} ${raw.rawContent ?? ""}`;
+
+  if (raw.sourceType === "global_search") {
+    if (!raw.provider || raw.provider === "none") {
+      return createRejection(
+        "global_search_missing_provider",
+        now,
+        "Global search result must include provider."
+      );
+    }
+
+    if (!raw.query) {
+      return createRejection(
+        "global_search_missing_query",
+        now,
+        "Global search result must include query."
+      );
+    }
+
+    if (!url && raw.snippet) {
+      return createRejection(
+        "snippet_only_without_url",
+        now,
+        "Global search result has a snippet but no original source URL."
+      );
+    }
+  }
 
   if (!url) {
     return createRejection("missing_url", now, "News item has no URL.");
@@ -273,16 +304,6 @@ function evaluateRejection(
       now,
       `Title is too generic to identify the original news item: ${title}.`
     );
-  }
-
-  if (raw.sourceType === "global_search") {
-    if (!raw.provider || raw.provider === "none" || !raw.query) {
-      return createRejection(
-        "global_search_missing_provider_or_query",
-        now,
-        "Global search result must include provider and query."
-      );
-    }
   }
 
   if (!isValidHttpUrl(url)) {
@@ -307,7 +328,7 @@ function evaluateRejection(
 
   if (raw.sourceType === "global_search" && isSearchProviderUrl(url)) {
     return createRejection(
-      "search_snippet_without_original_source",
+      "snippet_only_without_url",
       now,
       "Search result points back to a search provider instead of an original source."
     );
@@ -331,7 +352,7 @@ function evaluateRejection(
 
   if (isLowTrustDomain(url) && !isTrustedDomain(url)) {
     return createRejection(
-      "untrusted_source_without_original",
+      "low_trust_domain",
       now,
       `Low-trust domain: ${getDomain(url)}.`
     );
@@ -341,28 +362,70 @@ function evaluateRejection(
     return createRejection("not_ai_related", now);
   }
 
+  return undefined;
+}
+
+function evaluateEditorialRejection(
+  normalized: Omit<NormalizedNewsItem, "rejection">,
+  now: Date
+): NewsRejection | undefined {
+  const titleZh = trimText(normalized.titleZh ?? normalized.title);
+  const summaryZh = trimText(normalized.summaryZh ?? normalized.summary);
+  const topicAngleZh = trimText(normalized.topicAngleZh);
+  const shortlistReasonZh = trimText(normalized.shortlistReasonZh);
+  const riskNotesZh = normalized.riskNotesZh?.join(" ") ?? "";
+
+  if (summaryZh.length < 18) {
+    return createRejection(
+      "unclear_summary",
+      now,
+      "Localized Chinese summary is too short or unclear.",
+      "editorial"
+    );
+  }
+
+  if (topicAngleZh.length < 28) {
+    return createRejection(
+      "weak_topic_angle",
+      now,
+      "Localized topic angle is too weak for WeChat editorial screening.",
+      "editorial"
+    );
+  }
+
+  if (normalized.scores.wechatTopic < 30) {
+    return createRejection(
+      "low_wechat_fit",
+      now,
+      `wechatTopic score is too low: ${normalized.scores.wechatTopic}.`,
+      "editorial"
+    );
+  }
+
   const languageCheck = checkChineseNewsLanguage({
-    title,
-    query: raw.query,
-    snippet: raw.snippet,
-    summary,
-    rawContent: raw.rawContent
+    title: titleZh,
+    summary: summaryZh,
+    rawContent: [topicAngleZh, shortlistReasonZh, riskNotesZh]
+      .filter(Boolean)
+      .join(" ")
   });
 
   if (!languageCheck.passed) {
     return createRejection(
-      "non_chinese_news_language",
+      "not_suitable_for_chinese_reader",
       now,
-      `News item must use Chinese except fixed proper names: ${formatChineseNewsLanguageViolation(
-        languageCheck
-      )}`
+      "Localized fields still contain untranslated language or lack Chinese text.",
+      "editorial"
     );
   }
 
   return undefined;
 }
 
-function normalizeRawItem(raw: RawNewsItem, now: Date): NormalizedNewsItem {
+function normalizeRawItemBase(
+  raw: RawNewsItem,
+  now: Date
+): Omit<NormalizedNewsItem, "rejection"> {
   const title = trimText(raw.title);
   const url = trimText(raw.url);
   const summary = summarize(raw);
@@ -371,12 +434,13 @@ function normalizeRawItem(raw: RawNewsItem, now: Date): NormalizedNewsItem {
   const duplicateKey = url
     ? normalizeUrl(url)
     : `title:${titleFingerprint(title)}`;
-  const normalizedBase: Omit<NormalizedNewsItem, "rejection"> = {
+  return {
     id: raw.id,
     dataMode: raw.dataMode ?? (raw.mock ? "mock" : "real"),
     mock: raw.mock === true || raw.dataMode === "mock",
     mockReason: raw.mockReason,
     title,
+    rawTitle: title,
     url,
     sourceName: trimText(raw.sourceName) || "Unknown source",
     sourceType: raw.sourceType,
@@ -389,6 +453,14 @@ function normalizeRawItem(raw: RawNewsItem, now: Date): NormalizedNewsItem {
         ? trimText(raw.snippet)
         : undefined,
     summary,
+    rawSummary: summary,
+    sourceLanguage: detectNewsSourceLanguage({
+      title,
+      summary,
+      snippet: raw.snippet
+    }),
+    localized: false,
+    localizationStatus: "not_required",
     category,
     evidence: evidenceFor(raw),
     duplicateKey,
@@ -396,9 +468,72 @@ function normalizeRawItem(raw: RawNewsItem, now: Date): NormalizedNewsItem {
     duplicateSources: [],
     tags: tagsFor(`${title} ${summary}`)
   };
-  const rejection = evaluateRejection(raw, normalizedBase, now);
+}
 
-  return rejection ? { ...normalizedBase, rejection } : normalizedBase;
+async function normalizeRawItem(
+  raw: RawNewsItem,
+  now: Date,
+  options: Pick<BuildCollectionOptions, "env" | "fetchImpl" | "outputDir">
+): Promise<NormalizedNewsItem> {
+  const normalizedBase = normalizeRawItemBase(raw, now);
+  const basicRejection = evaluateBasicRejection(raw, normalizedBase, now);
+
+  if (basicRejection) {
+    return { ...normalizedBase, rejection: basicRejection };
+  }
+
+  try {
+    const localized = await localizeNewsItem(
+      {
+        title: normalizedBase.rawTitle ?? normalizedBase.title,
+        summary: normalizedBase.rawSummary ?? normalizedBase.summary,
+        snippet: raw.snippet,
+        url: normalizedBase.url,
+        sourceName: normalizedBase.sourceName,
+        sourceType: normalizedBase.sourceType,
+        provider: normalizedBase.provider,
+        query: normalizedBase.query
+      },
+      {
+        env: options.env,
+        fetchImpl: options.fetchImpl,
+        outputDir: options.outputDir
+      }
+    );
+    const localizedItem: Omit<NormalizedNewsItem, "rejection"> = {
+      ...normalizedBase,
+      title: localized.titleZh,
+      summary: localized.summaryZh,
+      sourceLanguage: localized.sourceLanguage,
+      rawTitle: localized.rawTitle,
+      rawSummary: localized.rawSummary,
+      titleZh: localized.titleZh,
+      summaryZh: localized.summaryZh,
+      topicAngleZh: localized.topicAngleZh,
+      shortlistReasonZh: localized.shortlistReasonZh,
+      riskNotesZh: localized.riskNotesZh,
+      localized: localized.localized,
+      localizationStatus: localized.localized ? "localized" : "not_required",
+      tags: tagsFor(
+        `${localized.titleZh} ${localized.summaryZh} ${normalizedBase.rawTitle ?? ""} ${
+          normalizedBase.rawSummary ?? ""
+        }`
+      )
+    };
+    const editorialRejection = evaluateEditorialRejection(localizedItem, now);
+
+    return editorialRejection
+      ? { ...localizedItem, rejection: editorialRejection }
+      : localizedItem;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown localization error.";
+
+    return {
+      ...normalizedBase,
+      localizationStatus: "failed",
+      rejection: createRejection("localization_failed", now, detail, "localization")
+    };
+  }
 }
 
 function toDuplicateSource(item: NormalizedNewsItem): DuplicateSource {
@@ -507,14 +642,31 @@ function createStats(
   candidates: NormalizedNewsItem[],
   apiRealCall: boolean
 ): NewsCollectionStats {
+  const basicRejectionCount = rejectedItems.filter(
+    (item) => item.rejection?.stage === "basic"
+  ).length;
+  const localizationFailedCount = rejectedItems.filter(
+    (item) => item.rejection?.reason === "localization_failed"
+  ).length;
+  const rejectedAfterLocalizationCount = rejectedItems.filter(
+    (item) => item.rejection?.stage === "editorial"
+  ).length;
+
   return {
     rawCount: rawItems.length,
+    realSourceCount: rawItems.filter(
+      (item) => item.dataMode !== "mock" && item.mock !== true
+    ).length,
     rssRawCount: rawItems.filter((item) => item.sourceType === "rss").length,
     tavilyRawCount: countByProvider(rawItems, "tavily"),
     exaRawCount: countByProvider(rawItems, "exa"),
     normalizedCount: normalizedItems.length,
     dedupedCount: dedupedItems.length,
     hardRejectionCount: rejectedItems.length,
+    basicRejectionCount,
+    localizedCount: normalizedItems.filter((item) => item.localized === true).length,
+    localizationFailedCount,
+    rejectedAfterLocalizationCount,
     finalCandidateCount: candidates.length,
     rssCandidateCount: candidates.filter((item) => item.sourceType === "rss").length,
     globalSearchCandidateCount: candidates.filter(
@@ -536,14 +688,28 @@ function createOutputFiles(outputDir: string): CollectionOutputFiles {
   };
 }
 
-function buildCollection({
+async function buildCollection({
   rawItems,
   warnings,
   config,
   apiRealCall,
-  now
-}: BuildCollectionOptions): Omit<NewsCollectionResult, "outputDir" | "files"> {
-  const normalizedItems = rawItems.map((item) => normalizeRawItem(item, now));
+  now,
+  env,
+  fetchImpl,
+  outputDir
+}: BuildCollectionOptions): Promise<Omit<NewsCollectionResult, "outputDir" | "files">> {
+  const normalizedItems: NormalizedNewsItem[] = [];
+
+  for (const item of rawItems) {
+    normalizedItems.push(
+      await normalizeRawItem(item, now, {
+        env,
+        fetchImpl,
+        outputDir
+      })
+    );
+  }
+
   const rejectedItems = normalizedItems.filter((item) => item.rejection);
   const acceptedItems = normalizedItems.filter((item) => !item.rejection);
   const dedupedItems = dedupeNews(acceptedItems);
@@ -584,12 +750,17 @@ function createCollectionReport(result: NewsCollectionResult): string {
     "## Counts",
     "",
     `- 原始抓取数量: ${stats.rawCount}`,
+    `- 真实源数量: ${stats.realSourceCount ?? 0}`,
     `- RSS 原始数量: ${stats.rssRawCount}`,
     `- Tavily 原始数量: ${stats.tavilyRawCount}`,
     `- Exa 原始数量: ${stats.exaRawCount}`,
     `- normalize 后数量: ${stats.normalizedCount}`,
     `- 去重后数量: ${stats.dedupedCount}`,
     `- hard rejection 数量: ${stats.hardRejectionCount}`,
+    `- basic rejection 数量: ${stats.basicRejectionCount ?? 0}`,
+    `- 中文化完成数量: ${stats.localizedCount ?? 0}`,
+    `- 中文化失败数量: ${stats.localizationFailedCount ?? 0}`,
+    `- 中文化后编辑拒绝数量: ${stats.rejectedAfterLocalizationCount ?? 0}`,
     `- 最终候选数量: ${stats.finalCandidateCount}`,
     `- RSS 候选数量: ${stats.rssCandidateCount}`,
     `- global_search 候选数量: ${stats.globalSearchCandidateCount}`,
@@ -605,8 +776,10 @@ function createCollectionReport(result: NewsCollectionResult): string {
     "",
     "- RSS is treated as the primary source stream.",
     "- Tavily and Exa global_search results are candidate leads only; downstream fact work must verify original source URLs.",
-    "- Missing URL, missing title, missing global_search provider/query, SEO aggregation, advertorial, stale non-high-heat items, low-trust sources, non-AI items, and non-Chinese news language are hard rejected.",
-    "- News title/query/snippet/summary/rawContent must use Chinese; fixed proper names and common abbreviations such as OpenAI, Codex, Claude Code, API, SDK, LLM, RAG and R2 are allowed.",
+    "- Basic rejection runs before localization: missing URL/title, missing global_search provider/query, snippet-only search leads, SEO aggregation, advertorial, stale non-high-heat items, low-trust sources, and non-AI items are rejected.",
+    "- English RSS/Tavily/Exa source items are allowed into basic filtering, then localized into Chinese fields before WeChat editorial screening.",
+    "- Editorial rejection runs after localization: weak_topic_angle, low_wechat_fit, unclear_summary, and not_suitable_for_chinese_reader.",
+    "- Candidate display should prefer titleZh/summaryZh/topicAngleZh/shortlistReasonZh while preserving rawTitle/rawSummary and the original URL.",
     ""
   ].join("\n");
 }
@@ -716,10 +889,13 @@ export async function collectNewsWithReport(
     logger
   );
 
-  let collection = buildCollection({
+  let collection = await buildCollection({
     ...rawCollection,
     config,
-    now
+    now,
+    env: options.env ?? process.env,
+    fetchImpl: options.fetchImpl,
+    outputDir
   });
 
   if (
@@ -746,17 +922,19 @@ export async function collectNewsWithReport(
       mockReason: "rss_fallback"
     }));
 
-    collection = buildCollection({
+    collection = await buildCollection({
       rawItems: [...rawCollection.rawItems, ...mockFallback],
       warnings: [...rawCollection.warnings, warning],
       config,
       apiRealCall: rawCollection.apiRealCall,
-      now
+      now,
+      env: options.env ?? process.env,
+      fetchImpl: options.fetchImpl,
+      outputDir
     });
   }
 
   requireSourceUrl(collection.candidates);
-  requireChineseNewsLanguage(collection.candidates);
 
   const result: NewsCollectionResult = {
     outputDir,

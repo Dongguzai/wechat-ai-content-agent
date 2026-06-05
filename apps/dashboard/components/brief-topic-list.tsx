@@ -24,7 +24,7 @@ export function BriefTopicList({ items, initialApproval }: BriefTopicListProps) 
     const nextApproval = {
       approvedByUser: true,
       approvedTopicId: topicId,
-      approvedTitle: String(item.title ?? "")
+      approvedTitle: String(item.titleZh ?? item.title ?? "")
     };
 
     setIsSaving(true);
@@ -54,13 +54,14 @@ export function BriefTopicList({ items, initialApproval }: BriefTopicListProps) 
     <div className="space-y-4">
       {items.slice(0, 10).map((item, index) => {
         const id = String(item.id ?? `${item.title}-${index}`);
-        const title = String(item.title ?? "未命名资讯");
+        const title = String(item.titleZh ?? item.title ?? "未命名资讯");
+        const rawTitle = String(item.rawTitle ?? item.title ?? "");
         const url = String(item.url ?? "");
         const tags = Array.isArray(item.tags) ? item.tags.join(", ") : String(item.tags ?? "");
         const category = String(item.category ?? "");
-        const summary = String(item.summary ?? "");
-        const topicAngle = String(item.topicAngle ?? item.editorial?.topicAngle ?? item.selection?.writingAngle ?? "");
-        const shortlistReason = String(item.shortlistReason ?? item.editorial?.shortlistReason ?? item.selection?.selectedReason ?? "");
+        const summary = String(item.summaryZh ?? item.summary ?? "");
+        const topicAngle = String(item.topicAngleZh ?? item.topicAngle ?? item.editorial?.topicAngle ?? item.selection?.writingAngle ?? "");
+        const shortlistReason = String(item.shortlistReasonZh ?? item.shortlistReason ?? item.editorial?.shortlistReason ?? item.selection?.selectedReason ?? "");
         const riskNotes = Array.isArray(item.riskNotes)
           ? item.riskNotes
           : Array.isArray(item.selection?.riskNotes)
@@ -76,7 +77,10 @@ export function BriefTopicList({ items, initialApproval }: BriefTopicListProps) 
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-stone-500">#{String(item.rank ?? index + 1)}</p>
                 <h3 className="mt-1 text-base font-bold leading-6 text-ink">{title}</h3>
-                <p className="mt-2 break-all text-sm text-stone-600">{url || "缺少 original url"}</p>
+                {rawTitle && rawTitle !== title ? (
+                  <p className="mt-2 text-sm leading-6 text-stone-600">原始标题：{rawTitle}</p>
+                ) : null}
+                <p className="mt-2 break-all text-sm text-stone-600">原文 URL：{url || "缺少 original url"}</p>
                 {sourceType === "global_search" ? (
                   <p className="mt-2 inline-flex border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
                     global_search 来源，需要回到原文核验。
@@ -111,10 +115,10 @@ export function BriefTopicList({ items, initialApproval }: BriefTopicListProps) 
               <Info label="provider / query" value={providerLabel(item)} />
               <Info label="category / tags" value={[category, tags].filter(Boolean).join(" / ") || "无"} />
               <Info label="shortlistScore" value={String(item.shortlistScore ?? item.scores?.final ?? "-")} />
-              <Info label="summary" value={summary} wide />
-              <Info label="topicAngle" value={topicAngle} wide />
-              <Info label="shortlistReason" value={shortlistReason} wide />
-              <Info label="riskNotes" value={riskNotes.length ? riskNotes.join("；") : "无"} wide />
+              <Info label="中文摘要" value={summary} wide />
+              <Info label="中文选题角度" value={topicAngle} wide />
+              <Info label="中文入围理由" value={shortlistReason} wide />
+              <Info label="风险提醒" value={riskNotes.length ? riskNotes.join("；") : "无"} wide />
             </dl>
             {isSelected ? (
               <p className="mt-3 text-xs font-semibold text-emerald-700">
