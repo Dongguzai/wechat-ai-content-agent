@@ -17,6 +17,7 @@
 - 默认不做浏览器自动化。
 - 默认不做定时任务。
 - 默认不接数据库。
+- 采集后的资讯标题、搜索 query、摘要和正文片段必须使用中文；OpenAI、Codex、Claude Code 等固定专名和 API、SDK、LLM、RAG、R2 等常见缩写允许保留英文，其他普通说明词必须中文化。
 - 不把输出写到 `outputs/` 之外，除非用户明确要求。
 - 不提交 `.env`、真实凭据、access token、cookie、登录态或 `outputs/` 业务产物。
 - Tavily / Exa 只能通过 `src/adapters/` 接入；默认 `SEARCH_ENABLE_REAL_API=false` 时必须走 mock search。

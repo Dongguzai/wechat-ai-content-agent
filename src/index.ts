@@ -66,6 +66,10 @@ export {
   verifyWechatDraftOnlyApiGuard
 } from "./hooks/forbidWechatPublishApi.js";
 export {
+  checkChineseNewsLanguage,
+  requireChineseNewsLanguage
+} from "./hooks/requireChineseNewsLanguage.js";
+export {
   createWechatBrowserDraftPlan,
   createWechatBrowserRuntimeConfig,
   createWechatBrowserSafetyCheck,

@@ -254,12 +254,12 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
     tags.add("policy");
   }
 
-  if (/\b(agent|agentic|agents|codex|claude code|slackbot|cowork)\b/.test(text)) {
+  if (/\b(agent|agentic|agents|codex|claude code|slackbot|cowork)\b|智能体|编码代理/.test(text)) {
     tags.add("agent");
   }
 
   if (
-    /\b(tooling|developer|workflow|coding|code|codex|github|sdk|framework|terminal|agents\.md|sqlite|warp|goose)\b/.test(
+    /\b(tooling|developer|workflow|coding|code|codex|github|sdk|framework|terminal|agents\.md|sqlite|warp|goose)\b|开发者|工作流|编码|代码|工具|框架|终端|仓库|运行时/.test(
       text
     )
   ) {
@@ -267,35 +267,35 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
     tags.add("developer-workflow");
   }
 
-  if (/\b(open source|open-source|github|goose|sqlite|agents\.md|warp)\b/.test(text)) {
+  if (/\b(open source|open-source|github|goose|sqlite|agents\.md|warp)\b|开源/.test(text)) {
     tags.add("open-source");
   }
 
-  if (/\b(model|llm|gpt|claude|benchmark|multimodal|frontier)\b/.test(text)) {
+  if (/\b(model|llm|gpt|claude|benchmark|multimodal|frontier)\b|模型|大模型|基准测试|多模态|推理/.test(text)) {
     tags.add("model");
   }
 
-  if (/\b(product|launch|desktop|slackbot|copilot|workspace)\b/.test(text)) {
+  if (/\b(product|launch|desktop|slackbot|copilot|workspace)\b|产品|发布|工作台|办公套件/.test(text)) {
     tags.add("product");
   }
 
-  if (/\b(research|paper|technical report|benchmark|evaluation)\b/.test(text)) {
+  if (/\b(research|paper|technical report|benchmark|evaluation)\b|研究|论文|技术报告|基准测试|评测|实验/.test(text)) {
     tags.add("research");
   }
 
   if (
-    /\b(funding|startup|enterprise|revenue|pricing|product-market fit|salesforce|customer|organization)\b/.test(
+    /\b(funding|startup|enterprise|revenue|pricing|product-market fit|salesforce|customer|organization)\b|融资|创业公司|企业|收入|定价|客户|组织|商业化/.test(
       text
     )
   ) {
     tags.add("business");
   }
 
-  if (/\b(community|maintainer|open source|github|sqlite)\b/.test(text)) {
+  if (/\b(community|maintainer|open source|github|sqlite)\b|社区|维护者|开源/.test(text)) {
     tags.add("community");
   }
 
-  if (/\b(policy|election|safety|copyright|governance|regulation)\b/.test(text)) {
+  if (/\b(policy|election|safety|copyright|governance|regulation)\b|政策|安全|版权|治理|监管|合规|隐私/.test(text)) {
     tags.add("policy");
   }
 

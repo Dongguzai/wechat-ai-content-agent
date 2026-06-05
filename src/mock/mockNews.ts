@@ -27,31 +27,31 @@ function isoHoursAgo(now: Date, hoursAgo: number): string {
 const mockRssTemplates: MockRssTemplate[] = [
   {
     id: "rss-claude-code-goose",
-    title: "Claude Code costs up to $200 a month. Goose does the same thing for free.",
+    title: "Claude Code 高阶订阅与 Goose 免费开源对比，引发编码代理成本争议",
     url: "https://venturebeat.com/infrastructure/claude-code-costs-up-to-usd200-a-month-goose-does-the-same-thing-for-free",
     sourceName: "VentureBeat AI",
     snippet:
-      "Claude Code has paid subscription paths while Goose is described as a free open source AI agent, raising developer workflow, cost, and lock-in questions.",
+      "Claude Code 存在付费订阅路径，Goose 被描述为免费开源的 AI 编码代理，引发开发者工作流、成本和工具锁定讨论。",
     hoursAgo: 4,
     highHeat: true
   },
   {
     id: "rss-openai-agent-workbench",
-    title: "OpenAI 发布多模态 Agent 工作台，企业内容流程开始重组",
+    title: "OpenAI 推出多模态智能体工作台，企业内容流程开始重组",
     url: "https://example.com/rss/openai-agent-workbench",
     sourceName: "Mock RSS / OpenAI News",
     snippet:
-      "新的 AI agent 工作台展示资料整理、图文理解、任务编排和团队审计能力，适合内容、客服和研究团队试点。",
+      "新的 AI 智能体工作台展示资料整理、图文理解、任务编排和团队审计能力，适合内容、客服和研究团队试点。",
     hoursAgo: 6,
     highHeat: true
   },
   {
     id: "rss-anthropic-managed-agents",
-    title: "Anthropic 推出托管 Agent 能力，降低企业部署门槛",
+    title: "Anthropic 推出托管智能体能力，降低企业部署门槛",
     url: "https://example.com/rss/anthropic-managed-agents",
     sourceName: "Mock RSS / Anthropic News",
     snippet:
-      "托管式 AI agent 服务把权限、工具调用、日志和人工接管放进统一控制面板，强调安全和可审计。",
+      "托管式 AI 智能体服务把权限、工具调用、日志和人工接管放进统一控制面板，强调安全和可审计。",
     hoursAgo: 9
   },
   {
@@ -60,7 +60,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     url: "https://example.com/rss/deepmind-multimodal-report",
     sourceName: "Mock RSS / Google DeepMind Blog",
     snippet:
-      "技术报告介绍新模型在长视频理解、代码推理和跨模态检索上的 benchmark 表现，并披露训练和评估方法。",
+      "技术报告介绍新模型在长视频理解、代码推理和跨模态检索上的基准测试表现，并披露训练和评估方法。",
     hoursAgo: 15
   },
   {
@@ -69,16 +69,16 @@ const mockRssTemplates: MockRssTemplate[] = [
     url: "https://example.com/rss/huggingface-open-source-llm",
     sourceName: "Mock RSS / Hugging Face Blog",
     snippet:
-      "开源模型项目发布 GitHub 仓库、推理脚本和量化权重，目标是在消费级显卡上运行 agent 工作流。",
+      "开源模型项目公开 GitHub 仓库、推理脚本和量化权重，目标是在消费级显卡上运行智能体工作流。",
     hoursAgo: 20
   },
   {
     id: "rss-langchain-agent-runtime",
-    title: "LangChain 发布 Agent Runtime 更新，改进工具调用和状态管理",
+    title: "LangChain 推出智能体运行时更新，改进工具调用和状态管理",
     url: "https://example.com/rss/langchain-agent-runtime",
     sourceName: "Mock RSS / LangChain Blog",
     snippet:
-      "新版 framework 增加可恢复任务、可观测日志和多工具路由，帮助开发者构建长任务 AI agent。",
+      "新版框架增加可恢复任务、可观测日志和多工具路由，帮助开发者构建长任务 AI 智能体。",
     hoursAgo: 27
   },
   {
@@ -92,16 +92,16 @@ const mockRssTemplates: MockRssTemplate[] = [
   },
   {
     id: "rss-mit-ai-education-research",
-    title: "MIT 研究团队发布 AI 教育实验结果，关注个性化辅导边界",
+    title: "MIT 研究团队公开 AI 教育实验结果，关注个性化辅导边界",
     url: "https://example.com/rss/mit-ai-education-research",
     sourceName: "Mock RSS / MIT News AI",
     snippet:
-      "研究比较了 AI tutor 在解释反馈、作业提示和学习路径推荐中的效果，同时强调教师监督与数据隐私。",
+      "研究比较了 AI 辅导系统在解释反馈、作业提示和学习路径推荐中的效果，同时强调教师监督与数据隐私。",
     hoursAgo: 33
   },
   {
     id: "rss-bair-agent-memory",
-    title: "BAIR 新论文探索 Agent 长期记忆，减少上下文漂移",
+    title: "BAIR 新论文探索智能体长期记忆，减少上下文漂移",
     url: "https://example.com/rss/bair-agent-memory",
     sourceName: "Mock RSS / BAIR Blog",
     snippet:
@@ -114,7 +114,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     url: "https://example.com/rss/ai-search-citations",
     sourceName: "Mock RSS / The Verge AI",
     snippet:
-      "新一代 AI search 突出引用、置信度、多来源对照和原文跳转，试图缓解用户对幻觉的担忧。",
+      "新一代 AI 搜索突出引用、置信度、多来源对照和原文跳转，试图缓解用户对幻觉的担忧。",
     hoursAgo: 42
   },
   {
@@ -132,7 +132,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     url: "https://example.com/rss/nvidia-inference-cost",
     sourceName: "Mock RSS / NVIDIA Blog",
     snippet:
-      "新方案强调批处理、缓存、量化和混合部署，帮助企业在 AI assistant 场景降低延迟和成本。",
+      "新方案强调批处理、缓存、量化和混合部署，帮助企业在 AI 助手场景降低延迟和成本。",
     hoursAgo: 50
   },
   {
@@ -146,11 +146,11 @@ const mockRssTemplates: MockRssTemplate[] = [
   },
   {
     id: "rss-model-eval-real-repos",
-    title: "代码 Agent 评测从单题正确率转向真实仓库任务完成度",
+    title: "代码智能体评测从单题正确率转向真实仓库任务完成度",
     url: "https://example.com/rss/model-eval-real-repos",
     sourceName: "Mock RSS / Developer AI Watch",
     snippet:
-      "新的 evaluation 更关注跨文件修改、测试修复、代码审查反馈处理和长期任务完成度。",
+      "新的评测更关注跨文件修改、测试修复、代码审查反馈处理和长期任务完成度。",
     hoursAgo: 60
   },
   {
@@ -164,11 +164,11 @@ const mockRssTemplates: MockRssTemplate[] = [
   },
   {
     id: "rss-voice-agent-service",
-    title: "语音 Agent 客服方案进入试点，转人工和留痕能力受关注",
+    title: "语音智能体客服方案进入试点，转人工和留痕能力受关注",
     url: "https://example.com/rss/voice-agent-service",
     sourceName: "Mock RSS / CX Automation Brief",
     snippet:
-      "语音 AI agent 在客服场景强调情绪识别、对话摘要、人工接管和服务记录，适合高频咨询业务。",
+      "语音 AI 智能体在客服场景强调情绪识别、对话摘要、人工接管和服务记录，适合高频咨询业务。",
     hoursAgo: 68
   },
   {
@@ -177,7 +177,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     url: "https://example.com/rss/ai-video-editor",
     sourceName: "Mock RSS / Creator Tech Digest",
     snippet:
-      "工具把脚本生成、分镜建议、素材匹配和自动剪辑组合成 workflow，瞄准品牌内容和短视频团队。",
+      "工具把脚本生成、分镜建议、素材匹配和自动剪辑组合成工作流，瞄准品牌内容和短视频团队。",
     hoursAgo: 70
   },
   {
@@ -191,11 +191,11 @@ const mockRssTemplates: MockRssTemplate[] = [
   },
   {
     id: "rss-ai-security-evals",
-    title: "安全团队发布 AI Agent 红队评测，提示工具权限风险",
+    title: "安全团队公开 AI 智能体红队评测，提示工具权限风险",
     url: "https://example.com/rss/ai-security-evals",
     sourceName: "Mock RSS / Security AI Lab",
     snippet:
-      "评测覆盖 prompt injection、越权工具调用、数据外泄和日志审计，建议企业建立分级权限。",
+      "评测覆盖提示词注入、越权工具调用、数据外泄和日志审计，建议企业建立分级权限。",
     hoursAgo: 80
   },
   {
@@ -218,11 +218,11 @@ const mockRssTemplates: MockRssTemplate[] = [
   },
   {
     id: "rss-robotics-foundation-model",
-    title: "机器人基础模型发布新 benchmark，泛化能力仍是关键难点",
+    title: "机器人基础模型推出新基准测试，泛化能力仍是关键难点",
     url: "https://example.com/rss/robotics-foundation-model",
     sourceName: "Mock RSS / Robotics AI Review",
     snippet:
-      "研究 benchmark 覆盖视觉语言动作模型、模拟到现实迁移和长程任务规划，展示 AI model 的落地挑战。",
+      "研究基准测试覆盖视觉语言动作模型、模拟到现实迁移和长程任务规划，展示 AI 模型的落地挑战。",
     hoursAgo: 108
   },
   {
@@ -239,56 +239,56 @@ const mockRssTemplates: MockRssTemplate[] = [
 
 const tavilySearchTemplates: MockSearchTemplate[] = [
   {
-    title: "AI agents product launch draws developer attention",
+    title: "AI 智能体产品亮相引发开发者关注",
     url: "https://example.com/global/tavily-ai-agents-product-launch",
     sourceName: "Mock Search / Company Blog",
     snippet:
-      "A company blog post outlines a new AI agent product with workflow automation, enterprise controls, and API access.",
+      "公司博客介绍新的 AI 智能体产品，具备工作流自动化、企业控制台和 API 接入能力。",
     hoursAgo: 8
   },
   {
-    title: "New AI model released with multimodal reasoning benchmarks",
+    title: "新 AI 模型公开多模态推理基准测试",
     url: "https://example.com/global/tavily-new-model-release",
     sourceName: "Mock Search / Technical Blog",
     snippet:
-      "The release includes model cards, benchmark comparisons, safety notes, and developer examples for multimodal tasks.",
+      "公开内容包含模型卡、基准测试对比、安全说明和面向开发者的多模态任务示例。",
     hoursAgo: 17,
     highHeat: true
   },
   {
-    title: "AI startup announces funding for enterprise knowledge agents",
+    title: "AI 创业公司宣布企业知识智能体融资",
     url: "https://example.com/global/tavily-ai-startup-funding",
     sourceName: "Mock Search / Startup News",
     snippet:
-      "The company says the funding will expand retrieval, permissions, evaluation, and workflow integrations.",
+      "公司表示融资将用于扩展检索、权限、评测和工作流集成能力。",
     hoursAgo: 31
   }
 ];
 
 const exaSearchTemplates: MockSearchTemplate[] = [
   {
-    title: "Technical report details a new open source LLM architecture",
+    title: "技术报告详解新的开源 LLM 架构",
     url: "https://example.com/global/exa-open-source-llm-technical-report",
     sourceName: "Mock Search / Research Lab",
     snippet:
-      "The report covers model architecture, training data, evaluation, inference cost, and GitHub release notes.",
+      "报告覆盖模型架构、训练数据、评测、推理成本和 GitHub 更新说明。",
     hoursAgo: 11,
     highHeat: true
   },
   {
-    title: "Developer-focused AI framework launches with agent state primitives",
+    title: "面向开发者的 AI 框架推出智能体状态原语",
     url: "https://example.com/global/exa-agent-framework-launch",
     sourceName: "Mock Search / Developer Blog",
     snippet:
-      "The framework provides durable execution, tool routing, typed outputs, and observability for production agents.",
+      "框架提供持久执行、工具路由、类型化输出和面向生产智能体的可观测能力。",
     hoursAgo: 26
   },
   {
-    title: "Company blog explains new multimodal AI model for document workflows",
+    title: "公司博客解读面向文档工作流的新多模态 AI 模型",
     url: "https://example.com/global/exa-multimodal-document-model",
     sourceName: "Mock Search / Company Blog",
     snippet:
-      "The model combines OCR, vision-language reasoning, and long-context retrieval for enterprise document processing.",
+      "该模型结合 OCR、视觉语言推理和长上下文检索，用于企业文档处理。",
     hoursAgo: 44
   }
 ];

@@ -42,7 +42,12 @@ export const categoryKeywords: Record<NewsCategory, string[]> = {
     "llama",
     "mistral",
     "multimodal",
-    "reasoning"
+    "reasoning",
+    "模型",
+    "大模型",
+    "多模态",
+    "推理",
+    "基座模型"
   ],
   product: [
     "product",
@@ -52,7 +57,14 @@ export const categoryKeywords: Record<NewsCategory, string[]> = {
     "assistant",
     "agent",
     "workspace",
-    "copilot"
+    "copilot",
+    "产品",
+    "发布",
+    "应用",
+    "助手",
+    "智能体",
+    "工作台",
+    "办公套件"
   ],
   research: [
     "research",
@@ -61,7 +73,14 @@ export const categoryKeywords: Record<NewsCategory, string[]> = {
     "benchmark",
     "evaluation",
     "breakthrough",
-    "study"
+    "study",
+    "研究",
+    "论文",
+    "技术报告",
+    "基准测试",
+    "评测",
+    "突破",
+    "实验"
   ],
   policy: [
     "policy",
@@ -70,7 +89,15 @@ export const categoryKeywords: Record<NewsCategory, string[]> = {
     "copyright",
     "law",
     "governance",
-    "security"
+    "security",
+    "政策",
+    "安全",
+    "监管",
+    "版权",
+    "法律",
+    "治理",
+    "合规",
+    "隐私"
   ],
   funding: [
     "funding",
@@ -79,7 +106,15 @@ export const categoryKeywords: Record<NewsCategory, string[]> = {
     "investment",
     "startup",
     "revenue",
-    "enterprise"
+    "enterprise",
+    "融资",
+    "并购",
+    "估值",
+    "投资",
+    "创业公司",
+    "收入",
+    "企业",
+    "商业化"
   ],
   tooling: [
     "developer",
@@ -89,7 +124,15 @@ export const categoryKeywords: Record<NewsCategory, string[]> = {
     "sdk",
     "api",
     "tool",
-    "workflow"
+    "workflow",
+    "开发者",
+    "开源",
+    "框架",
+    "工具",
+    "工作流",
+    "代码",
+    "仓库",
+    "运行时"
   ]
 };
 
@@ -157,7 +200,8 @@ const aiKeywords = [
   "机器学习",
   "推理",
   "生成式",
-  "知识库"
+  "知识库",
+  "编码代理"
 ];
 
 const officialSourceSignals = [
@@ -202,7 +246,22 @@ const explainabilitySignals = [
   "education",
   "office",
   "search",
-  "agent"
+  "agent",
+  "工作流",
+  "企业",
+  "开发者",
+  "客户",
+  "定价",
+  "成本",
+  "融资",
+  "政策",
+  "安全",
+  "基准测试",
+  "开源",
+  "教育",
+  "办公",
+  "搜索",
+  "智能体"
 ];
 
 const originalitySignals = [
@@ -214,7 +273,14 @@ const originalitySignals = [
   "company blog",
   "research lab",
   "official",
-  "source:"
+  "source:",
+  "技术报告",
+  "论文",
+  "模型卡",
+  "发布说明",
+  "公司博客",
+  "研究机构",
+  "官方"
 ];
 
 function clampScore(value: number): number {
@@ -435,7 +501,12 @@ export function scoreNewsItem(
     "funding",
     "acquisition",
     "breakthrough",
-    "frontier"
+    "frontier",
+    "发布",
+    "融资",
+    "并购",
+    "突破",
+    "前沿"
   ];
   const technicalTerms = [
     "technical report",
@@ -450,7 +521,17 @@ export function scoreNewsItem(
     "model",
     "multimodal",
     "reasoning",
-    "eval"
+    "eval",
+    "技术报告",
+    "基准测试",
+    "开源",
+    "研究",
+    "论文",
+    "框架",
+    "模型",
+    "多模态",
+    "推理",
+    "评测"
   ];
   const wechatTerms = [
     "agent",
@@ -464,7 +545,19 @@ export function scoreNewsItem(
     "startup",
     "pricing",
     "china",
-    "global"
+    "global",
+    "智能体",
+    "产品",
+    "发布",
+    "企业",
+    "工作流",
+    "内容",
+    "创作者",
+    "开发者",
+    "创业公司",
+    "定价",
+    "中国",
+    "全球"
   ];
   const businessTerms = [
     "funding",
@@ -475,7 +568,16 @@ export function scoreNewsItem(
     "revenue",
     "pricing",
     "partnership",
-    "startup"
+    "startup",
+    "融资",
+    "并购",
+    "估值",
+    "企业",
+    "客户",
+    "收入",
+    "定价",
+    "合作",
+    "创业公司"
   ];
   const controversyTerms = [
     "lawsuit",
@@ -486,7 +588,15 @@ export function scoreNewsItem(
     "ban",
     "regulation",
     "security",
-    "privacy"
+    "privacy",
+    "诉讼",
+    "版权",
+    "安全",
+    "风险",
+    "政策",
+    "禁令",
+    "监管",
+    "隐私"
   ];
 
   const scoreByTerms = (terms: string[], base: number, step: number): number =>

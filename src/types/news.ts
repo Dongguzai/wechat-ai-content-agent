@@ -69,6 +69,24 @@ export interface NewsRejection {
   rejectedAt: string;
 }
 
+export type NewsChineseLanguageField =
+  | "title"
+  | "query"
+  | "snippet"
+  | "summary"
+  | "rawContent";
+
+export interface NewsChineseLanguageViolation {
+  field: NewsChineseLanguageField;
+  reason: "missing_chinese_text" | "contains_untranslated_english";
+  disallowedTerms: string[];
+}
+
+export interface NewsChineseLanguageCheckResult {
+  passed: boolean;
+  violations: NewsChineseLanguageViolation[];
+}
+
 export interface NormalizedNewsItem {
   id: string;
   dataMode?: NewsDataMode;

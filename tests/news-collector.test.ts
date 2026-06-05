@@ -207,9 +207,9 @@ test("hard rejection fixtures cover invalid source scenarios", async () => {
       id: "fixture-old-high-heat",
       sourceType: "rss",
       provider: "none",
-      title: "High heat old AI model release",
+      title: "高热度旧 AI 模型发布仍被持续讨论",
       url: "https://openai.com/fixture-old-high-heat-ai-model",
-      snippet: "OpenAI AI model release remains high heat despite being older.",
+      snippet: "OpenAI AI 模型发布虽然时间较早，但热度仍高，适合作为持续跟踪线索。",
       sourceName: "Fixture RSS",
       publishedAt: "2026-05-01T00:00:00.000Z",
       fetchedAt,
@@ -248,6 +248,57 @@ test("hard rejection fixtures cover invalid source scenarios", async () => {
   assert.equal(reasonsById.has("fixture-old-high-heat"), false);
   assert.ok(
     result.candidates.some((candidate) => candidate.id === "fixture-old-high-heat")
+  );
+});
+
+test("collectNewsWithReport hard rejects untranslated English news language", async () => {
+  const now = new Date("2026-05-29T00:00:00.000Z");
+  const fetchedAt = now.toISOString();
+  const fixtureItems: RawNewsItem[] = [
+    {
+      id: "fixture-english-language",
+      sourceType: "rss",
+      provider: "none",
+      title: "OpenAI launches new agent workflow for developers",
+      url: "https://openai.com/fixture-english-language",
+      snippet:
+        "OpenAI describes a new agent workflow with enterprise controls and developer automation.",
+      sourceName: "Fixture RSS",
+      publishedAt: fetchedAt,
+      fetchedAt
+    },
+    {
+      id: "fixture-chinese-with-proper-names",
+      sourceType: "rss",
+      provider: "none",
+      title: "OpenAI 发布 Codex 更新，Claude Code 工作流受到关注",
+      url: "https://openai.com/fixture-chinese-with-proper-names",
+      snippet:
+        "这条资讯保留 OpenAI、Codex、Claude Code 等固定专名，其余背景和影响统一使用中文表达。",
+      sourceName: "Fixture RSS",
+      publishedAt: fetchedAt,
+      fetchedAt
+    }
+  ];
+
+  const result = await collectNewsWithReport({
+    rawItemsOverride: fixtureItems,
+    writeOutputs: false,
+    allowMockRssFallback: false,
+    logger: silentLogger,
+    now,
+    env: testEnv()
+  });
+
+  const rejected = result.rejectedItems.find(
+    (item) => item.id === "fixture-english-language"
+  );
+  assert.equal(rejected?.rejection?.reason, "non_chinese_news_language");
+  assert.match(rejected?.rejection?.detail ?? "", /workflow/);
+  assert.ok(
+    result.candidates.some(
+      (candidate) => candidate.id === "fixture-chinese-with-proper-names"
+    )
   );
 });
 

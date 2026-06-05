@@ -104,21 +104,21 @@ export const rssSources: RssSourceConfig[] = [
 ];
 
 export const tavilyQueries = [
-  "latest AI news today",
-  "top artificial intelligence news last 24 hours",
-  "OpenAI Anthropic Google DeepMind Meta AI latest news",
-  "new AI model released last 72 hours",
-  "AI startup funding acquisition latest news",
-  "AI agents product launch last 72 hours"
+  "今日最新 AI 资讯",
+  "过去 24 小时人工智能重点新闻",
+  "OpenAI Anthropic Google DeepMind Meta AI 最新动态",
+  "近 72 小时推出的新 AI 模型",
+  "AI 创业公司融资并购最新消息",
+  "近 72 小时 AI 智能体产品亮相"
 ];
 
 export const exaQueries = [
-  "new AI model technical report",
-  "AI agent framework launch",
-  "new open source LLM project GitHub",
-  "AI research breakthrough company blog",
-  "developer focused AI product update",
-  "new multimodal AI model release"
+  "新 AI 模型技术报告",
+  "AI 智能体框架推出",
+  "GitHub 新开源 LLM 项目",
+  "AI 研究突破公司博客",
+  "面向开发者的 AI 产品更新",
+  "新多模态 AI 模型推出"
 ];
 
 const DEFAULT_CONFIG: CollectionConfig = {

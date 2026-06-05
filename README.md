@@ -622,6 +622,7 @@ pnpm env:check
 ## 安全约束
 
 - `requireSourceUrl`：资讯缺少 `url` 时立即报错。
+- `requireChineseNewsLanguage`：采集后的资讯标题、搜索 query、摘要和正文片段必须中文化；固定专名和常见缩写允许保留英文，普通说明词未中文化时立即报错或 hard rejection。
 - `forbidAutoPublish`：检测到高风险发送词时立即报错。
 - `forbidWechatPublishApi`：检测到发布、群发、freepublish、mass、sendall 等 API URL 或 actionName 时立即报错。
 - `forceApimartImage`：封面 provider 只能是 APIMart。

@@ -18,6 +18,11 @@ import {
   type CollectionConfig,
   type RssSourceConfig
 } from "../config/sources.js";
+import {
+  checkChineseNewsLanguage,
+  formatChineseNewsLanguageViolation,
+  requireChineseNewsLanguage
+} from "../hooks/requireChineseNewsLanguage.js";
 import { requireSourceUrl } from "../hooks/requireSourceUrl.js";
 import { createMockRssNews } from "../mock/mockNews.js";
 import type {
@@ -336,6 +341,24 @@ function evaluateRejection(
     return createRejection("not_ai_related", now);
   }
 
+  const languageCheck = checkChineseNewsLanguage({
+    title,
+    query: raw.query,
+    snippet: raw.snippet,
+    summary,
+    rawContent: raw.rawContent
+  });
+
+  if (!languageCheck.passed) {
+    return createRejection(
+      "non_chinese_news_language",
+      now,
+      `News item must use Chinese except fixed proper names: ${formatChineseNewsLanguageViolation(
+        languageCheck
+      )}`
+    );
+  }
+
   return undefined;
 }
 
@@ -582,7 +605,8 @@ function createCollectionReport(result: NewsCollectionResult): string {
     "",
     "- RSS is treated as the primary source stream.",
     "- Tavily and Exa global_search results are candidate leads only; downstream fact work must verify original source URLs.",
-    "- Missing URL, missing title, missing global_search provider/query, SEO aggregation, advertorial, stale non-high-heat items, low-trust sources, and non-AI items are hard rejected.",
+    "- Missing URL, missing title, missing global_search provider/query, SEO aggregation, advertorial, stale non-high-heat items, low-trust sources, non-AI items, and non-Chinese news language are hard rejected.",
+    "- News title/query/snippet/summary/rawContent must use Chinese; fixed proper names and common abbreviations such as OpenAI, Codex, Claude Code, API, SDK, LLM, RAG and R2 are allowed.",
     ""
   ].join("\n");
 }
@@ -732,6 +756,7 @@ export async function collectNewsWithReport(
   }
 
   requireSourceUrl(collection.candidates);
+  requireChineseNewsLanguage(collection.candidates);
 
   const result: NewsCollectionResult = {
     outputDir,
