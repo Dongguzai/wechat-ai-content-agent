@@ -163,6 +163,31 @@ test("REAL_PRODUCTION_MODE=true does not allow mock localization", async () => {
   );
 });
 
+test("NEWS_LOCALIZER_FORCE_RULES allows cloud brief fast localization in production mode", async () => {
+  const localized = await localizeNewsItem(
+    {
+      title: "OpenAI launches new agent workflow for developers",
+      summary: "OpenAI describes an AI agent workflow.",
+      snippet: "AI agent workflow.",
+      url: "https://openai.com/news/agent-workflow",
+      sourceName: "OpenAI News",
+      sourceType: "rss",
+      provider: "none"
+    },
+    {
+      env: testEnv({
+        REAL_PRODUCTION_MODE: "true",
+        LLM_ENABLE_REAL_API: "false",
+        NEWS_LOCALIZER_FORCE_RULES: "true"
+      })
+    }
+  );
+
+  assert.equal(localized.localized, true);
+  assert.match(localized.titleZh, /AI 资讯/);
+  assert.equal(localized.llm?.mode, "mock");
+});
+
 function fakeScore(index: number): NewsScores {
   return {
     freshness: 90 - index,

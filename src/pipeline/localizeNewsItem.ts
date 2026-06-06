@@ -42,6 +42,10 @@ function parseBoolean(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
+function shouldForceRulesLocalization(env: NodeJS.ProcessEnv): boolean {
+  return parseBoolean(env.NEWS_LOCALIZER_FORCE_RULES);
+}
+
 export function detectNewsSourceLanguage(input: {
   title?: string;
   summary?: string;
@@ -261,6 +265,20 @@ export async function localizeNewsItem(
       riskNotesZh: appendGlobalSearchRisk(input, payload.riskNotesZh),
       url: input.url,
       localized: false,
+      llm: mockLlmMetadata(config)
+    };
+  }
+
+  if (shouldForceRulesLocalization(env)) {
+    const payload = mockNormalize(input, sourceLanguage);
+    return {
+      sourceLanguage,
+      rawTitle,
+      rawSummary,
+      ...payload,
+      riskNotesZh: appendGlobalSearchRisk(input, payload.riskNotesZh),
+      url: input.url,
+      localized: true,
       llm: mockLlmMetadata(config)
     };
   }

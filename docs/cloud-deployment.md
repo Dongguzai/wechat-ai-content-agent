@@ -36,6 +36,8 @@ CRON_SECRET=
 DASHBOARD_PASSWORD=
 AUTH_SECRET=
 BRIEF_TIME_ZONE=Asia/Shanghai
+CLOUD_BRIEF_REAL_LOCALIZATION=false
+NEWS_LOCALIZER_CONCURRENCY=4
 ```
 
 说明：
@@ -43,6 +45,7 @@ BRIEF_TIME_ZONE=Asia/Shanghai
 - `DATABASE_URL` 使用 Neon Postgres 连接串。
 - `R2_ACCOUNT_ID` 必须填写 Cloudflare 账户概览里的 32 位十六进制 account id；上传 endpoint 固定由 adapter 生成：`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`。不要填写 `cfat_` API token、Access Key、bucket 名、公共访问 URL 或自定义域名。
 - 不要把 bucket 名拼进 endpoint，不要把 `R2_PUBLIC_BASE_URL` 用作上传 endpoint；`R2_PUBLIC_BASE_URL` 只用于生成公开访问 URL。
+- `CLOUD_BRIEF_REAL_LOCALIZATION=false` 是推荐值：云端每日简报会使用规则中文化，避免大量逐条 LLM 请求导致 Vercel Function 超过 300 秒。若显式改为 `true`，建议同步评估 MiniMax 延迟、Vercel 时限和 `NEWS_LOCALIZER_CONCURRENCY`。
 - R2 凭据只在服务端 adapter 使用，不输出到日志或前端。
 - `CRON_SECRET` 只用于 cron-job.org 调用 `/api/cron/generate-brief`。
 - `DASHBOARD_PASSWORD` 和 `AUTH_SECRET` 用于 Dashboard 登录保护。

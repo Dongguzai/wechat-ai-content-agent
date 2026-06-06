@@ -220,6 +220,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isExplicitTrue(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+function createCloudBriefCollectionEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  const baseEnv = env ?? process.env;
+
+  if (isExplicitTrue(baseEnv.CLOUD_BRIEF_REAL_LOCALIZATION)) {
+    return baseEnv;
+  }
+
+  return {
+    ...baseEnv,
+    NEWS_LOCALIZER_FORCE_RULES: "true",
+    LLM_DRY_RUN: "true"
+  };
+}
+
 function isCloudBriefGenerationStep(value: unknown): value is CloudBriefGenerationStep {
   return (
     typeof value === "string" &&
@@ -280,8 +298,9 @@ async function runExistingBriefPipeline(input: {
   pipeline: CloudBriefPipelineFns;
   onStep?: StepReporter;
 }) {
+  const collectionEnv = createCloudBriefCollectionEnv(input.env);
   const collectOptions: CollectNewsOptions = {
-    env: input.env,
+    env: collectionEnv,
     now: input.now,
     fetchImpl: input.fetchImpl,
     logger: input.logger,

@@ -71,6 +71,48 @@ function trimText(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function positiveIntegerFromEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  defaultValue: number,
+  maxValue: number
+): number {
+  const rawValue = env[key]?.trim();
+  if (!rawValue) {
+    return defaultValue;
+  }
+
+  const value = Number(rawValue);
+  if (!Number.isInteger(value) || value < 1) {
+    return defaultValue;
+  }
+
+  return Math.min(value, maxValue);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
+  );
+
+  return results;
+}
+
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
@@ -698,17 +740,22 @@ async function buildCollection({
   fetchImpl,
   outputDir
 }: BuildCollectionOptions): Promise<Omit<NewsCollectionResult, "outputDir" | "files">> {
-  const normalizedItems: NormalizedNewsItem[] = [];
-
-  for (const item of rawItems) {
-    normalizedItems.push(
+  const localizationConcurrency = positiveIntegerFromEnv(
+    env,
+    "NEWS_LOCALIZER_CONCURRENCY",
+    4,
+    8
+  );
+  const normalizedItems = await mapWithConcurrency(
+    rawItems,
+    localizationConcurrency,
+    async (item) =>
       await normalizeRawItem(item, now, {
         env,
         fetchImpl,
         outputDir
       })
-    );
-  }
+  );
 
   const rejectedItems = normalizedItems.filter((item) => item.rejection);
   const acceptedItems = normalizedItems.filter((item) => !item.rejection);

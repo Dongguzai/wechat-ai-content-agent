@@ -94,7 +94,11 @@ CRON_SECRET=
 DASHBOARD_PASSWORD=
 AUTH_SECRET=
 BRIEF_TIME_ZONE=Asia/Shanghai
+CLOUD_BRIEF_REAL_LOCALIZATION=false
+NEWS_LOCALIZER_CONCURRENCY=4
 ```
+
+`CLOUD_BRIEF_REAL_LOCALIZATION=false` 会让云端 7 点简报使用规则中文化，避免 20 条候选逐条调用 MiniMax 后超过 Vercel Function 300 秒上限。只有确认套餐、时限和调用量足够时，才建议改为 `true`。
 
 cron-job.org 配置：
 

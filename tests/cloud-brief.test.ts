@@ -839,6 +839,66 @@ test("cloud brief generation writes run, 10 shortlisted items, editorial brief, 
   assert.equal(r2.uploads[0].key, "reports/2026-06-02/editorial-brief.md");
 });
 
+test("cloud brief generation defaults collection to rules-based localization", async () => {
+  const db = new MemoryBriefDb();
+  const r2 = new MemoryR2();
+  let receivedEnv: NodeJS.ProcessEnv | undefined;
+  const pipeline = {
+    ...fakePipeline(),
+    collectNewsWithReport: async (options: { env?: NodeJS.ProcessEnv }) => {
+      receivedEnv = options.env;
+      return await fakePipeline().collectNewsWithReport();
+    }
+  };
+
+  await generateCloudEditorialBrief({
+    db,
+    r2,
+    env: {
+      REAL_PRODUCTION_MODE: "true",
+      LLM_ENABLE_REAL_API: "true",
+      LLM_DRY_RUN: "false",
+      MINIMAX_MODEL: "minimax-real-model"
+    },
+    now: new Date("2026-06-02T00:00:00.000Z"),
+    runDate: "2026-06-02",
+    pipeline
+  });
+
+  assert.equal(receivedEnv?.NEWS_LOCALIZER_FORCE_RULES, "true");
+  assert.equal(receivedEnv?.LLM_DRY_RUN, "true");
+});
+
+test("cloud brief generation can opt into real collection localization", async () => {
+  const db = new MemoryBriefDb();
+  const r2 = new MemoryR2();
+  let receivedEnv: NodeJS.ProcessEnv | undefined;
+  const pipeline = {
+    ...fakePipeline(),
+    collectNewsWithReport: async (options: { env?: NodeJS.ProcessEnv }) => {
+      receivedEnv = options.env;
+      return await fakePipeline().collectNewsWithReport();
+    }
+  };
+
+  await generateCloudEditorialBrief({
+    db,
+    r2,
+    env: {
+      CLOUD_BRIEF_REAL_LOCALIZATION: "true",
+      LLM_ENABLE_REAL_API: "true",
+      LLM_DRY_RUN: "false",
+      MINIMAX_MODEL: "minimax-real-model"
+    },
+    now: new Date("2026-06-02T00:00:00.000Z"),
+    runDate: "2026-06-02",
+    pipeline
+  });
+
+  assert.equal(receivedEnv?.NEWS_LOCALIZER_FORCE_RULES, undefined);
+  assert.equal(receivedEnv?.LLM_DRY_RUN, "false");
+});
+
 test("cloud brief generation reports step sequence on successful run", async () => {
   const db = new MemoryBriefDb();
   const r2 = new MemoryR2();

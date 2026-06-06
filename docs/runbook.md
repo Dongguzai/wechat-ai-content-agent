@@ -167,6 +167,8 @@ CRON_SECRET=
 DASHBOARD_PASSWORD=
 AUTH_SECRET=
 BRIEF_TIME_ZONE=Asia/Shanghai
+CLOUD_BRIEF_REAL_LOCALIZATION=false
+NEWS_LOCALIZER_CONCURRENCY=4
 ```
 
 R2 上传 endpoint 只由 `R2_ACCOUNT_ID` 生成，格式固定为
@@ -177,6 +179,8 @@ API token、Access Key、bucket 名、`https://`、公共访问域名或
 `R2_PUBLIC_BASE_URL` 只用于生成公开访问 URL，不能用于上传。
 `R2_BUCKET` 只能填写 bucket 名，例如 `briefs`；不要粘贴 `R2_ENDPOINT=https://...`
 整行，也不要填写 endpoint URL。
+
+云端 7 点简报建议保持 `CLOUD_BRIEF_REAL_LOCALIZATION=false`，用规则中文化候选资讯，减少逐条 MiniMax 调用，避免 Vercel Function 触发 300 秒超时。只有确认需要真实逐条中文化并且时限足够时，再改成 `true`。
 
 cron-job.org 配置：
 
