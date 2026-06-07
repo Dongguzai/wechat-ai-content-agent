@@ -75,17 +75,19 @@ export async function selectBriefTopic(
   input: unknown,
   options: DashboardFsOptions = {}
 ): Promise<{ path: string; approval: JsonObject; redirectTo: "/article" }> {
-  const topicId = stringField(input, "topicId");
+  const topicId = stringField(input, "topicId").trim();
   if (!topicId) {
     throw new Error("topicId is required.");
   }
 
   const brief = await readJsonFile<JsonObject>("outputs/editorial-brief.json", options);
   const shortlistedItems = shortlistedFromBrief(brief);
-  const topic = shortlistedItems.find((item) => String(item.id ?? "") === topicId);
+  const submittedTopic = submittedTopicFromInput(input, topicId);
+  const topic =
+    shortlistedItems.find((item) => String(item.id ?? "") === topicId) ?? submittedTopic;
 
   if (!topic) {
-    throw new Error("topicId was not found in outputs/editorial-brief.json shortlistedItems.");
+    throw new Error("topicId was not found in outputs/editorial-brief.json shortlistedItems or submitted topic.");
   }
   if (!stringValue(topic.url)) {
     throw new Error("Topics without an original URL cannot be selected.");
@@ -955,6 +957,30 @@ function shortlistedFromBrief(brief: JsonObject | undefined): JsonObject[] {
     return brief.shortlisted;
   }
   return [];
+}
+
+function submittedTopicFromInput(input: unknown, topicId: string): JsonObject | undefined {
+  const inputRecord = isRecord(input) ? input : {};
+  const topic = inputRecord.topic;
+
+  if (!isRecord(topic) || stringValue(topic.id) !== topicId) {
+    return undefined;
+  }
+
+  const title = stringValue(topic.titleZh) || stringValue(topic.title);
+  const url = stringValue(topic.url);
+
+  if (!title && !url) {
+    return undefined;
+  }
+
+  return {
+    id: topicId,
+    title: stringValue(topic.title) || title,
+    titleZh: stringValue(topic.titleZh) || title,
+    rawTitle: stringValue(topic.rawTitle),
+    url
+  };
 }
 
 function composeArticleMarkdown(title: string, content: string): string {

@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, RefreshCw, ShieldAlert, Star } from "lucide-react";
+import { Check, CheckCircle2, ExternalLink, RefreshCw, ShieldAlert, Star } from "lucide-react";
 import { StatusBadge } from "@/components/status-badge";
 import type { TodayBriefPayload } from "../../../src/types/cloud.js";
 
 type LoadState = "loading" | "ready" | "empty" | "error";
 type GenerateState = "idle" | "loading" | "success" | "failed";
+type ShortlistedItem = TodayBriefPayload["shortlistedItems"][number];
 
 interface GenerateFailure {
   step: string;
@@ -26,6 +27,12 @@ interface GenerateBriefResponse {
   endpointHint?: string;
 }
 
+interface SelectTopicResponse {
+  ok: boolean;
+  redirectTo?: "/article";
+  error?: string;
+}
+
 export function CloudBriefView() {
   const router = useRouter();
   const [payload, setPayload] = useState<TodayBriefPayload | null>(null);
@@ -33,6 +40,9 @@ export function CloudBriefView() {
   const [message, setMessage] = useState("");
   const [generateState, setGenerateState] = useState<GenerateState>("idle");
   const [generateFailure, setGenerateFailure] = useState<GenerateFailure | null>(null);
+  const [selectedTopicId, setSelectedTopicId] = useState("");
+  const [selectingTopicId, setSelectingTopicId] = useState("");
+  const [selectionMessage, setSelectionMessage] = useState("");
 
   const loadBrief = useCallback(
     async (options: { showLoading?: boolean; isCancelled?: () => boolean } = {}) => {
@@ -148,6 +158,56 @@ export function CloudBriefView() {
     }
   }
 
+  async function selectTopic(item: ShortlistedItem) {
+    const title = item.titleZh ?? item.title;
+
+    if (!item.id || !item.url || !title) {
+      setSelectionMessage("这条资讯缺少 id、标题或原文 URL，不能作为今日主选题。");
+      return;
+    }
+
+    setSelectingTopicId(item.id);
+    setSelectionMessage("");
+
+    try {
+      const response = await fetch("/api/brief/select-topic", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          topicId: item.id,
+          topic: {
+            id: item.id,
+            title: item.title,
+            titleZh: item.titleZh,
+            rawTitle: item.rawTitle,
+            url: item.url
+          }
+        })
+      });
+
+      if (response.status === 401) {
+        router.replace("/login?next=/brief");
+        return;
+      }
+
+      const result = (await response.json()) as SelectTopicResponse;
+
+      if (!response.ok || !result.ok) {
+        setSelectionMessage(result.error ?? "选题保存失败。");
+        return;
+      }
+
+      setSelectedTopicId(item.id);
+      setSelectionMessage(`已选择「${title}」，正在进入文章编辑。`);
+      router.push(result.redirectTo ?? "/article");
+    } catch (error) {
+      setSelectionMessage(error instanceof Error ? error.message : "选题保存失败。");
+    } finally {
+      setSelectingTopicId("");
+    }
+  }
+
   return (
     <div className="space-y-5">
       <section className="border-b border-line bg-white px-5 py-5">
@@ -228,6 +288,13 @@ export function CloudBriefView() {
         />
       ) : null}
 
+      {selectionMessage ? (
+        <StatePanel
+          icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
+          title={selectionMessage}
+        />
+      ) : null}
+
       {brief ? (
         <section className="border border-line bg-white p-5">
           <div className="flex items-start gap-3">
@@ -270,6 +337,9 @@ export function CloudBriefView() {
         const topicAngle = item.topicAngleZh ?? item.topicAngle;
         const shortlistReason = item.shortlistReasonZh ?? item.shortlistReason;
         const riskNotes = item.riskNotesZh?.length ? item.riskNotesZh : item.riskNotes;
+        const isSelected = selectedTopicId === item.id;
+        const isSelecting = selectingTopicId === item.id;
+        const canSelect = Boolean(item.id && item.url && title);
 
         return (
           <article key={item.id} className="border border-line bg-white p-5">
@@ -283,15 +353,35 @@ export function CloudBriefView() {
                 <p className="mt-2 break-all text-sm text-stone-600">原文 URL：{item.url}</p>
                 <p className="mt-2 text-sm text-stone-600">{sourceLabel(item)}</p>
               </div>
-              <a
-                href={item.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold text-stone-700 hover:border-ink hover:text-ink"
-              >
-                <ExternalLink className="size-4" aria-hidden="true" />
-                阅读原文
-              </a>
+              <div className="flex shrink-0 flex-wrap gap-2 md:flex-col">
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold text-stone-700 hover:border-ink hover:text-ink"
+                >
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                  阅读原文
+                </a>
+                <button
+                  type="button"
+                  onClick={() => selectTopic(item)}
+                  disabled={Boolean(selectingTopicId) || !canSelect}
+                  className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    isSelected
+                      ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border border-ink bg-ink text-white hover:bg-stone-800"
+                  }`}
+                  title="选择为今日主选题"
+                >
+                  {isSelected ? (
+                    <CheckCircle2 className="size-4" aria-hidden="true" />
+                  ) : (
+                    <Check className="size-4" aria-hidden="true" />
+                  )}
+                  {isSelecting ? "选择中..." : isSelected ? "已选择" : "选择此题"}
+                </button>
+              </div>
             </div>
             <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
               <Info label="score" value={String(item.shortlistScore)} />

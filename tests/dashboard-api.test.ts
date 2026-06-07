@@ -281,6 +281,32 @@ test("brief topic selection writes approved editorial approval and redirects to 
   }
 });
 
+test("brief topic selection accepts a cloud brief topic snapshot", async () => {
+  const root = await createTempRoot();
+  try {
+    const result = await selectBriefTopic(
+      {
+        topicId: "cloud-topic-3",
+        topic: {
+          id: "cloud-topic-3",
+          title: "Cloud topic raw title",
+          titleZh: "云端入围资讯",
+          url: "https://example.com/cloud-topic-3"
+        }
+      },
+      { rootDir: root }
+    );
+    const saved = JSON.parse(await readFile(join(root, "inputs/editorial-approval.json"), "utf8"));
+
+    assert.equal(result.redirectTo, "/article");
+    assert.equal(saved.approvedByUser, true);
+    assert.equal(saved.approvedTopicId, "cloud-topic-3");
+    assert.equal(saved.approvedTitle, "云端入围资讯");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("brief topic selection rejects shortlisted items without URL", async () => {
   const root = await createTempRoot();
   try {
@@ -364,7 +390,8 @@ test("/brief page reads the cloud today API with friendly empty state", async ()
   assert.match(viewSource, /今日 10 条入围资讯阅读清单/);
   assert.match(viewSource, /今日简报尚未生成。请等待 7 点定时任务，或手动触发生成。/);
   assert.match(viewSource, /href=\{item\.url\}/);
-  assert.doesNotMatch(viewSource, /api\/brief\/select-topic/);
+  assert.match(viewSource, /api\/brief\/select-topic/);
+  assert.match(viewSource, /选择此题/);
 });
 
 test("/brief page can manually generate and refresh today's cloud brief", async () => {
