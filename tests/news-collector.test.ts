@@ -313,6 +313,57 @@ test("collectNewsWithReport localizes English news instead of hard rejecting lan
   );
 });
 
+test("dedupe uses raw titles so rule-localized generic titles do not collapse distinct news", async () => {
+  const now = new Date("2026-05-29T00:00:00.000Z");
+  const fetchedAt = now.toISOString();
+  const titles = [
+    "OpenAI shares a frontier model card update for enterprise teams",
+    "Google DeepMind publishes a Gemini robotics benchmark report",
+    "Anthropic releases Claude evaluation tools for regulated teams",
+    "Meta introduces a multimodal LLM safety scorecard",
+    "Mistral updates model routing controls in Le Chat",
+    "Nvidia launches an AI inference benchmark for DGX Cloud",
+    "Cohere releases a multilingual reranker model for search",
+    "Microsoft adds model evaluation support to Copilot Studio",
+    "Hugging Face publishes new leaderboard methodology notes",
+    "Stanford HAI releases fresh AI Index benchmark data",
+    "Perplexity updates enterprise answer model controls",
+    "Runway unveils a video model quality benchmark"
+  ];
+  const fixtureItems: RawNewsItem[] = titles.map((title, index) => ({
+    id: `fixture-distinct-model-${index + 1}`,
+    sourceType: "rss" as const,
+    provider: "none" as const,
+    title,
+    url: `https://example.com/ai-model-benchmark-${index + 1}`,
+    snippet:
+      "A new AI model benchmark and technical report gives teams updated evaluation data for LLM deployment decisions.",
+    sourceName: "Fixture RSS",
+    publishedAt: fetchedAt,
+    fetchedAt
+  }));
+
+  const result = await collectNewsWithReport({
+    rawItemsOverride: fixtureItems,
+    writeOutputs: false,
+    allowMockRssFallback: false,
+    logger: silentLogger,
+    now,
+    env: testEnv({
+      NEWS_LOCALIZER_FORCE_RULES: "true",
+      LLM_DRY_RUN: "true"
+    })
+  });
+
+  assert.equal(result.dedupedItems.length, fixtureItems.length);
+  assert.equal(result.candidates.length, fixtureItems.length);
+  const uniqueLocalizedTitles = new Set(
+    result.candidates.map((candidate) => candidate.titleZh)
+  );
+  assert.ok(uniqueLocalizedTitles.size < fixtureItems.length);
+  assert.ok(uniqueLocalizedTitles.has("AI 资讯：模型能力与评测动态"));
+});
+
 test("SEARCH_ENABLE_REAL_API=false uses mock search without calling fetch", async () => {
   let fetchCalls = 0;
 

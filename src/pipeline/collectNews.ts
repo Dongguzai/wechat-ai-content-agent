@@ -590,15 +590,24 @@ function toDuplicateSource(item: NormalizedNewsItem): DuplicateSource {
   };
 }
 
+function titleForDuplicateSimilarity(item: NormalizedNewsItem): string {
+  return trimText(item.rawTitle) || trimText(item.title);
+}
+
 function dedupeNews(items: NormalizedNewsItem[]): NormalizedNewsItem[] {
   const sorted = [...items].sort((a, b) => b.scores.final - a.scores.final);
   const deduped: NormalizedNewsItem[] = [];
 
   for (const item of sorted) {
+    const itemSimilarityTitle = titleForDuplicateSimilarity(item);
     const duplicateIndex = deduped.findIndex(
-      (existing) =>
-        existing.duplicateKey === item.duplicateKey ||
-        titleSimilarity(existing.title, item.title) >= 0.82
+      (existing) => {
+        const existingSimilarityTitle = titleForDuplicateSimilarity(existing);
+        return (
+          existing.duplicateKey === item.duplicateKey ||
+          titleSimilarity(existingSimilarityTitle, itemSimilarityTitle) >= 0.82
+        );
+      }
     );
 
     if (duplicateIndex === -1) {

@@ -184,11 +184,16 @@ function titleSimilarity(left: string, right: string): number {
   return intersection.length / union.size;
 }
 
+function titleForDuplicateSimilarity(item: NormalizedNewsItem): string {
+  return trimText(item.rawTitle) || trimText(item.title);
+}
+
 function isDuplicateOf(
   candidate: NormalizedNewsItem,
   selected: NormalizedNewsItem[]
 ): NormalizedNewsItem | undefined {
   const candidateUrlKey = normalizeUrlKey(candidate.url);
+  const candidateSimilarityTitle = titleForDuplicateSimilarity(candidate);
 
   return selected.find((item) => {
     if (candidate.id === item.id) {
@@ -203,7 +208,10 @@ function isDuplicateOf(
       return true;
     }
 
-    return titleSimilarity(candidate.title, item.title) >= 0.82;
+    return (
+      titleSimilarity(candidateSimilarityTitle, titleForDuplicateSimilarity(item)) >=
+      0.82
+    );
   });
 }
 

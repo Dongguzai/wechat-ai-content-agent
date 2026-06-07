@@ -173,3 +173,43 @@ test("shortlistNewsWithReport does not allow obvious duplicate events", async ()
     )
   );
 });
+
+test("shortlist dedupe uses raw titles when localized titles are generic", async () => {
+  const rawTitles = [
+    "OpenAI shares a frontier model card update for enterprise teams",
+    "Google DeepMind publishes a Gemini robotics benchmark report",
+    "Anthropic releases Claude evaluation tools for regulated teams",
+    "Meta introduces a multimodal LLM safety scorecard",
+    "Mistral updates model routing controls in Le Chat",
+    "Nvidia launches an AI inference benchmark for DGX Cloud",
+    "Cohere releases a multilingual reranker model for search",
+    "Microsoft adds model evaluation support to Copilot Studio",
+    "Hugging Face publishes new leaderboard methodology notes",
+    "Stanford HAI releases fresh AI Index benchmark data",
+    "Perplexity updates enterprise answer model controls",
+    "Runway unveils a video model quality benchmark",
+    "LangChain ships agent workflow observability updates",
+    "GitHub previews coding agent controls for teams",
+    "MIT researchers describe human oversight for AI systems",
+    "Salesforce updates Slack agent workflow automation",
+    "Apple researchers release a model compression study",
+    "Databricks publishes enterprise AI deployment notes",
+    "Scale AI introduces evaluation data quality checks",
+    "ServiceNow previews workflow agents for IT teams"
+  ];
+  const candidates = (await createCandidates()).map((candidate, index) => ({
+    ...candidate,
+    title: "AI 资讯：模型能力与评测动态",
+    titleZh: "AI 资讯：模型能力与评测动态",
+    rawTitle: rawTitles[index] ?? `Distinct raw AI news ${index + 1}`
+  }));
+
+  const result = await shortlistNewsWithReport({
+    candidates,
+    writeOutputs: false,
+    logger: silentLogger
+  });
+
+  assertShortlistContract(result.shortlisted);
+  assert.equal(result.stats.shortlistedCount, 10);
+});
