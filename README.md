@@ -596,6 +596,7 @@ pnpm env:check
 `.env.example` 按当前代码读取点分组维护。默认值用于安全 dry-run：
 
 - `SEARCH_ENABLE_REAL_API=false`：搜索补充走 mock adapter。
+- `NEWS_LOOKBACK_HOURS=72`：每日简报候选必须能验证为最近 72 小时内发布，超窗或缺少发布时间会进入 `rejected-news.json`。
 - `COVER_ENABLE_REAL_API=false`：封面走本地 mock SVG；开启真实 APIMart 生图时还需要 `APIMART_API_KEY` 与 `APIMART_IMAGE_API_URL`，`APIMART_COVER_STYLE` 会先做具体工作室名称安全替换再进入 prompt。
 - `WECHAT_API_ENABLE_REAL_DRAFT=false`、`WECHAT_DRAFT_ALLOW_REAL_API=false`、`WECHAT_DRAFT_DRY_RUN=true`：官方 API 草稿写入只做预检。
 - `WECHAT_FORBID_PUBLISH=true`、`WECHAT_FORBID_MASS_SEND=true`：发布和群发防线保持开启。

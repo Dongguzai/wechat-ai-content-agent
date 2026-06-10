@@ -22,6 +22,7 @@ function testEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     SEARCH_LOOKBACK_HOURS: "72",
     GLOBAL_SEARCH_MAX_CANDIDATES: "6",
     RSS_MIN_CANDIDATES: "14",
+    NEWS_LOOKBACK_HOURS: "72",
     ...overrides
   };
 }
@@ -58,6 +59,12 @@ test("collectNewsWithReport writes 20 candidates with RSS/global quotas", async 
       assert.ok(candidate.category);
       assert.ok(candidate.scores);
       assert.equal(typeof candidate.scores.final, "number");
+      assert.ok(candidate.publishedAt);
+      assert.ok(
+        (new Date().getTime() - new Date(candidate.publishedAt).getTime()) /
+          3_600_000 <=
+          72
+      );
     }
 
     const globalSearchCandidates = result.candidates.filter(
@@ -193,6 +200,16 @@ test("hard rejection fixtures cover invalid source scenarios", async () => {
       fetchedAt
     },
     {
+      id: "fixture-missing-published-at",
+      sourceType: "rss",
+      provider: "none",
+      title: "AI model update missing published time",
+      url: "https://openai.com/fixture-missing-published-at",
+      snippet: "AI model release has a source URL but no publishedAt timestamp.",
+      sourceName: "Fixture RSS",
+      fetchedAt
+    },
+    {
       id: "fixture-old-not-high-heat",
       sourceType: "rss",
       provider: "none",
@@ -244,10 +261,17 @@ test("hard rejection fixtures cover invalid source scenarios", async () => {
   assert.equal(reasonsById.get("fixture-advertorial"), "advertorial");
   assert.equal(reasonsById.get("fixture-not-ai"), "not_ai_related");
   assert.equal(reasonsById.get("fixture-snippet-only"), "snippet_only_without_url");
-  assert.equal(reasonsById.get("fixture-old-not-high-heat"), "older_than_7_days");
-  assert.equal(reasonsById.has("fixture-old-high-heat"), false);
-  assert.ok(
-    result.candidates.some((candidate) => candidate.id === "fixture-old-high-heat")
+  assert.equal(
+    reasonsById.get("fixture-missing-published-at"),
+    "missing_published_at"
+  );
+  assert.equal(
+    reasonsById.get("fixture-old-not-high-heat"),
+    "outside_daily_lookback"
+  );
+  assert.equal(
+    reasonsById.get("fixture-old-high-heat"),
+    "outside_daily_lookback"
   );
 });
 

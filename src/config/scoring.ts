@@ -9,27 +9,32 @@ import type {
 } from "../types/news.js";
 
 export const scoreWeights = {
-  technicalValue: 0.45,
-  wechatTopic: 0.45,
-  freshness: 0.1
+  technicalValue: 0.3,
+  wechatTopic: 0.35,
+  freshness: 0.2,
+  heat: 0.15
 } as const;
 
 export const shortlistScoreWeights = {
-  technicalValue: 0.25,
-  wechatTopic: 0.3,
-  businessImpact: 0.15,
-  controversy: 0.1,
-  sourceCredibility: 0.1,
-  explainability: 0.1
+  freshness: 0.16,
+  heat: 0.14,
+  technicalValue: 0.18,
+  wechatTopic: 0.24,
+  businessImpact: 0.1,
+  controversy: 0.06,
+  sourceCredibility: 0.06,
+  explainability: 0.06
 } as const;
 
 export const decisionScoreWeights = {
-  wechatTopic: 0.25,
-  businessImpact: 0.2,
-  technicalValue: 0.2,
-  controversy: 0.15,
-  sourceCredibility: 0.1,
-  explainability: 0.1
+  freshness: 0.18,
+  heat: 0.16,
+  wechatTopic: 0.22,
+  businessImpact: 0.15,
+  technicalValue: 0.15,
+  controversy: 0.08,
+  sourceCredibility: 0.03,
+  explainability: 0.03
 } as const;
 
 export const categoryKeywords: Record<NewsCategory, string[]> = {
@@ -418,6 +423,8 @@ export function scoreShortlistDimensions(
   item: NormalizedNewsItem
 ): ShortlistScoreDimensions {
   return {
+    freshness: item.scores.freshness,
+    heat: item.scores.heat,
     technicalValue: item.scores.technicalValue,
     wechatTopic: item.scores.wechatTopic,
     businessImpact: item.scores.businessImpact,
@@ -432,7 +439,9 @@ export function calculateShortlistScore(
   dimensions: ShortlistScoreDimensions
 ): number {
   return clampScore(
-    dimensions.technicalValue * shortlistScoreWeights.technicalValue +
+    (dimensions.freshness ?? 72) * shortlistScoreWeights.freshness +
+      (dimensions.heat ?? 50) * shortlistScoreWeights.heat +
+      dimensions.technicalValue * shortlistScoreWeights.technicalValue +
       dimensions.wechatTopic * shortlistScoreWeights.wechatTopic +
       dimensions.businessImpact * shortlistScoreWeights.businessImpact +
       dimensions.controversy * shortlistScoreWeights.controversy +
@@ -445,6 +454,8 @@ export function scoreTopicDecisionDimensions(
   item: ShortlistedNewsItem
 ): TopicDecisionScoreDimensions {
   return {
+    freshness: item.scores.freshness,
+    heat: item.scores.heat,
     wechatTopic: item.shortlistMetrics.wechatTopic,
     businessImpact: item.shortlistMetrics.businessImpact,
     technicalValue: item.shortlistMetrics.technicalValue,
@@ -458,7 +469,9 @@ export function calculateDecisionScore(
   dimensions: TopicDecisionScoreDimensions
 ): number {
   return clampScore(
-    dimensions.wechatTopic * decisionScoreWeights.wechatTopic +
+    (dimensions.freshness ?? 72) * decisionScoreWeights.freshness +
+      (dimensions.heat ?? 50) * decisionScoreWeights.heat +
+      dimensions.wechatTopic * decisionScoreWeights.wechatTopic +
       dimensions.businessImpact * decisionScoreWeights.businessImpact +
       dimensions.technicalValue * decisionScoreWeights.technicalValue +
       dimensions.controversy * decisionScoreWeights.controversy +
@@ -479,13 +492,17 @@ export function scoreNewsItem(
     ? Math.max(0, (now.getTime() - publishedAt) / 3_600_000)
     : 72;
 
-  let freshness = 45;
-  if (ageHours <= 24) {
+  let freshness = 30;
+  if (ageHours <= 6) {
     freshness = 100;
+  } else if (ageHours <= 24) {
+    freshness = 95;
+  } else if (ageHours <= 48) {
+    freshness = 88;
   } else if (ageHours <= 72) {
-    freshness = 86;
+    freshness = 78;
   } else if (ageHours <= 168) {
-    freshness = 68;
+    freshness = 48;
   }
 
   const heatTerms = [
@@ -502,11 +519,21 @@ export function scoreNewsItem(
     "acquisition",
     "breakthrough",
     "frontier",
+    "viral",
+    "trending",
+    "debate",
+    "discussion",
     "发布",
     "融资",
     "并购",
     "突破",
-    "前沿"
+    "前沿",
+    "热议",
+    "争议",
+    "讨论",
+    "关注",
+    "升温",
+    "话题"
   ];
   const technicalTerms = [
     "technical report",
@@ -605,7 +632,9 @@ export function scoreNewsItem(
   const sourceTrust = isTrustedDomain(raw.url) ? 10 : 0;
   const rssBoost = raw.sourceType === "rss" ? 4 : 0;
 
-  const heat = scoreByTerms(heatTerms, 48, 7) + sourceTrust + rssBoost;
+  const highHeatBoost = raw.highHeat ? 14 : 0;
+  const heat =
+    scoreByTerms(heatTerms, 48, 7) + sourceTrust + rssBoost + highHeatBoost;
   const technicalValue =
     scoreByTerms(technicalTerms, category === "research" ? 66 : 48, 7) +
     (category === "model" || category === "tooling" ? 8 : 0) +
@@ -622,7 +651,8 @@ export function scoreNewsItem(
   const final =
     technicalValue * scoreWeights.technicalValue +
     wechatTopic * scoreWeights.wechatTopic +
-    freshness * scoreWeights.freshness;
+    freshness * scoreWeights.freshness +
+    heat * scoreWeights.heat;
 
   return {
     freshness: clampScore(freshness),

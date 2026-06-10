@@ -281,6 +281,24 @@ function isGenericTitle(title: string): boolean {
   ].includes(title.trim().toLowerCase());
 }
 
+function parsePublishedAt(value: string | undefined): {
+  missing: boolean;
+  invalid: boolean;
+  timestamp?: number;
+} {
+  const trimmed = trimText(value);
+  if (!trimmed) {
+    return { missing: true, invalid: false };
+  }
+
+  const timestamp = Date.parse(trimmed);
+  if (!Number.isFinite(timestamp)) {
+    return { missing: false, invalid: true };
+  }
+
+  return { missing: false, invalid: false, timestamp };
+}
+
 function createRejection(
   reason: string,
   now: Date,
@@ -299,7 +317,8 @@ function createRejection(
 function evaluateBasicRejection(
   raw: RawNewsItem,
   normalized: Omit<NormalizedNewsItem, "rejection">,
-  now: Date
+  now: Date,
+  config: CollectionConfig
 ): NewsRejection | undefined {
   const title = normalized.title;
   const url = normalized.url;
@@ -376,20 +395,33 @@ function evaluateBasicRejection(
     );
   }
 
-  if (raw.publishedAt) {
-    const timestamp = Date.parse(raw.publishedAt);
-    const ageHours = Number.isFinite(timestamp)
-      ? (now.getTime() - timestamp) / 3_600_000
-      : 0;
-    const highHeat = raw.highHeat ?? normalized.scores.heat >= 90;
+  const publishedAt = parsePublishedAt(raw.publishedAt);
+  if (publishedAt.missing) {
+    return createRejection(
+      "missing_published_at",
+      now,
+      "Daily brief candidates must include publishedAt so the configured latest-news window can be verified."
+    );
+  }
 
-    if (ageHours > 168 && !highHeat) {
-      return createRejection(
-        "older_than_7_days",
-        now,
-        `Published ${Math.round(ageHours)} hours ago.`
-      );
-    }
+  if (publishedAt.invalid || publishedAt.timestamp === undefined) {
+    return createRejection(
+      "invalid_published_at",
+      now,
+      `Invalid publishedAt value: ${raw.publishedAt}.`
+    );
+  }
+
+  const ageHours = Math.max(
+    0,
+    (now.getTime() - publishedAt.timestamp) / 3_600_000
+  );
+  if (ageHours > config.newsLookbackHours) {
+    return createRejection(
+      "outside_daily_lookback",
+      now,
+      `Published ${Math.round(ageHours)} hours ago; daily brief lookback is ${config.newsLookbackHours} hours.`
+    );
   }
 
   if (isLowTrustDomain(url) && !isTrustedDomain(url)) {
@@ -515,10 +547,18 @@ function normalizeRawItemBase(
 async function normalizeRawItem(
   raw: RawNewsItem,
   now: Date,
-  options: Pick<BuildCollectionOptions, "env" | "fetchImpl" | "outputDir">
+  options: Pick<
+    BuildCollectionOptions,
+    "config" | "env" | "fetchImpl" | "outputDir"
+  >
 ): Promise<NormalizedNewsItem> {
   const normalizedBase = normalizeRawItemBase(raw, now);
-  const basicRejection = evaluateBasicRejection(raw, normalizedBase, now);
+  const basicRejection = evaluateBasicRejection(
+    raw,
+    normalizedBase,
+    now,
+    options.config
+  );
 
   if (basicRejection) {
     return { ...normalizedBase, rejection: basicRejection };
@@ -691,7 +731,8 @@ function createStats(
   dedupedItems: NormalizedNewsItem[],
   rejectedItems: NormalizedNewsItem[],
   candidates: NormalizedNewsItem[],
-  apiRealCall: boolean
+  apiRealCall: boolean,
+  config: CollectionConfig
 ): NewsCollectionStats {
   const basicRejectionCount = rejectedItems.filter(
     (item) => item.rejection?.stage === "basic"
@@ -718,6 +759,15 @@ function createStats(
     localizedCount: normalizedItems.filter((item) => item.localized === true).length,
     localizationFailedCount,
     rejectedAfterLocalizationCount,
+    lookbackHours: config.newsLookbackHours,
+    rejectedMissingPublishedAtCount: rejectedItems.filter(
+      (item) =>
+        item.rejection?.reason === "missing_published_at" ||
+        item.rejection?.reason === "invalid_published_at"
+    ).length,
+    rejectedOutsideLookbackCount: rejectedItems.filter(
+      (item) => item.rejection?.reason === "outside_daily_lookback"
+    ).length,
     finalCandidateCount: candidates.length,
     rssCandidateCount: candidates.filter((item) => item.sourceType === "rss").length,
     globalSearchCandidateCount: candidates.filter(
@@ -760,6 +810,7 @@ async function buildCollection({
     localizationConcurrency,
     async (item) =>
       await normalizeRawItem(item, now, {
+        config,
         env,
         fetchImpl,
         outputDir
@@ -776,7 +827,8 @@ async function buildCollection({
     dedupedItems,
     rejectedItems,
     candidates,
-    apiRealCall
+    apiRealCall,
+    config
   );
 
   return {
@@ -817,6 +869,9 @@ function createCollectionReport(result: NewsCollectionResult): string {
     `- 中文化完成数量: ${stats.localizedCount ?? 0}`,
     `- 中文化失败数量: ${stats.localizationFailedCount ?? 0}`,
     `- 中文化后编辑拒绝数量: ${stats.rejectedAfterLocalizationCount ?? 0}`,
+    `- 每日候选时间窗口: 最近 ${stats.lookbackHours ?? 72} 小时`,
+    `- 缺少或无效发布时间拒绝数量: ${stats.rejectedMissingPublishedAtCount ?? 0}`,
+    `- 超出每日时间窗口拒绝数量: ${stats.rejectedOutsideLookbackCount ?? 0}`,
     `- 最终候选数量: ${stats.finalCandidateCount}`,
     `- RSS 候选数量: ${stats.rssCandidateCount}`,
     `- global_search 候选数量: ${stats.globalSearchCandidateCount}`,
@@ -832,7 +887,7 @@ function createCollectionReport(result: NewsCollectionResult): string {
     "",
     "- RSS is treated as the primary source stream.",
     "- Tavily and Exa global_search results are candidate leads only; downstream fact work must verify original source URLs.",
-    "- Basic rejection runs before localization: missing URL/title, missing global_search provider/query, snippet-only search leads, SEO aggregation, advertorial, stale non-high-heat items, low-trust sources, and non-AI items are rejected.",
+    "- Basic rejection runs before localization: missing URL/title/publishedAt, missing global_search provider/query, snippet-only search leads, SEO aggregation, advertorial, items outside the daily lookback window, low-trust sources, and non-AI items are rejected.",
     "- English RSS/Tavily/Exa source items are allowed into basic filtering, then localized into Chinese fields before WeChat editorial screening.",
     "- Editorial rejection runs after localization: weak_topic_angle, low_wechat_fit, unclear_summary, and not_suitable_for_chinese_reader.",
     "- Candidate display should prefer titleZh/summaryZh/topicAngleZh/shortlistReasonZh while preserving rawTitle/rawSummary and the original URL.",

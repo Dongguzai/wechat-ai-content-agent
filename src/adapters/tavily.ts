@@ -70,7 +70,7 @@ function normalizeResult(
     readString(record, "published_date") ??
       readString(record, "publishedAt") ??
       readString(record, "date")
-  ) ?? fetchedAt;
+  );
   const sourceNameCandidate =
     readString(record, "source") ??
     readString(record, "site_name") ??

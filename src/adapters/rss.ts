@@ -167,33 +167,39 @@ function parseFeedItems(
   fetchedAt: string,
   maxItemsPerSource: number
 ): RawNewsItem[] {
-  return extractItemBlocks(xml)
-    .slice(0, maxItemsPerSource)
-    .map((block, index) => {
-      const title = extractTag(block, ["title"]) ?? "";
-      const url = extractLink(block) ?? "";
-      const snippet =
-        extractTag(block, ["description", "summary", "subtitle"]) ??
-        extractTag(block, ["content:encoded", "content"]) ??
-        undefined;
-      const publishedAt = normalizeDate(
-        extractTag(block, ["pubDate", "published", "updated", "dc:date"])
-      );
-      const id = createNewsId("rss", source.name, url, title, String(index));
+  const items: RawNewsItem[] = extractItemBlocks(xml).map((block, index) => {
+    const title = extractTag(block, ["title"]) ?? "";
+    const url = extractLink(block) ?? "";
+    const snippet =
+      extractTag(block, ["description", "summary", "subtitle"]) ??
+      extractTag(block, ["content:encoded", "content"]) ??
+      undefined;
+    const publishedAt = normalizeDate(
+      extractTag(block, ["pubDate", "published", "updated", "dc:date"])
+    );
+    const id = createNewsId("rss", source.name, url, title, String(index));
 
-      return {
-        id,
-        sourceType: "rss",
-        provider: "none",
-        title,
-        url,
-        snippet,
-        sourceName: source.name,
-        publishedAt,
-        fetchedAt,
-        rawContent: snippet
-      };
-    });
+    return {
+      id,
+      sourceType: "rss",
+      provider: "none",
+      title,
+      url,
+      snippet,
+      sourceName: source.name,
+      publishedAt,
+      fetchedAt,
+      rawContent: snippet
+    };
+  });
+
+  return items
+    .sort((left, right) => {
+      const leftTime = left.publishedAt ? Date.parse(left.publishedAt) : 0;
+      const rightTime = right.publishedAt ? Date.parse(right.publishedAt) : 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, maxItemsPerSource);
 }
 
 export async function fetchRssNews(

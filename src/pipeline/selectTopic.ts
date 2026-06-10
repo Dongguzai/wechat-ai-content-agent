@@ -8,6 +8,7 @@ import {
   isTrustedDomain,
   scoreTopicDecisionDimensions
 } from "../config/scoring.js";
+import { DEFAULT_NEWS_LOOKBACK_HOURS } from "../config/sources.js";
 import { requireSourceUrl } from "../hooks/requireSourceUrl.js";
 import type {
   SelectedTopic,
@@ -112,10 +113,16 @@ function hasReliableOriginalSource(item: ShortlistedNewsItem): boolean {
 
 function ineligibleReasonFor(
   item: ShortlistedNewsItem,
-  sourceReliability: SourceReliability
+  sourceReliability: SourceReliability,
+  now: Date
 ): string | undefined {
   if (!hasSourceUrl(item)) {
     return "缺少 URL，不能作为今日主选题。";
+  }
+
+  const ageHours = ageHoursFor(item, now);
+  if (ageHours !== undefined && ageHours > DEFAULT_NEWS_LOOKBACK_HOURS) {
+    return `发布时间超过最近 ${DEFAULT_NEWS_LOOKBACK_HOURS} 小时窗口，不能作为每日简报主选题。`;
   }
 
   if (item.sourceType === "global_search" && !hasReliableOriginalSource(item)) {
@@ -133,11 +140,20 @@ function conflictBoost(item: ShortlistedNewsItem): number {
   const text = textFor(item);
   let boost = 0;
 
-  if (text.includes("cost") && text.includes("free")) {
+  if (
+    (text.includes("cost") && text.includes("free")) ||
+    (text.includes("成本") && text.includes("免费")) ||
+    (text.includes("价格") && text.includes("免费"))
+  ) {
     boost += 3;
   }
 
-  if (/\b(vs|versus|battles?)\b/.test(text) || text.includes("替代")) {
+  if (
+    /\b(vs|versus|battles?)\b/.test(text) ||
+    text.includes("替代") ||
+    text.includes("对比") ||
+    text.includes("竞争")
+  ) {
     boost += 2;
   }
 
@@ -150,6 +166,10 @@ function conflictBoost(item: ShortlistedNewsItem): number {
     text.includes("风险")
   ) {
     boost += 2;
+  }
+
+  if (text.includes("热议") || text.includes("争议") || text.includes("讨论")) {
+    boost += 1.5;
   }
 
   if (
@@ -168,24 +188,91 @@ function conflictBoost(item: ShortlistedNewsItem): number {
   return boost;
 }
 
-function agePenalty(item: ShortlistedNewsItem, now: Date): number {
+function ageHoursFor(item: ShortlistedNewsItem, now: Date): number | undefined {
   if (!item.publishedAt) {
-    return 1;
+    return undefined;
   }
 
   const timestamp = Date.parse(item.publishedAt);
   if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  return Math.max(0, (now.getTime() - timestamp) / 3_600_000);
+}
+
+function agePenalty(item: ShortlistedNewsItem, now: Date): number {
+  const ageHours = ageHoursFor(item, now);
+  if (ageHours === undefined) {
+    return 1.5;
+  }
+
+  if (ageHours > DEFAULT_NEWS_LOOKBACK_HOURS) {
+    return 10;
+  }
+
+  if (ageHours > 48) {
     return 1;
   }
 
-  const ageDays = (now.getTime() - timestamp) / 86_400_000;
-  if (ageDays > 45) {
-    return 1.5;
+  if (ageHours > 24) {
+    return 0.4;
   }
-  if (ageDays > 14) {
+
+  return 0;
+}
+
+function recencyBoost(item: ShortlistedNewsItem, now: Date): number {
+  const ageHours = ageHoursFor(item, now);
+  if (ageHours === undefined) {
+    return -1;
+  }
+
+  if (ageHours <= 12) {
+    return 2.5;
+  }
+
+  if (ageHours <= 24) {
+    return 2;
+  }
+
+  if (ageHours <= 48) {
     return 1;
   }
-  return 0;
+
+  if (ageHours <= DEFAULT_NEWS_LOOKBACK_HOURS) {
+    return 0.4;
+  }
+
+  return -4;
+}
+
+function topicalityBoost(item: ShortlistedNewsItem): number {
+  let boost = 0;
+
+  if (item.scores.heat >= 90) {
+    boost += 3;
+  } else if (item.scores.heat >= 80) {
+    boost += 2;
+  } else if (item.scores.heat >= 70) {
+    boost += 1;
+  }
+
+  if (item.scores.wechatTopic >= 90) {
+    boost += 2;
+  } else if (item.scores.wechatTopic >= 80) {
+    boost += 1;
+  }
+
+  if (item.scores.controversy >= 60) {
+    boost += 1.5;
+  }
+
+  if ((item.duplicateSources?.length ?? 0) > 0) {
+    boost += 1;
+  }
+
+  return boost;
 }
 
 function editorialScoreFor(
@@ -195,7 +282,12 @@ function editorialScoreFor(
   ineligibleReason: string | undefined,
   now: Date
 ): number {
-  let score = decisionScore + conflictBoost(item) - agePenalty(item, now);
+  let score =
+    decisionScore +
+    conflictBoost(item) +
+    recencyBoost(item, now) +
+    topicalityBoost(item) -
+    agePenalty(item, now);
 
   if (sourceReliability === "high") {
     score += 1.5;
@@ -757,7 +849,7 @@ function rankTopics(items: ShortlistedNewsItem[], now: Date): RankedTopic[] {
       const decisionScore = calculateDecisionScore(
         scoreTopicDecisionDimensions(item)
       );
-      const ineligibleReason = ineligibleReasonFor(item, sourceReliability);
+      const ineligibleReason = ineligibleReasonFor(item, sourceReliability, now);
 
       return {
         item,

@@ -20,6 +20,7 @@ export interface CollectionConfig {
   exaMaxQueriesPerRun: number;
   searchMaxResultsPerQuery: number;
   searchLookbackHours: number;
+  newsLookbackHours: number;
   globalSearchMaxCandidates: number;
   rssMinCandidates: number;
   targetCandidateCount: number;
@@ -121,6 +122,8 @@ export const exaQueries = [
   "新多模态 AI 模型推出"
 ];
 
+export const DEFAULT_NEWS_LOOKBACK_HOURS = 72;
+
 const DEFAULT_CONFIG: CollectionConfig = {
   rssEnableRealFetch: true,
   rssFetchTimeoutMs: 5_000,
@@ -131,7 +134,8 @@ const DEFAULT_CONFIG: CollectionConfig = {
   tavilyMaxQueriesPerRun: 6,
   exaMaxQueriesPerRun: 6,
   searchMaxResultsPerQuery: 5,
-  searchLookbackHours: 72,
+  searchLookbackHours: DEFAULT_NEWS_LOOKBACK_HOURS,
+  newsLookbackHours: DEFAULT_NEWS_LOOKBACK_HOURS,
   globalSearchMaxCandidates: 6,
   rssMinCandidates: 14,
   targetCandidateCount: 20,
@@ -174,6 +178,15 @@ function optionalString(value: string | undefined): string | undefined {
 export function readCollectionConfig(
   env: NodeJS.ProcessEnv = process.env
 ): CollectionConfig {
+  const searchLookbackHours = readInteger(
+    env.SEARCH_LOOKBACK_HOURS,
+    DEFAULT_CONFIG.searchLookbackHours
+  );
+  const newsLookbackHours = readInteger(
+    env.NEWS_LOOKBACK_HOURS,
+    searchLookbackHours
+  );
+
   return {
     rssEnableRealFetch: readBoolean(
       env.RSS_ENABLE_REAL_FETCH,
@@ -213,10 +226,8 @@ export function readCollectionConfig(
       env.SEARCH_MAX_RESULTS_PER_QUERY,
       DEFAULT_CONFIG.searchMaxResultsPerQuery
     ),
-    searchLookbackHours: readInteger(
-      env.SEARCH_LOOKBACK_HOURS,
-      DEFAULT_CONFIG.searchLookbackHours
-    ),
+    searchLookbackHours,
+    newsLookbackHours,
     globalSearchMaxCandidates: readInteger(
       env.GLOBAL_SEARCH_MAX_CANDIDATES,
       DEFAULT_CONFIG.globalSearchMaxCandidates

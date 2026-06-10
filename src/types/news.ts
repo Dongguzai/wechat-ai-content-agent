@@ -136,6 +136,8 @@ export type ShortlistRecommendedUse =
   | "reference_only";
 
 export interface ShortlistScoreDimensions {
+  freshness?: number;
+  heat?: number;
   technicalValue: number;
   wechatTopic: number;
   businessImpact: number;
@@ -146,6 +148,8 @@ export interface ShortlistScoreDimensions {
 }
 
 export interface TopicDecisionScoreDimensions {
+  freshness?: number;
+  heat?: number;
   wechatTopic: number;
   businessImpact: number;
   technicalValue: number;
@@ -291,6 +295,9 @@ export interface NewsCollectionStats {
   localizedCount?: number;
   localizationFailedCount?: number;
   rejectedAfterLocalizationCount?: number;
+  lookbackHours?: number;
+  rejectedMissingPublishedAtCount?: number;
+  rejectedOutsideLookbackCount?: number;
   finalCandidateCount: number;
   rssCandidateCount: number;
   globalSearchCandidateCount: number;

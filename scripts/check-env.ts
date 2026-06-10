@@ -72,6 +72,7 @@ const envSpecs: EnvSpec[] = [
   { name: "EXA_MAX_QUERIES_PER_RUN", kind: "integer" },
   { name: "SEARCH_MAX_RESULTS_PER_QUERY", kind: "integer" },
   { name: "SEARCH_LOOKBACK_HOURS", kind: "integer" },
+  { name: "NEWS_LOOKBACK_HOURS", kind: "integer" },
   { name: "GLOBAL_SEARCH_MAX_CANDIDATES", kind: "integer" },
   { name: "RSS_MIN_CANDIDATES", kind: "integer" },
   { name: "MIN_REAL_NEWS_ITEMS", kind: "integer" },

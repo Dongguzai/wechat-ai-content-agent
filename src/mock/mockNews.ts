@@ -187,7 +187,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     sourceName: "Mock RSS / Workplace AI Notes",
     snippet:
       "产品更新让用户用自然语言询问表格、自动生成图表、解释异常并输出管理层摘要。",
-    hoursAgo: 74
+    hoursAgo: 71
   },
   {
     id: "rss-ai-security-evals",
@@ -196,7 +196,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     sourceName: "Mock RSS / Security AI Lab",
     snippet:
       "评测覆盖提示词注入、越权工具调用、数据外泄和日志审计，建议企业建立分级权限。",
-    hoursAgo: 80
+    hoursAgo: 71
   },
   {
     id: "rss-open-source-rag",
@@ -205,7 +205,7 @@ const mockRssTemplates: MockRssTemplate[] = [
     sourceName: "Mock RSS / Open Source AI Weekly",
     snippet:
       "新版本加入召回率评估、引用追踪和错误样本分析，帮助团队改进企业知识助手。",
-    hoursAgo: 88
+    hoursAgo: 71
   },
   {
     id: "rss-ai-chip-supply",

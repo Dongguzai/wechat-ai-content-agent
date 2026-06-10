@@ -419,9 +419,13 @@ function shortlistReasonFor(
   if (item.sourceType === "global_search") {
     return `来自 ${
       item.provider ?? "global_search"
-    } 搜索线索，技术含金量 ${metrics.technicalValue.toFixed(
+    } 搜索线索，新鲜度 ${item.scores.freshness.toFixed(
       1
-    )}、公众号传播价值 ${metrics.wechatTopic.toFixed(
+    )}、热度 ${item.scores.heat.toFixed(
+      1
+    )}、技术含金量 ${metrics.technicalValue.toFixed(
+      1
+    )}、公众号话题度 ${metrics.wechatTopic.toFixed(
       1
     )}，综合初筛分 ${shortlistScore.toFixed(
       1
@@ -439,7 +443,11 @@ function shortlistReasonFor(
 
   return `${sourcePhrase}，技术含金量 ${metrics.technicalValue.toFixed(
     1
-  )}、公众号传播价值 ${metrics.wechatTopic.toFixed(
+  )}、新鲜度 ${item.scores.freshness.toFixed(
+    1
+  )}、热度 ${item.scores.heat.toFixed(
+    1
+  )}、公众号话题度 ${metrics.wechatTopic.toFixed(
     1
   )}，综合初筛分 ${shortlistScore.toFixed(
     1
@@ -463,6 +471,68 @@ function riskNoteFor(
   }
 
   return undefined;
+}
+
+function ageHoursFor(item: NormalizedNewsItem, now: Date): number | undefined {
+  if (!item.publishedAt) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(item.publishedAt);
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  return Math.max(0, (now.getTime() - timestamp) / 3_600_000);
+}
+
+function recencyRankingBoost(item: NormalizedNewsItem, now: Date): number {
+  const ageHours = ageHoursFor(item, now);
+  if (ageHours === undefined) {
+    return -4;
+  }
+
+  if (ageHours <= 12) {
+    return 8;
+  }
+
+  if (ageHours <= 24) {
+    return 6;
+  }
+
+  if (ageHours <= 48) {
+    return 3.5;
+  }
+
+  if (ageHours <= 72) {
+    return 1;
+  }
+
+  return -12;
+}
+
+function discussionRankingBoost(item: NormalizedNewsItem): number {
+  let boost = 0;
+
+  if (item.scores.heat >= 90) {
+    boost += 5;
+  } else if (item.scores.heat >= 80) {
+    boost += 3;
+  } else if (item.scores.heat >= 70) {
+    boost += 1.5;
+  }
+
+  if (item.scores.controversy >= 60) {
+    boost += 2;
+  } else if (item.scores.controversy >= 40) {
+    boost += 0.8;
+  }
+
+  if ((item.duplicateSources?.length ?? 0) > 0) {
+    boost += 1.5;
+  }
+
+  return boost;
 }
 
 function toShortlistedItem(item: NormalizedNewsItem): ShortlistedNewsItem {
@@ -498,13 +568,17 @@ function toShortlistedItem(item: NormalizedNewsItem): ShortlistedNewsItem {
   };
 }
 
-function toScoredCandidate(item: NormalizedNewsItem): ScoredCandidate {
+function toScoredCandidate(item: NormalizedNewsItem, now: Date): ScoredCandidate {
   const shortlisted = toShortlistedItem(item);
   const shallowUpdate = isShallowProductUpdate(item);
   const rankingScore =
     shortlisted.shortlistScore +
-    shortlisted.shortlistMetrics.originality * 0.08 +
-    shortlisted.scores.heat * 0.04 -
+    shortlisted.shortlistMetrics.originality * 0.06 +
+    shortlisted.scores.freshness * 0.08 +
+    shortlisted.scores.heat * 0.12 +
+    shortlisted.scores.wechatTopic * 0.05 +
+    recencyRankingBoost(item, now) +
+    discussionRankingBoost(item) -
     (item.sourceType === "global_search" ? 3 : 0) -
     (shallowUpdate ? 8 : 0);
 
@@ -899,12 +973,13 @@ export async function shortlistNewsWithReport(
   const inputFile = options.inputFile ?? join(outputDir, "candidate-news.json");
   const writeOutputs = options.writeOutputs ?? true;
   const files = createOutputFiles(outputDir);
+  const now = options.now ?? new Date();
   const candidates = options.candidates ?? (await readCandidates(inputFile));
   const validCandidates = candidates.filter(
     (candidate) => hasRequiredSource(candidate) && !candidate.rejection
   );
   const scoredCandidates = validCandidates
-    .map(toScoredCandidate)
+    .map((candidate) => toScoredCandidate(candidate, now))
     .sort(
       (left, right) =>
         right.rankingScore - left.rankingScore ||
