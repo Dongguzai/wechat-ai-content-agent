@@ -268,7 +268,19 @@ test("brief topic selection writes approved editorial approval and redirects to 
     }));
     await writeJson(root, "outputs/editorial-brief.json", { shortlistedItems });
 
-    const result = await selectBriefTopic({ topicId: "topic-7" }, { rootDir: root });
+    // 模拟 client 端发完整 topic 对象（cloud flow 真实场景）
+    const result = await selectBriefTopic(
+      {
+        topicId: "topic-7",
+        topic: {
+          id: "topic-7",
+          title: "入围资讯 7",
+          titleZh: "入围资讯 7",
+          url: "https://example.com/7"
+        }
+      },
+      { rootDir: root }
+    );
     const saved = JSON.parse(await readFile(join(root, "inputs/editorial-approval.json"), "utf8"));
 
     assert.equal(result.redirectTo, "/article");

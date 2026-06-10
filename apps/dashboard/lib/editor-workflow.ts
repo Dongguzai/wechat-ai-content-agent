@@ -80,14 +80,16 @@ export async function selectBriefTopic(
     throw new Error("topicId is required.");
   }
 
-  const brief = await readJsonFile<JsonObject>("outputs/editorial-brief.json", options);
-  const shortlistedItems = shortlistedFromBrief(brief);
+  // 优先信任 client 提交的 topic（cloud flow 来自 Neon 真实数据，id 是 UUID）。
+  // outputs/editorial-brief.json 是旧 pipeline 的孤儿数据，id 是 rss-... 字符串，
+  // cloud flow 不再依赖它。
   const submittedTopic = submittedTopicFromInput(input, topicId);
-  const topic =
-    shortlistedItems.find((item) => String(item.id ?? "") === topicId) ?? submittedTopic;
+  const topic = submittedTopic ?? (await findLegacyLocalTopic(input, topicId, options));
 
   if (!topic) {
-    throw new Error("topicId was not found in outputs/editorial-brief.json shortlistedItems or submitted topic.");
+    throw new Error(
+      "topicId was not found in submitted topic or outputs/editorial-brief.json shortlistedItems."
+    );
   }
   if (!stringValue(topic.url)) {
     throw new Error("Topics without an original URL cannot be selected.");
@@ -101,6 +103,24 @@ export async function selectBriefTopic(
   };
   const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
   return { path: writtenPath, approval, redirectTo: "/article" };
+}
+
+async function findLegacyLocalTopic(
+  input: unknown,
+  topicId: string,
+  options: DashboardFsOptions
+): Promise<JsonObject | undefined> {
+  // client 已经提交了 topic 就不读 local file，避免 cloud UUID 误判
+  if (isRecord(input) && isRecord(input.topic)) {
+    return undefined;
+  }
+  try {
+    const brief = await readJsonFile<JsonObject>("outputs/editorial-brief.json", options);
+    const items = shortlistedFromBrief(brief);
+    return items.find((item) => String(item.id ?? "") === topicId);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function saveArticleDraft(

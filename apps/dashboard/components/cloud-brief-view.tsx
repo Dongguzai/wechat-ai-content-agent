@@ -43,6 +43,7 @@ export function CloudBriefView() {
   const [selectedTopicId, setSelectedTopicId] = useState("");
   const [selectingTopicId, setSelectingTopicId] = useState("");
   const [selectionMessage, setSelectionMessage] = useState("");
+  const [selectionError, setSelectionError] = useState("");
 
   const loadBrief = useCallback(
     async (options: { showLoading?: boolean; isCancelled?: () => boolean } = {}) => {
@@ -162,12 +163,14 @@ export function CloudBriefView() {
     const title = item.titleZh ?? item.title;
 
     if (!item.id || !item.url || !title) {
-      setSelectionMessage("这条资讯缺少 id、标题或原文 URL，不能作为今日主选题。");
+      setSelectionError("这条资讯缺少 id、标题或原文 URL，不能作为今日主选题。");
+      setSelectionMessage("");
       return;
     }
 
     setSelectingTopicId(item.id);
     setSelectionMessage("");
+    setSelectionError("");
 
     try {
       const response = await fetch("/api/brief/select-topic", {
@@ -194,15 +197,18 @@ export function CloudBriefView() {
       const result = (await response.json()) as SelectTopicResponse;
 
       if (!response.ok || !result.ok) {
-        setSelectionMessage(result.error ?? "选题保存失败。");
+        setSelectionError(result.error ?? "选题保存失败。");
         return;
       }
 
       setSelectedTopicId(item.id);
       setSelectionMessage(`已选择「${title}」，正在进入文章编辑。`);
-      router.push(result.redirectTo ?? "/article");
+      // 短暂停留让用户看到成功提示，再跳转
+      setTimeout(() => {
+        router.push(result.redirectTo ?? "/article");
+      }, 600);
     } catch (error) {
-      setSelectionMessage(error instanceof Error ? error.message : "选题保存失败。");
+      setSelectionError(error instanceof Error ? error.message : "选题保存失败。");
     } finally {
       setSelectingTopicId("");
     }
@@ -293,6 +299,15 @@ export function CloudBriefView() {
           icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
           title={selectionMessage}
         />
+      ) : null}
+
+      {selectionError ? (
+        <StatePanel
+          icon={<ShieldAlert className="size-4" aria-hidden="true" />}
+          title="选题保存失败"
+        >
+          <p className="mt-2 break-words text-sm font-medium text-stone-700">{selectionError}</p>
+        </StatePanel>
       ) : null}
 
       {brief ? (
