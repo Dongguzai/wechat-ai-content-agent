@@ -102,6 +102,9 @@ export async function selectBriefTopic(
     notes: ""
   };
   const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
+  if (submittedTopic && isCloudBriefSelection(input)) {
+    await writeCloudArticleHandoff(input, submittedTopic, options);
+  }
   return { path: writtenPath, approval, redirectTo: "/article" };
 }
 
@@ -994,13 +997,332 @@ function submittedTopicFromInput(input: unknown, topicId: string): JsonObject | 
     return undefined;
   }
 
+  return topicSnapshotFromRecord(topic, topicId);
+}
+
+function isCloudBriefSelection(input: unknown): boolean {
+  const record = isRecord(input) ? input : {};
+  return stringValue(record.source) === "cloud-brief";
+}
+
+function topicSnapshotsFromInput(input: unknown, selectedTopic: JsonObject): JsonObject[] {
+  const record = isRecord(input) ? input : {};
+  const rawItems = Array.isArray(record.shortlistedItems) ? record.shortlistedItems : [];
+  const snapshots = rawItems
+    .map((item) => (isRecord(item) ? topicSnapshotFromRecord(item, stringValue(item.id)) : undefined))
+    .filter((item): item is JsonObject => Boolean(item?.id && item.url));
+  const hasSelected = snapshots.some((item) => item.id === selectedTopic.id);
+  const items = hasSelected ? snapshots : [selectedTopic, ...snapshots];
+
+  return items
+    .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index)
+    .slice(0, 10);
+}
+
+async function writeCloudArticleHandoff(
+  input: unknown,
+  selectedTopic: JsonObject,
+  options: DashboardFsOptions
+): Promise<void> {
+  const now = new Date().toISOString();
+  const snapshots = topicSnapshotsFromInput(input, selectedTopic);
+  const candidates = snapshots.map((item) => candidateFromSnapshot(item, now));
+  const shortlisted = snapshots.map((item, index) => shortlistedFromSnapshot(item, index, now));
+  const selected =
+    shortlisted.find((item) => item.id === selectedTopic.id) ?? shortlistedFromSnapshot(selectedTopic, 0, now);
+  const selectedTopicOutput = selectedTopicFromShortlisted(selected, shortlisted, now);
+  const editorialBrief = editorialBriefFromSnapshots({
+    selected,
+    shortlisted,
+    snapshots,
+    now
+  });
+
+  await Promise.all([
+    writeJsonRelative("outputs/candidate-news.json", candidates, options),
+    writeJsonRelative("outputs/shortlisted-news.json", shortlisted, options),
+    writeJsonRelative("outputs/selected-topic.json", selectedTopicOutput, options),
+    writeJsonRelative("outputs/editorial-brief.json", editorialBrief, options)
+  ]);
+}
+
+function topicSnapshotFromRecord(topic: JsonObject, fallbackId: string): JsonObject {
+  const title = stringValue(topic.titleZh) || stringValue(topic.title);
+  const url = stringValue(topic.url);
+  const summary = stringValue(topic.summaryZh) || stringValue(topic.summary) || title;
+  const topicAngle =
+    stringValue(topic.topicAngleZh) ||
+    stringValue(topic.topicAngle) ||
+    "从第三视角分析这条 AI 资讯背后的工作流变化、事实边界和影响人群。";
+  const shortlistReason =
+    stringValue(topic.shortlistReasonZh) ||
+    stringValue(topic.shortlistReason) ||
+    "该资讯来自今日云端简报，已由编辑在 Dashboard 中人工选择。";
+  const riskNotes = stringArray(topic.riskNotesZh).length
+    ? stringArray(topic.riskNotesZh)
+    : stringArray(topic.riskNotes);
+
   return {
-    id: topicId,
+    id: fallbackId || stringValue(topic.id),
+    rank: numberValue(topic.rank, 1),
     title: stringValue(topic.title) || title,
-    titleZh: stringValue(topic.titleZh) || title,
-    rawTitle: stringValue(topic.rawTitle),
-    url
+    titleZh: title,
+    rawTitle: stringValue(topic.rawTitle) || stringValue(topic.title) || title,
+    url,
+    sourceName: stringValue(topic.sourceName) || hostFromUrl(url) || "unknown",
+    sourceType: normalizedSourceType(topic.sourceType),
+    provider: normalizedProvider(topic.provider),
+    query: stringValue(topic.query),
+    category: normalizedCategory(topic.category),
+    tags: normalizedTags(topic.tags),
+    summary,
+    rawSummary: stringValue(topic.rawSummary) || stringValue(topic.summary) || summary,
+    summaryZh: summary,
+    topicAngle,
+    topicAngleZh: topicAngle,
+    shortlistReason,
+    shortlistReasonZh: shortlistReason,
+    shortlistScore: numberValue(topic.shortlistScore, 80),
+    riskNotes: riskNotes.length ? riskNotes : ["需要回到原文核验事实边界。"],
+    riskNotesZh: riskNotes.length ? riskNotes : ["需要回到原文核验事实边界。"],
+    sourceLanguage:
+      topic.sourceLanguage === "zh" || topic.sourceLanguage === "en" || topic.sourceLanguage === "unknown"
+        ? topic.sourceLanguage
+        : "unknown",
+    localized: typeof topic.localized === "boolean" ? topic.localized : true
   };
+}
+
+function candidateFromSnapshot(item: JsonObject, now: string): JsonObject {
+  return {
+    id: stringValue(item.id),
+    dataMode: "real",
+    title: stringValue(item.titleZh) || stringValue(item.title),
+    rawTitle: stringValue(item.rawTitle),
+    titleZh: stringValue(item.titleZh) || stringValue(item.title),
+    url: stringValue(item.url),
+    sourceName: stringValue(item.sourceName),
+    sourceType: stringValue(item.sourceType),
+    provider: stringValue(item.provider),
+    query: stringValue(item.query),
+    fetchedAt: now,
+    summary: stringValue(item.summaryZh) || stringValue(item.summary),
+    rawSummary: stringValue(item.rawSummary),
+    summaryZh: stringValue(item.summaryZh) || stringValue(item.summary),
+    sourceLanguage: item.sourceLanguage,
+    topicAngleZh: stringValue(item.topicAngleZh) || stringValue(item.topicAngle),
+    shortlistReasonZh: stringValue(item.shortlistReasonZh) || stringValue(item.shortlistReason),
+    riskNotesZh: stringArray(item.riskNotesZh).length ? stringArray(item.riskNotesZh) : stringArray(item.riskNotes),
+    localized: item.localized,
+    localizationStatus: "localized",
+    category: stringValue(item.category),
+    evidence: [`cloud-brief: ${stringValue(item.id)}`, `url: ${stringValue(item.url)}`],
+    duplicateKey: `cloud:${stringValue(item.url)}`,
+    scores: scoresFromSnapshot(item),
+    duplicateSources: [],
+    tags: stringArray(item.tags)
+  };
+}
+
+function shortlistedFromSnapshot(item: JsonObject, index: number, now: string): JsonObject {
+  const candidate = candidateFromSnapshot(item, now);
+  const shortlistScore = numberValue(item.shortlistScore, 80);
+  const sourceCredibility = stringValue(item.sourceType) === "global_search" ? 78 : 86;
+
+  return {
+    ...candidate,
+    tags: stringArray(item.tags),
+    shortlistScore,
+    shortlistMetrics: {
+      technicalValue: 82,
+      wechatTopic: shortlistScore,
+      businessImpact: 78,
+      controversy: 35,
+      sourceCredibility,
+      explainability: 84,
+      originality: 82
+    },
+    editorial: {
+      shortlistReason: stringValue(item.shortlistReasonZh) || stringValue(item.shortlistReason),
+      audienceFit: "AI 从业者、开发者、产品经理和关注 AI 工具变化的普通读者。",
+      topicAngle: stringValue(item.topicAngleZh) || stringValue(item.topicAngle),
+      riskNote: stringArray(item.riskNotesZh).concat(stringArray(item.riskNotes)).filter(Boolean)[0],
+      recommendedUse: index === 0 ? "main_topic_candidate" : "secondary_topic"
+    }
+  };
+}
+
+function selectedTopicFromShortlisted(
+  selected: JsonObject,
+  shortlisted: JsonObject[],
+  now: string
+): JsonObject {
+  const title = stringValue(selected.titleZh) || stringValue(selected.title);
+  const topicAngle = stringValue(selected.topicAngleZh) || stringValue(selected.topicAngle) || selected.editorial?.topicAngle;
+  const shortlistReason =
+    stringValue(selected.shortlistReasonZh) ||
+    stringValue(selected.shortlistReason) ||
+    stringValue(selected.editorial?.shortlistReason);
+  const riskNotes = stringArray(selected.riskNotesZh).length
+    ? stringArray(selected.riskNotesZh)
+    : stringArray(selected.riskNotes);
+
+  return {
+    selected: {
+      ...selected,
+      selection: {
+        selectedReason: `用户在云端简报中选择了「${title}」。${shortlistReason}`,
+        whyMostWorthWriting: shortlistReason,
+        coreConflict: topicAngle,
+        publicInterest: stringValue(selected.summaryZh) || stringValue(selected.summary),
+        technicalSignificance: topicAngle,
+        businessImpact: topicAngle,
+        predictedImpact: "需要在 fact pack 与正文阶段继续核验具体影响范围。",
+        writingAngle: topicAngle,
+        suggestedTitles: [title].filter(Boolean),
+        articleThesis: topicAngle,
+        riskNotes: riskNotes.length ? riskNotes : ["需要回到原文核验事实边界。"],
+        sourceReliability: stringValue(selected.sourceType) === "global_search" ? "medium" : "high",
+        decisionScore: numberValue(selected.shortlistScore, 80)
+      }
+    },
+    runnersUp: shortlisted
+      .filter((item) => item.id !== selected.id)
+      .slice(0, 2)
+      .map((item) => ({
+        title: stringValue(item.titleZh) || stringValue(item.title),
+        url: stringValue(item.url),
+        reason: "该资讯来自同一份云端简报，可作为备选。",
+        whyNotSelected: "本次用户选择了另一条入围资讯。"
+      })),
+    rejected: [],
+    generatedAt: now
+  };
+}
+
+function editorialBriefFromSnapshots(input: {
+  selected: JsonObject;
+  shortlisted: JsonObject[];
+  snapshots: JsonObject[];
+  now: string;
+}): JsonObject {
+  const selectedTitle = stringValue(input.selected.titleZh) || stringValue(input.selected.title);
+  const riskNotes = stringArray(input.selected.riskNotesZh).length
+    ? stringArray(input.selected.riskNotesZh)
+    : stringArray(input.selected.riskNotes);
+
+  return {
+    generatedAt: input.now,
+    candidateCount: input.snapshots.length,
+    shortlistedCount: input.shortlisted.length,
+    candidates: input.snapshots.map((item) => ({
+      id: stringValue(item.id),
+      title: stringValue(item.titleZh) || stringValue(item.title),
+      rawTitle: stringValue(item.rawTitle),
+      titleZh: stringValue(item.titleZh) || stringValue(item.title),
+      sourceName: stringValue(item.sourceName),
+      sourceType: stringValue(item.sourceType),
+      url: stringValue(item.url),
+      score: numberValue(item.shortlistScore, 80),
+      summary: stringValue(item.summaryZh) || stringValue(item.summary),
+      rawSummary: stringValue(item.rawSummary),
+      summaryZh: stringValue(item.summaryZh) || stringValue(item.summary)
+    })),
+    shortlistedItems: input.snapshots,
+    shortlisted: input.snapshots,
+    recommendedTopic: {
+      id: stringValue(input.selected.id),
+      title: selectedTitle,
+      rawTitle: stringValue(input.selected.rawTitle),
+      titleZh: selectedTitle,
+      url: stringValue(input.selected.url),
+      reason: stringValue(input.selected.shortlistReasonZh) || stringValue(input.selected.shortlistReason),
+      coreConflict: stringValue(input.selected.topicAngleZh) || stringValue(input.selected.topicAngle),
+      writingAngle: stringValue(input.selected.topicAngleZh) || stringValue(input.selected.topicAngle),
+      articleThesis: stringValue(input.selected.topicAngleZh) || stringValue(input.selected.topicAngle),
+      sourceReliability: stringValue(input.selected.sourceType) === "global_search" ? "medium" : "high",
+      riskNotes
+    },
+    runnersUp: input.shortlisted
+      .filter((item) => item.id !== input.selected.id)
+      .slice(0, 2)
+      .map((item) => ({
+        id: stringValue(item.id),
+        title: stringValue(item.titleZh) || stringValue(item.title),
+        url: stringValue(item.url),
+        reason: "同一份云端简报中的备选资讯。",
+        whyNotSelected: "用户已选择其他主选题。"
+      })),
+    riskReminder: {
+      factRisk: "云端简报已做中文化归一，但写作前仍需回到原文核验。",
+      sourceRisk: "global_search 来源尤其需要交叉核验。",
+      titleRisk: "标题不得把中文摘要或推断写成新增事实。",
+      needsManualCheck: true
+    },
+    shouldPublishToday: true,
+    publishRecommendationReason: "用户已在 Dashboard 中选择该题进入文章生产。",
+    approvalRequired: true,
+    nextStep: "Read the 10 shortlisted source URLs, then edit inputs/editorial-approval.json."
+  };
+}
+
+function scoresFromSnapshot(item: JsonObject): JsonObject {
+  const finalScore = numberValue(item.shortlistScore, 80);
+  return {
+    freshness: 82,
+    heat: 76,
+    technicalValue: 82,
+    wechatTopic: finalScore,
+    businessImpact: 78,
+    controversy: 35,
+    final: finalScore
+  };
+}
+
+function normalizedSourceType(value: unknown): string {
+  const sourceType = stringValue(value);
+  return sourceType === "rss" || sourceType === "global_search" || sourceType === "manual"
+    ? sourceType
+    : "global_search";
+}
+
+function normalizedProvider(value: unknown): string {
+  const provider = stringValue(value);
+  return provider === "tavily" || provider === "exa" || provider === "none" ? provider : "none";
+}
+
+function normalizedCategory(value: unknown): string {
+  const category = stringValue(value);
+  return ["model", "product", "research", "policy", "funding", "tooling"].includes(category)
+    ? category
+    : "tooling";
+}
+
+function normalizedTags(value: unknown): string[] {
+  const tags = stringArray(value).filter((tag) =>
+    [
+      "tooling",
+      "open-source",
+      "agent",
+      "developer-workflow",
+      "model",
+      "product",
+      "research",
+      "business",
+      "community",
+      "policy"
+    ].includes(tag)
+  );
+
+  return tags.length ? tags : ["tooling", "agent", "developer-workflow"];
+}
+
+function hostFromUrl(value: string): string {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "";
+  }
 }
 
 function composeArticleMarkdown(title: string, content: string): string {
@@ -1159,6 +1481,16 @@ function recordField(input: unknown, key: string): JsonObject {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function finiteNumber(value: unknown, label: string): number {

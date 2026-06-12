@@ -9,6 +9,7 @@ import type { TodayBriefPayload } from "../../../src/types/cloud.js";
 
 type LoadState = "loading" | "ready" | "empty" | "error";
 type GenerateState = "idle" | "loading" | "success" | "failed";
+type SelectionStage = "idle" | "saving" | "generating";
 type ShortlistedItem = TodayBriefPayload["shortlistedItems"][number];
 
 interface GenerateFailure {
@@ -33,6 +34,28 @@ interface SelectTopicResponse {
   error?: string;
 }
 
+interface DashboardActionResponse {
+  status?: "passed" | "failed" | "rejected";
+  message?: string;
+  error?: string;
+}
+
+interface CachedBriefState {
+  cachedAt: string;
+  runDate?: string;
+  payload: TodayBriefPayload;
+}
+
+interface CachedBriefSelection {
+  cachedAt: string;
+  runDate?: string;
+  topicId: string;
+}
+
+const BRIEF_CACHE_KEY = "wechat-ai-content-agent:cloud-brief:v1";
+const BRIEF_SELECTION_CACHE_KEY = "wechat-ai-content-agent:cloud-brief-selection:v1";
+const BRIEF_CACHE_MAX_AGE_MS = 20 * 60 * 60 * 1000;
+
 export function CloudBriefView() {
   const router = useRouter();
   const [payload, setPayload] = useState<TodayBriefPayload | null>(null);
@@ -42,8 +65,21 @@ export function CloudBriefView() {
   const [generateFailure, setGenerateFailure] = useState<GenerateFailure | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState("");
   const [selectingTopicId, setSelectingTopicId] = useState("");
+  const [selectionStage, setSelectionStage] = useState<SelectionStage>("idle");
   const [selectionMessage, setSelectionMessage] = useState("");
   const [selectionError, setSelectionError] = useState("");
+  const [selectionErrorTopicId, setSelectionErrorTopicId] = useState("");
+
+  const applyBriefPayload = useCallback((nextPayload: TodayBriefPayload) => {
+    setPayload(nextPayload);
+
+    if (!nextPayload.brief || nextPayload.shortlistedItems.length === 0) {
+      setState("empty");
+      return;
+    }
+
+    setState("ready");
+  }, []);
 
   const loadBrief = useCallback(
     async (options: { showLoading?: boolean; isCancelled?: () => boolean } = {}) => {
@@ -70,20 +106,15 @@ export function CloudBriefView() {
           return;
         }
 
-        setPayload(nextPayload);
-
         if (!response.ok) {
           setState("error");
           setMessage(nextPayload.error ?? "今日简报读取失败。");
           return;
         }
 
-        if (!nextPayload.brief || nextPayload.shortlistedItems.length === 0) {
-          setState("empty");
-          return;
-        }
-
-        setState("ready");
+        applyBriefPayload(nextPayload);
+        writeBriefCache(nextPayload);
+        setSelectedTopicId(readBriefSelection(nextPayload));
       } catch (error) {
         if (!options.isCancelled?.()) {
           setState("error");
@@ -91,23 +122,33 @@ export function CloudBriefView() {
         }
       }
     },
-    [router]
+    [applyBriefPayload, router]
   );
 
   useEffect(() => {
     let cancelled = false;
+    const cachedPayload = readBriefCache();
+
+    if (cachedPayload) {
+      applyBriefPayload(cachedPayload);
+      setSelectedTopicId(readBriefSelection(cachedPayload));
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void loadBrief({ isCancelled: () => cancelled });
 
     return () => {
       cancelled = true;
     };
-  }, [loadBrief]);
+  }, [applyBriefPayload, loadBrief]);
 
   const brief = payload?.brief ?? null;
   const items = payload?.shortlistedItems ?? [];
   const hasTodayBrief = Boolean(brief);
   const generateButtonLabel = buttonLabel(generateState, hasTodayBrief);
+  const readingBrief = state === "loading" && generateState !== "loading";
 
   async function generateBrief() {
     const force = hasTodayBrief;
@@ -169,8 +210,10 @@ export function CloudBriefView() {
     }
 
     setSelectingTopicId(item.id);
+    setSelectionStage("saving");
     setSelectionMessage("");
     setSelectionError("");
+    setSelectionErrorTopicId("");
 
     try {
       const response = await fetch("/api/brief/select-topic", {
@@ -178,14 +221,10 @@ export function CloudBriefView() {
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          source: "cloud-brief",
           topicId: item.id,
-          topic: {
-            id: item.id,
-            title: item.title,
-            titleZh: item.titleZh,
-            rawTitle: item.rawTitle,
-            url: item.url
-          }
+          topic: topicSnapshot(item),
+          shortlistedItems: items.slice(0, 10).map(topicSnapshot)
         })
       });
 
@@ -198,20 +237,49 @@ export function CloudBriefView() {
 
       if (!response.ok || !result.ok) {
         setSelectionError(result.error ?? "选题保存失败。");
+        setSelectionErrorTopicId(item.id);
         return;
       }
 
       setSelectedTopicId(item.id);
-      setSelectionMessage(`已选择「${title}」，正在进入文章编辑。`);
-      // 短暂停留让用户看到成功提示，再跳转
-      setTimeout(() => {
-        router.push(result.redirectTo ?? "/article");
-      }, 600);
+      writeBriefSelection(item.id, payload);
+      setSelectionStage("generating");
+      setSelectionMessage(`已选择「${title}」，正在生成文章。`);
+
+      const actionResponse = await fetch("/api/action", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "continueArticle" })
+      });
+
+      if (actionResponse.status === 401) {
+        router.replace("/login?next=/brief");
+        return;
+      }
+
+      const actionResult = (await actionResponse.json()) as DashboardActionResponse;
+      if (!actionResponse.ok || actionResult.status !== "passed") {
+        setSelectionError(
+          `选题已保存，但文章生成失败：${actionResult.message ?? actionResult.error ?? "请检查 Dashboard action 日志。"}`
+        );
+        setSelectionErrorTopicId(item.id);
+        return;
+      }
+
+      setSelectionMessage(`文章已生成，正在进入「${title}」的编辑页。`);
+      router.push(result.redirectTo ?? "/article");
     } catch (error) {
       setSelectionError(error instanceof Error ? error.message : "选题保存失败。");
+      setSelectionErrorTopicId(item.id);
     } finally {
       setSelectingTopicId("");
+      setSelectionStage("idle");
     }
+  }
+
+  async function refreshBrief() {
+    await loadBrief();
   }
 
   return (
@@ -226,16 +294,28 @@ export function CloudBriefView() {
             </p>
           </div>
           <div className="flex flex-col items-start gap-3 md:items-end">
-            <button
-              type="button"
-              onClick={generateBrief}
-              disabled={generateState === "loading"}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-ink bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-wait disabled:opacity-60"
-              title={hasTodayBrief ? "重新收集今日编辑简报" : "开始收集今日编辑简报"}
-            >
-              <RefreshCw className={`size-4 ${generateState === "loading" ? "animate-spin" : ""}`} aria-hidden="true" />
-              {generateButtonLabel}
-            </button>
+            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+              <button
+                type="button"
+                onClick={refreshBrief}
+                disabled={readingBrief || generateState === "loading"}
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-stone-700 transition hover:border-ink hover:text-ink disabled:cursor-wait disabled:opacity-60"
+                title="重新读取云端今日简报"
+              >
+                <RefreshCw className={`size-4 ${readingBrief ? "animate-spin" : ""}`} aria-hidden="true" />
+                {readingBrief ? "读取中..." : "刷新云端"}
+              </button>
+              <button
+                type="button"
+                onClick={generateBrief}
+                disabled={generateState === "loading"}
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-ink bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-wait disabled:opacity-60"
+                title={hasTodayBrief ? "重新收集今日编辑简报" : "开始收集今日编辑简报"}
+              >
+                <RefreshCw className={`size-4 ${generateState === "loading" ? "animate-spin" : ""}`} aria-hidden="true" />
+                {generateButtonLabel}
+              </button>
+            </div>
             <StatusBadge
               state={state === "ready" && items.length === 10 ? "passed" : state === "error" ? "failed" : "waiting"}
             />
@@ -354,6 +434,7 @@ export function CloudBriefView() {
         const riskNotes = item.riskNotesZh?.length ? item.riskNotesZh : item.riskNotes;
         const isSelected = selectedTopicId === item.id;
         const isSelecting = selectingTopicId === item.id;
+        const hasSelectionError = selectionErrorTopicId === item.id;
         const canSelect = Boolean(item.id && item.url && title);
 
         return (
@@ -394,7 +475,13 @@ export function CloudBriefView() {
                   ) : (
                     <Check className="size-4" aria-hidden="true" />
                   )}
-                  {isSelecting ? "选择中..." : isSelected ? "已选择" : "选择此题"}
+                  {isSelecting
+                    ? selectionStage === "generating"
+                      ? "生成文章..."
+                      : "选择中..."
+                    : isSelected
+                      ? "已选择"
+                      : "选择此题"}
                 </button>
               </div>
             </div>
@@ -406,11 +493,55 @@ export function CloudBriefView() {
               <Info label="中文入围理由" value={shortlistReason} wide />
               <Info label="风险提醒" value={riskNotes.length ? riskNotes.join("；") : "无"} wide />
             </dl>
+            {isSelecting ? (
+              <p className="mt-3 text-xs font-semibold text-stone-600">
+                {selectionStage === "generating" ? "正在生成文章产物，请稍候。" : "正在保存选题确认。"}
+              </p>
+            ) : null}
+            {isSelected && !isSelecting && !hasSelectionError ? (
+              <p className="mt-3 text-xs font-semibold text-emerald-700">
+                已保存选题确认。
+              </p>
+            ) : null}
+            {hasSelectionError ? (
+              <p className="mt-3 break-words text-xs font-semibold text-oxblood">
+                {selectionError}
+              </p>
+            ) : null}
           </article>
         );
       })}
     </div>
   );
+}
+
+function topicSnapshot(item: ShortlistedItem) {
+  return {
+    id: item.id,
+    rank: item.rank,
+    title: item.title,
+    rawTitle: item.rawTitle,
+    titleZh: item.titleZh,
+    url: item.url,
+    sourceName: item.sourceName,
+    sourceType: item.sourceType,
+    provider: item.provider,
+    query: item.query,
+    category: item.category,
+    tags: item.tags,
+    summary: item.summary,
+    rawSummary: item.rawSummary,
+    summaryZh: item.summaryZh,
+    topicAngle: item.topicAngle,
+    topicAngleZh: item.topicAngleZh,
+    shortlistReason: item.shortlistReason,
+    shortlistReasonZh: item.shortlistReasonZh,
+    shortlistScore: item.shortlistScore,
+    riskNotes: item.riskNotes,
+    riskNotesZh: item.riskNotesZh,
+    sourceLanguage: item.sourceLanguage,
+    localized: item.localized
+  };
 }
 
 function StatePanel({
@@ -470,4 +601,143 @@ function buttonLabel(state: GenerateState, hasTodayBrief: boolean): string {
     return "收集失败";
   }
   return hasTodayBrief ? "重新收集" : "开始收集";
+}
+
+function readBriefCache(): TodayBriefPayload | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(BRIEF_CACHE_KEY);
+    const cached = raw ? (JSON.parse(raw) as unknown) : null;
+
+    if (!isCachedBriefState(cached) || isExpired(cached.cachedAt)) {
+      window.sessionStorage.removeItem(BRIEF_CACHE_KEY);
+      return null;
+    }
+
+    const runDate = cached.runDate ?? cached.payload.run?.runDate;
+    if (runDate && runDate !== todayRunDate()) {
+      window.sessionStorage.removeItem(BRIEF_CACHE_KEY);
+      return null;
+    }
+
+    return usableBriefPayload(cached.payload) ? cached.payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBriefCache(payload: TodayBriefPayload): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (!usableBriefPayload(payload)) {
+      window.sessionStorage.removeItem(BRIEF_CACHE_KEY);
+      return;
+    }
+
+    const cached: CachedBriefState = {
+      cachedAt: new Date().toISOString(),
+      runDate: payload.run?.runDate,
+      payload
+    };
+
+    window.sessionStorage.setItem(BRIEF_CACHE_KEY, JSON.stringify(cached));
+  } catch {
+    // sessionStorage can be unavailable in hardened browser modes.
+  }
+}
+
+function readBriefSelection(payload: TodayBriefPayload): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(BRIEF_SELECTION_CACHE_KEY);
+    const cached = raw ? (JSON.parse(raw) as unknown) : null;
+
+    if (!isCachedBriefSelection(cached) || isExpired(cached.cachedAt)) {
+      window.sessionStorage.removeItem(BRIEF_SELECTION_CACHE_KEY);
+      return "";
+    }
+
+    const payloadRunDate = payload.run?.runDate;
+    if (payloadRunDate && cached.runDate && payloadRunDate !== cached.runDate) {
+      window.sessionStorage.removeItem(BRIEF_SELECTION_CACHE_KEY);
+      return "";
+    }
+
+    return cached.topicId;
+  } catch {
+    return "";
+  }
+}
+
+function writeBriefSelection(topicId: string, payload: TodayBriefPayload | null): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const cached: CachedBriefSelection = {
+      cachedAt: new Date().toISOString(),
+      runDate: payload?.run?.runDate ?? todayRunDate(),
+      topicId
+    };
+
+    window.sessionStorage.setItem(BRIEF_SELECTION_CACHE_KEY, JSON.stringify(cached));
+  } catch {
+    // sessionStorage can be unavailable in hardened browser modes.
+  }
+}
+
+function usableBriefPayload(value: unknown): value is TodayBriefPayload {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as TodayBriefPayload).brief &&
+      Array.isArray((value as TodayBriefPayload).shortlistedItems) &&
+      (value as TodayBriefPayload).shortlistedItems.length > 0
+  );
+}
+
+function isCachedBriefState(value: unknown): value is CachedBriefState {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as CachedBriefState).cachedAt === "string" &&
+      usableBriefPayload((value as CachedBriefState).payload)
+  );
+}
+
+function isCachedBriefSelection(value: unknown): value is CachedBriefSelection {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as CachedBriefSelection).cachedAt === "string" &&
+      typeof (value as CachedBriefSelection).topicId === "string" &&
+      (value as CachedBriefSelection).topicId
+  );
+}
+
+function isExpired(cachedAt: string): boolean {
+  const timestamp = Date.parse(cachedAt);
+  return !Number.isFinite(timestamp) || Date.now() - timestamp > BRIEF_CACHE_MAX_AGE_MS;
+}
+
+function todayRunDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `${byType.year}-${byType.month}-${byType.day}`;
 }

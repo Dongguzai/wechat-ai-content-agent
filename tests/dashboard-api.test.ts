@@ -298,22 +298,62 @@ test("brief topic selection accepts a cloud brief topic snapshot", async () => {
   try {
     const result = await selectBriefTopic(
       {
+        source: "cloud-brief",
         topicId: "cloud-topic-3",
         topic: {
           id: "cloud-topic-3",
           title: "Cloud topic raw title",
           titleZh: "云端入围资讯",
-          url: "https://example.com/cloud-topic-3"
-        }
+          url: "https://example.com/cloud-topic-3",
+          sourceName: "Example Cloud",
+          sourceType: "global_search",
+          provider: "tavily",
+          query: "AI 智能体 工作流",
+          category: "tooling",
+          tags: ["agent", "developer-workflow"],
+          summaryZh: "这是一条云端简报摘要。",
+          topicAngleZh: "从工作流入口变化切入。",
+          shortlistReasonZh: "适合作为今日主文。",
+          shortlistScore: 88,
+          riskNotesZh: ["需要回到原文核验。"]
+        },
+        shortlistedItems: [
+          {
+            id: "cloud-topic-3",
+            rank: 1,
+            title: "Cloud topic raw title",
+            titleZh: "云端入围资讯",
+            url: "https://example.com/cloud-topic-3",
+            sourceName: "Example Cloud",
+            sourceType: "global_search",
+            provider: "tavily",
+            query: "AI 智能体 工作流",
+            category: "tooling",
+            tags: ["agent", "developer-workflow"],
+            summaryZh: "这是一条云端简报摘要。",
+            topicAngleZh: "从工作流入口变化切入。",
+            shortlistReasonZh: "适合作为今日主文。",
+            shortlistScore: 88,
+            riskNotesZh: ["需要回到原文核验。"]
+          }
+        ]
       },
       { rootDir: root }
     );
     const saved = JSON.parse(await readFile(join(root, "inputs/editorial-approval.json"), "utf8"));
+    const selectedTopic = JSON.parse(await readFile(join(root, "outputs/selected-topic.json"), "utf8"));
+    const shortlisted = JSON.parse(await readFile(join(root, "outputs/shortlisted-news.json"), "utf8"));
+    const candidates = JSON.parse(await readFile(join(root, "outputs/candidate-news.json"), "utf8"));
 
     assert.equal(result.redirectTo, "/article");
     assert.equal(saved.approvedByUser, true);
     assert.equal(saved.approvedTopicId, "cloud-topic-3");
     assert.equal(saved.approvedTitle, "云端入围资讯");
+    assert.equal(selectedTopic.selected.id, "cloud-topic-3");
+    assert.equal(selectedTopic.selected.url, "https://example.com/cloud-topic-3");
+    assert.equal(selectedTopic.selected.selection.writingAngle, "从工作流入口变化切入。");
+    assert.equal(shortlisted[0].id, "cloud-topic-3");
+    assert.equal(candidates[0].id, "cloud-topic-3");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -403,6 +443,13 @@ test("/brief page reads the cloud today API with friendly empty state", async ()
   assert.match(viewSource, /今日简报尚未生成。请等待 7 点定时任务，或手动触发生成。/);
   assert.match(viewSource, /href=\{item\.url\}/);
   assert.match(viewSource, /api\/brief\/select-topic/);
+  assert.match(viewSource, /api\/action/);
+  assert.match(viewSource, /continueArticle/);
+  assert.match(viewSource, /正在生成文章/);
+  assert.match(viewSource, /readBriefCache/);
+  assert.match(viewSource, /writeBriefCache/);
+  assert.match(viewSource, /sessionStorage/);
+  assert.match(viewSource, /刷新云端/);
   assert.match(viewSource, /选择此题/);
 });
 
@@ -422,6 +469,8 @@ test("/brief page can manually generate and refresh today's cloud brief", async 
   assert.match(viewSource, /正在抓取资讯并筛选 10 条入围内容，通常需要 30～60 秒。/);
   assert.match(viewSource, /收集完成/);
   assert.match(viewSource, /await loadBrief\(\{ showLoading: false \}\)/);
+  assert.match(viewSource, /const cachedPayload = readBriefCache\(\)/);
+  assert.match(viewSource, /onClick=\{refreshBrief\}/);
   assert.match(viewSource, /items\.slice\(0, 10\)\.map/);
 });
 

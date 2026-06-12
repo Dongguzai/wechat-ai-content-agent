@@ -33,11 +33,11 @@ export function BriefTopicList({ items, initialApproval }: BriefTopicListProps) 
       const response = await fetch("/api/brief/select-topic", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ topicId })
+        body: JSON.stringify({ topicId, topic: topicSnapshot(item, topicId) })
       });
       const payload = await response.json();
 
-      if (payload.ok) {
+      if (response.ok && payload.ok) {
         setApproval({ ...nextApproval, notes: "" });
         setSelectedId(nextApproval.approvedTopicId);
         setMessage("已选择主题，正在进入文章编辑。");
@@ -159,4 +159,33 @@ function sourceLabel(item: Record<string, any>): string {
 
 function providerLabel(item: Record<string, any>): string {
   return `${String(item.provider ?? "无")} / ${String(item.query ?? "无")}`;
+}
+
+function topicSnapshot(item: Record<string, any>, topicId: string): Record<string, any> {
+  return {
+    id: topicId,
+    rank: item.rank,
+    title: item.title,
+    rawTitle: item.rawTitle,
+    titleZh: item.titleZh,
+    url: item.url,
+    sourceName: item.sourceName,
+    sourceType: item.sourceType,
+    provider: item.provider,
+    query: item.query,
+    category: item.category,
+    tags: item.tags,
+    summary: item.summary,
+    rawSummary: item.rawSummary,
+    summaryZh: item.summaryZh,
+    topicAngle: item.topicAngle ?? item.editorial?.topicAngle ?? item.selection?.writingAngle,
+    topicAngleZh: item.topicAngleZh,
+    shortlistReason: item.shortlistReason ?? item.editorial?.shortlistReason ?? item.selection?.selectedReason,
+    shortlistReasonZh: item.shortlistReasonZh,
+    shortlistScore: item.shortlistScore ?? item.scores?.final,
+    riskNotes: item.riskNotes ?? item.selection?.riskNotes,
+    riskNotesZh: item.riskNotesZh,
+    sourceLanguage: item.sourceLanguage,
+    localized: item.localized
+  };
 }
