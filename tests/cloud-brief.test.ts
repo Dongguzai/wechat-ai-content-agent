@@ -992,6 +992,14 @@ test("cloud brief UI empty state uses friendly prompt and not missing", async ()
   assert.doesNotMatch(source, /missing/i);
 });
 
+
+test("cron generate brief route supports GET triggers", async () => {
+  const source = await readFile("apps/dashboard/app/api/cron/generate-brief/route.ts", "utf8");
+
+  assert.match(source, /export async function GET\(request: Request\)/);
+  assert.match(source, /handleCronGenerateBrief\(request\)/);
+});
+
 test("R2 upload API routes force Node.js runtime", async () => {
   const files = await Promise.all([
     readFile("apps/dashboard/app/api/cron/generate-brief/route.ts", "utf8"),

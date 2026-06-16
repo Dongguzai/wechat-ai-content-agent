@@ -7,6 +7,9 @@ export interface DashboardFsOptions {
   rootDir?: string;
 }
 
+export const DASHBOARD_DATA_DIR_ENV = "DASHBOARD_DATA_DIR";
+const VERCEL_DATA_DIR = "/tmp/wechat-ai-content-agent";
+
 export interface SafeFileReadResult {
   path: string;
   absolutePath: string;
@@ -44,10 +47,23 @@ export function findRepoRoot(startDir = process.cwd()): string {
 
     const parent = path.dirname(current);
     if (parent === current) {
-      return path.resolve(startDir);
+      return fallbackDashboardDataRoot(startDir);
     }
     current = parent;
   }
+}
+
+function fallbackDashboardDataRoot(startDir: string): string {
+  const configuredDataDir = process.env[DASHBOARD_DATA_DIR_ENV]?.trim();
+  if (configuredDataDir) {
+    return path.resolve(configuredDataDir);
+  }
+
+  if (process.env.VERCEL === "1" || path.resolve(startDir).startsWith("/var/task")) {
+    return VERCEL_DATA_DIR;
+  }
+
+  return path.resolve(startDir);
 }
 
 export function getRepoRoot(options: DashboardFsOptions = {}): string {
