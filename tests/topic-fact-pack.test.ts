@@ -89,6 +89,55 @@ function selectedTopicFixture(sourceReliability: "high" | "medium" | "low" = "me
   };
 }
 
+function genericSelectedTopicFixture(): SelectedTopic {
+  const topic = selectedTopicFixture("high");
+
+  return {
+    ...topic,
+    selected: {
+      ...topic.selected,
+      id: "fixture-generic-agent-news",
+      title: "AI 资讯：智能体工作流更新",
+      rawTitle: "腾讯混元 Hy3 正式版发布：Agent 能力提升",
+      titleZh: "腾讯混元 Hy3 正式版发布，智能体能力更新",
+      url: "https://example.com/tencent-hunyuan-hy3-agent",
+      sourceName: "Example Tech",
+      sourceType: "global_search",
+      provider: "exa",
+      summary: "腾讯混元 Hy3 正式版发布，信息显示其智能体和工具调用能力有所更新。",
+      rawSummary: "Tencent Hunyuan Hy3 release mentions agent and tool-use updates.",
+      summaryZh: "腾讯混元 Hy3 正式版发布，信息显示其智能体和工具调用能力有所更新。",
+      evidence: [
+        "source: Example Tech",
+        "url: https://example.com/tencent-hunyuan-hy3-agent"
+      ],
+      duplicateKey: "fixture-generic-agent-news",
+      tags: ["model", "agent", "developer-workflow"],
+      editorial: {
+        ...topic.selected.editorial,
+        topicAngle: "从模型发布看智能体工作流如何进入产品竞争。"
+      },
+      selection: {
+        ...topic.selected.selection,
+        coreConflict: "模型能力更新与真实工作流落地之间的落差。",
+        publicInterest: "智能体能力更新会影响开发者和产品团队的工具选择。",
+        technicalSignificance: "模型工具调用和智能体能力继续产品化。",
+        businessImpact: "影响云厂商和企业 AI 工具预算。",
+        predictedImpact: "开发者工作流会继续被智能体工具重塑。",
+        writingAngle: "从模型发布看智能体工作流如何进入产品竞争。",
+        suggestedTitles: [
+          "智能体能力更新，真正要看的不是参数，是工作流",
+          "模型发布越来越像工作流入口争夺",
+          "AI 模型更新背后，开发者工具链又被推了一步"
+        ],
+        articleThesis: "智能体竞争正在从模型参数转向开发者工作流入口。",
+        riskNotes: ["搜索线索需要回到原文核验。"],
+        sourceReliability: "high"
+      }
+    }
+  };
+}
+
 function assertFactPackContract(factPack: TopicFactPack): void {
   assert.ok(factPack.topicTitle);
   assert.ok(factPack.generatedAt);
@@ -142,6 +191,43 @@ test("buildTopicFactPack writes JSON and Markdown fact pack outputs", async () =
     assert.match(report, /安全写法/);
     assert.match(report, /禁止写法/);
     assert.match(report, /推荐公众号切入角度/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("buildTopicFactPack uses current topic facts for generic AI news", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "topic-fact-pack-generic-"));
+
+  try {
+    const result = await buildTopicFactPack({
+      outputDir,
+      topic: genericSelectedTopicFixture(),
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    assertFactPackContract(result.factPack);
+    assert.equal(result.factPack.topicTitle, "腾讯混元 Hy3 正式版发布，智能体能力更新");
+    assert.equal(result.factPack.sourceReliability, "medium");
+    assert.ok(
+      result.factPack.verifiedClaims.every((claim) =>
+        claim.sourceUrls.includes("https://example.com/tencent-hunyuan-hy3-agent")
+      )
+    );
+    assert.ok(
+      result.factPack.verifiedClaims.every((claim) => !claim.claim.includes("Claude Code"))
+    );
+    assert.ok(
+      result.factPack.verifiedClaims.every((claim) => !claim.safeWording.includes("Goose"))
+    );
+
+    const written = await readFile(result.files.topicFactPackJson, "utf8");
+    const report = await readFile(result.files.topicFactPackReport, "utf8");
+    assert.doesNotMatch(written, /\$200|Claude Code costs|Goose does the same thing/);
+    assert.match(report, /选题核验维度/);
+    assert.doesNotMatch(report, /Claude Code 与 Goose 对比/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

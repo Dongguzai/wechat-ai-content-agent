@@ -53,6 +53,8 @@ export interface ArticleWritingOutputFiles {
   article: string;
   articleMeta: string;
   articleWritingReport: string;
+  articleWritingError: string;
+  articleWritingErrorReport: string;
 }
 
 export interface ArticleWritingResult {

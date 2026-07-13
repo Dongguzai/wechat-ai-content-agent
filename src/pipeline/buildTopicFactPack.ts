@@ -76,6 +76,10 @@ function reliabilityForFactPack(topic: SelectedTopic): SourceReliability {
     return "low";
   }
 
+  if (!isClaudeGooseTopic(topic)) {
+    return topic.selected.selection.sourceReliability === "high" ? "medium" : topic.selected.selection.sourceReliability;
+  }
+
   const hasOfficialClaudeSources = [
     sourceUrls.claudePricing,
     sourceUrls.claudePlanHelp,
@@ -90,10 +94,102 @@ function reliabilityForFactPack(topic: SelectedTopic): SourceReliability {
   return hasOfficialClaudeSources && hasOfficialGooseSources ? "medium" : "low";
 }
 
-function createClaims(topic: SelectedTopic): FactPackClaim[] {
+function topicText(topic: SelectedTopic): string {
+  const selected = topic.selected;
+  return [
+    selected.title,
+    selected.rawTitle,
+    selected.titleZh,
+    selected.summary,
+    selected.rawSummary,
+    selected.summaryZh,
+    selected.url,
+    selected.selection.articleThesis,
+    selected.selection.writingAngle
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+}
+
+function isClaudeGooseTopic(topic: SelectedTopic): boolean {
+  const text = topicText(topic);
+  return text.includes("claude code") && text.includes("goose");
+}
+
+function currentTopicSourceUrls(topic: SelectedTopic): string[] {
+  const urls = [
+    topic.selected.url,
+    ...(topic.selected.evidence ?? [])
+      .map((item) => item.match(/https?:\/\/\S+/)?.[0]?.replace(/[),.;，。]+$/, "") ?? "")
+      .filter(Boolean)
+  ];
+
+  return [...new Set(urls.filter((url) => /^https?:\/\//i.test(url)))];
+}
+
+function displayTitle(topic: SelectedTopic): string {
+  return topic.selected.titleZh || topic.selected.title || topic.selected.rawTitle || "当前 AI 资讯选题";
+}
+
+function originalTitle(topic: SelectedTopic): string {
+  return topic.selected.rawTitle || topic.selected.title || topic.selected.titleZh || "当前 AI 资讯";
+}
+
+function topicSummary(topic: SelectedTopic): string {
+  return topic.selected.summaryZh || topic.selected.summary || topic.selected.rawSummary || topic.selected.selection.publicInterest;
+}
+
+function createGenericClaims(topic: SelectedTopic): FactPackClaim[] {
+  const urls = currentTopicSourceUrls(topic);
+  const title = originalTitle(topic);
+  const summary = topicSummary(topic);
+  const sourceLabel = topic.selected.sourceType === "global_search"
+    ? "搜索线索"
+    : topic.selected.sourceType === "rss"
+      ? "RSS 来源"
+      : "人工选题来源";
+
   return [
     {
-      claim: "“up to $200 a month”对应 Claude Max 20x 个人套餐价格，而不是 Claude Code 的单独固定价格。",
+      claim: `当前选题来自 ${topic.selected.sourceName}：${title}。`,
+      status: "partially_verified",
+      sourceUrls: urls,
+      safeWording: `可以写成“${topic.selected.sourceName} 的一条${sourceLabel}显示，${title}”，但必须提醒读者具体发布时间、产品边界和指标口径仍需回到原文核验。`,
+      risk: topic.selected.sourceType === "global_search" ? "medium" : "low"
+    },
+    {
+      claim: summary,
+      status: "partially_verified",
+      sourceUrls: urls,
+      safeWording: `可以把该线索概括为“${summary}”，但不能把搜索摘要、译写摘要或媒体标题扩展成官方结论。`,
+      risk: "medium"
+    },
+    {
+      claim: topic.selected.selection.writingAngle,
+      status: "partially_verified",
+      sourceUrls: urls,
+      safeWording: `正文适合从“${topic.selected.selection.writingAngle}”切入，重点写它可能怎样影响开发者、产品团队或内容生产工作流。`,
+      risk: "medium"
+    },
+    {
+      claim: "该选题包含模型、智能体或开发者工作流相关信号。",
+      status: "partially_verified",
+      sourceUrls: urls,
+      safeWording: "可以讨论它释放出的产品和工作流信号，但不要写成已被官方完整证实的行业结论，也不要直接复述未经核验的夸张性能对比。",
+      risk: "medium"
+    }
+  ];
+}
+
+function createClaims(topic: SelectedTopic): FactPackClaim[] {
+  if (!isClaudeGooseTopic(topic)) {
+    return createGenericClaims(topic);
+  }
+
+  return [
+    {
+      claim: "媒体提到的两百美元级别月费对应 Claude Max 20x 个人套餐价格，而不是 Claude Code 的单独固定价格。",
       status: "verified",
       sourceUrls: [
         sourceUrls.claudePricing,
@@ -101,7 +197,7 @@ function createClaims(topic: SelectedTopic): FactPackClaim[] {
         sourceUrls.claudeCodePlanHelp
       ],
       safeWording:
-        "Anthropic 官方页面列出 Max 20x 为 $200/month；Claude Code 包含在 Pro/Max 等付费 Claude 计划中，因此应写成“最高可到 $200/月的 Claude Max 20x 订阅可使用 Claude Code”，不能写成“Claude Code 必须 $200/月”。",
+        "Anthropic 官方页面列出 Max 20x 为两百美元级别月费；Claude Code 包含在 Pro/Max 等付费 Claude 计划中，因此应写成“高阶个人订阅方案可使用 Claude Code”，不能写成“Claude Code 必须花两百美元级别月费才能用”。",
       risk: "medium"
     },
     {
@@ -168,6 +264,10 @@ function createClaims(topic: SelectedTopic): FactPackClaim[] {
 }
 
 function createFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
+  if (!isClaudeGooseTopic(topic)) {
+    return createGenericFactPack(topic, now);
+  }
+
   const factPack: TopicFactPack = {
     topicTitle: topic.selected.title,
     generatedAt: now.toISOString(),
@@ -176,7 +276,7 @@ function createFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
     comparison: {
       claudeCode: {
         pricing:
-          "不是独立 $200/月单品。Claude 官方价格页显示 Pro 月付 $20、Max 从 $100/月起，帮助中心列出 Max 20x 为 $200/月；Claude Code 包含在 Pro/Max 等付费计划中，也可在 API/PAYG 或团队/企业场景产生不同成本。",
+          "不是独立两百美元级别月费单品。Claude 官方价格页显示 Pro、Max 等订阅层级，帮助中心列出 Max 20x 为两百美元级别月费；Claude Code 包含在 Pro/Max 等付费计划中，也可在 API/PAYG 或团队/企业场景产生不同成本。",
         positioning:
           "Anthropic 的官方编码代理，面向项目级开发任务、代码修改、测试、Git/PR、MCP 工具连接和团队工作流。",
         capabilities: [
@@ -228,12 +328,12 @@ function createFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
         "Goose 完全替代 Claude Code。",
         "Goose 和 Claude Code 能力完全一样。",
         "Goose 完全免费且没有任何成本。",
-        "Claude Code 必须花 $200 才能用。",
+        "Claude Code 必须花两百美元级别月费才能用。",
         "只凭 VentureBeat 标题就断言两者做同一件事。"
       ]
     },
     safeWritingBoundary: [
-      "可以写：Claude Max 20x 官方帮助中心列出 $200/month，但这对应 Claude 订阅层级，不是 Claude Code 单独强制价格。",
+      "可以写：Claude Max 20x 官方帮助中心列出两百美元级别月费，但这对应 Claude 订阅层级，不是 Claude Code 单独强制价格。",
       "可以写：Claude Code 包含在 Pro/Max 等付费 Claude 计划中，且 API Key/PAYG 或企业部署可能产生不同成本。",
       "可以写：Goose 是免费开源 AI agent，但调用外部 LLM 可能需要 API Key、订阅或按量付费。",
       "可以写：两者在 coding agent 工作流上有重叠，但不能写成能力完全一致。",
@@ -254,6 +354,87 @@ function createFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
       "从“同类工具”转向“生态路径”：Claude Code 代表产品化闭环，Goose 代表可替换模型和开源扩展。",
       "从“替代”转向“组合”：团队可能用开源 agent 做试点和成本对冲，而非立刻放弃付费工具。"
     ]
+  };
+
+  if (factPack.sourceReliability === "low") {
+    throw new Error("Topic fact pack sourceReliability is low; stop before writing.");
+  }
+
+  return factPack;
+}
+
+function createGenericFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
+  const urls = currentTopicSourceUrls(topic);
+  const title = displayTitle(topic);
+  const rawTitle = originalTitle(topic);
+  const sourceRisk =
+    topic.selected.sourceType === "global_search"
+      ? "这条选题来自 global_search，搜索摘要只能作为线索，正文不能把它当确定事实。"
+      : "正文仍需回到原始来源确认发布时间、产品边界和指标口径。";
+  const factPack: TopicFactPack = {
+    topicTitle: title,
+    generatedAt: now.toISOString(),
+    sourceReliability: reliabilityForFactPack(topic),
+    verifiedClaims: createGenericClaims(topic),
+    comparison: {
+      claudeCode: {
+        pricing: "不适用。本选题不是 Claude Code / Goose 价格对比专题。",
+        positioning: `${topic.selected.sourceName} 的当前 AI 资讯线索：${rawTitle}`,
+        capabilities: [
+          topic.selected.selection.technicalSignificance,
+          topic.selected.selection.businessImpact,
+          topic.selected.selection.predictedImpact
+        ].filter(Boolean),
+        sourceUrls: urls
+      },
+      goose: {
+        pricing: "不适用。本选题不涉及 Goose 定价。",
+        positioning: "作为对照维度，可关注该线索对智能体工作流、模型能力或开发者工具生态的影响。",
+        capabilities: [
+          "观察它是否改变开发者或产品团队的默认工作流。",
+          "区分来源声称、搜索摘要和可核验事实。",
+          "避免把单条资讯写成行业定论。"
+        ],
+        sourceUrls: urls
+      },
+      similarities: [
+        "都应围绕开发者工作流、模型能力或产品落地影响展开。",
+        "都需要区分原始来源事实和编辑概括。",
+        "都不能把未经核验的指标或对比写成确定结论。"
+      ],
+      differences: [
+        "当前选题应服务于所选来源，而不是复用旧专题事实。",
+        "当前选题的风险在于来源和指标口径核验，不是 Claude/Goose 价格比较。",
+        "如果来源是搜索线索，正文需要显式降低确定性。"
+      ],
+      unsafeComparisonClaims: [
+        "把搜索摘要当作官方发布。",
+        "把单篇资讯中的性能数字写成无条件事实。",
+        "把“接近”“追平”“超过”等标题化表达写成已证实结论。",
+        "脱离当前来源，复用无关产品或旧专题事实。"
+      ]
+    },
+    safeWritingBoundary: [
+      `可以写：${topic.selected.sourceName} 的线索显示，${rawTitle}。`,
+      "可以写：这类更新值得从智能体工作流、开发者工具链和产品落地角度观察。",
+      "必须写清：具体发布时间、指标口径和产品边界需要回到原文核验。",
+      "不能写：搜索摘要已经证明某模型或产品全面追平、超过另一个未核验对象。"
+    ],
+    riskNotes: [
+      sourceRisk,
+      "标题、摘要和中文化改写只用于编辑判断，不能替代原文事实。",
+      "涉及参数规模、任务解决率、幻觉率、上下文长度、benchmark 或竞品对比时必须使用谨慎表达。",
+      "如果原文不是官方来源，正文应避免使用“官方确认”“已经证明”等确定性措辞。"
+    ],
+    recommendedFraming:
+      topic.selected.selection.writingAngle ||
+      "从这条 AI 资讯看智能体能力更新对开发者工作流的影响。",
+    articleAngleSuggestions: [
+      topic.selected.selection.writingAngle,
+      "从“产品更新”转向“工作流影响”：它会改变谁的日常流程。",
+      "从“能力数字”转向“可信边界”：哪些指标需要回到原文核验。",
+      "从“模型热闹”转向“落地场景”：开发者和团队该观察什么。"
+    ].filter(Boolean)
   };
 
   if (factPack.sourceReliability === "low") {
@@ -288,6 +469,7 @@ function claimLines(claims: FactPackClaim[], status: FactClaimStatus): string[] 
 
 function createMarkdownReport(factPack: TopicFactPack): string {
   const comparison = factPack.comparison;
+  const isGeneric = comparison.claudeCode.pricing.startsWith("不适用。");
 
   return [
     "# Topic Fact Pack",
@@ -312,16 +494,16 @@ function createMarkdownReport(factPack: TopicFactPack): string {
     "",
     ...claimLines(factPack.verifiedClaims, "unverified"),
     "",
-    "## Claude Code 与 Goose 对比",
+    isGeneric ? "## 选题核验维度" : "## Claude Code 与 Goose 对比",
     "",
-    "### Claude Code",
+    isGeneric ? "### 当前来源" : "### Claude Code",
     "",
     `- pricing: ${comparison.claudeCode.pricing}`,
     `- positioning: ${comparison.claudeCode.positioning}`,
     ...comparison.claudeCode.capabilities.map((item) => `- capability: ${item}`),
     `- sources: ${comparison.claudeCode.sourceUrls.map((url) => `<${url}>`).join(", ")}`,
     "",
-    "### Goose",
+    isGeneric ? "### 对照观察维度" : "### Goose",
     "",
     `- pricing: ${comparison.goose.pricing}`,
     `- positioning: ${comparison.goose.positioning}`,

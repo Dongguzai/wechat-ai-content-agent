@@ -174,6 +174,10 @@ function hasAny(text: string, terms: string[]): boolean {
   return terms.some((term) => text.includes(term));
 }
 
+function isGenericFactPack(factPack: TopicFactPack): boolean {
+  return factPack.comparison.claudeCode.pricing.startsWith("不适用。");
+}
+
 function claimIsReflectedSafely(
   claim: ArticleUsedClaim,
   markdown: string
@@ -316,7 +320,17 @@ function createQualityCheck(markdown: string) {
   const plainText = articlePlainText(markdown);
   const wordCount = countArticleChars(markdown);
   const title = extractTitle(markdown);
-  const firstPersonSignals = ["我", "我们", "本人", "笔者", "亲测", "体验下来", "我的"];
+  const firstPersonSignals = [
+    "我认为",
+    "我觉得",
+    "我们认为",
+    "我们觉得",
+    "本人",
+    "笔者",
+    "亲测",
+    "体验下来",
+    "我的"
+  ];
   const newsReleaseSignals = [
     "本公司",
     "隆重发布",
@@ -354,6 +368,14 @@ function titleMatchesBody(title: string, markdown: string): boolean {
   );
 
   return keywords.length === 0 || keywords.some((keyword) => plainText.includes(keyword));
+}
+
+function titleHasGenericFactOverclaim(title: string, factPack: TopicFactPack): boolean {
+  if (!isGenericFactPack(factPack)) {
+    return false;
+  }
+
+  return /(默认流程|写进默认|已经落地|全面落地|已经证明|官方确认|成为标准|接管流程)/.test(title);
 }
 
 function collectStrengths(result: ArticleReviewResult): string[] {
@@ -481,6 +503,7 @@ export function reviewArticle(
   options: { now?: Date; llm?: LlmRunMetadata } = {}
 ): ArticleReviewResult {
   const { articleMarkdown, articleMeta, factPack, selectedTopic } = input;
+  const genericFactPack = isGenericFactPack(factPack);
   const issues: ArticleReviewIssue[] = [];
   const generatedAt = (options.now ?? new Date()).toISOString();
   const title = extractTitle(articleMarkdown);
@@ -699,14 +722,19 @@ export function reviewArticle(
   }
 
   const opening = articlePlainText(bodyWithoutTitle).slice(0, 320);
-  if (!/(冲突|一边.+另一边|但|不是.+而是|问题|价格)/.test(opening)) {
+  const openingPattern = genericFactPack
+    ? /(但|不是.+而是|问题|边界|风险|需要|不能|值得观察|差异|成本|工作流)/
+    : /(冲突|一边.+另一边|但|不是.+而是|问题|价格)/;
+  if (!openingPattern.test(opening)) {
     addIssue(
       issues,
       "logic",
       "medium",
       "开头没有建立清晰冲突。",
       opening || "开头为空。",
-      "在开头交代高价订阅、开源工具、成本或工作流入口之间的冲突。"
+      genericFactPack
+        ? "在开头交代来源线索和事实边界之间的张力，并说明为什么会影响工作流、成本或风险判断。"
+        : "在开头交代高价订阅、开源工具、成本或工作流入口之间的冲突。"
     );
   }
 
@@ -719,7 +747,9 @@ export function reviewArticle(
       "medium",
       "中段没有充分解释行业变化。",
       middle.slice(0, 120),
-      "在中段解释 coding agent 从产品、模型能力或订阅工具走向工作流/基础设施竞争的变化。"
+      genericFactPack
+        ? "在中段解释这条资讯对模型能力、工作流、成本结构、风险治理或工具锁定的影响。"
+        : "在中段解释 coding agent 从产品、模型能力或订阅工具走向工作流/基础设施竞争的变化。"
     );
   }
 
@@ -758,7 +788,10 @@ export function reviewArticle(
   }
 
   const titleLength = readableCharCount(title);
-  if (titleLength < 8 || titleLength > 36 || !/(不是|而是|真正|为什么|开始|重新|卷|成本|工作流|开源|价格)/.test(title)) {
+  const titleSignalPattern = genericFactPack
+    ? /(不是|而是|真正|为什么|开始|重新|工作流|安全|评测|方法|流程|团队|开发者|风险|边界)/
+    : /(不是|而是|真正|为什么|开始|重新|卷|成本|工作流|开源|价格)/;
+  if (titleLength < 8 || titleLength > 36 || !titleSignalPattern.test(title)) {
     addIssue(
       issues,
       "title",
@@ -788,6 +821,17 @@ export function reviewArticle(
       "标题暗示 Goose 免费平替 Claude Code。",
       title,
       "改为工作流、成本结构或开源基础设施角度，不写免费平替。"
+    );
+  }
+
+  if (titleHasGenericFactOverclaim(title, factPack)) {
+    addIssue(
+      issues,
+      "title",
+      "medium",
+      "标题把通用资讯线索写成确定性落地结论。",
+      title,
+      "把标题降级为方法、线索、风险边界或工作流影响，不写默认流程、已经落地、官方确认。"
     );
   }
 

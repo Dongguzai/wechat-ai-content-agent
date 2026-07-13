@@ -25,6 +25,9 @@ const defaultProvider: LlmProvider = "minimax";
 const unconfiguredModel = "not-configured";
 const defaultTemperature = 0.75;
 const defaultMaxCompletionTokens = 2048;
+const stageMinCompletionTokens: Partial<Record<LlmStage, number>> = {
+  "article-writer": 4096
+};
 
 const stageProviderEnv: Record<LlmStage, string> = {
   "article-writer": "ARTICLE_WRITER_PROVIDER",
@@ -38,6 +41,13 @@ const stageModelEnv: Record<LlmStage, string> = {
   "title-generator": "TITLE_GENERATOR_MODEL",
   "article-reviewer": "ARTICLE_REVIEWER_MODEL",
   "news-localizer": "NEWS_LOCALIZER_MODEL"
+};
+
+const stageMaxCompletionTokensEnv: Record<LlmStage, string> = {
+  "article-writer": "ARTICLE_WRITER_MAX_COMPLETION_TOKENS",
+  "title-generator": "TITLE_GENERATOR_MAX_COMPLETION_TOKENS",
+  "article-reviewer": "ARTICLE_REVIEWER_MAX_COMPLETION_TOKENS",
+  "news-localizer": "NEWS_LOCALIZER_MAX_COMPLETION_TOKENS"
 };
 
 const nullUsage: LlmUsage = {
@@ -100,6 +110,19 @@ export function resolveLlmStageConfig(
     ? !isExplicitFalse(env, "LLM_DRY_RUN")
     : !realEnabled;
   const model = envValue(env, stageModelEnv[stage]) ?? envValue(env, "MINIMAX_MODEL");
+  const requestedMaxCompletionTokens = envNumber(
+    env,
+    stageMaxCompletionTokensEnv[stage],
+    envNumber(
+      env,
+      "MINIMAX_MAX_COMPLETION_TOKENS",
+      defaultMaxCompletionTokens
+    )
+  );
+  const maxCompletionTokens = Math.max(
+    requestedMaxCompletionTokens,
+    stageMinCompletionTokens[stage] ?? 0
+  );
 
   if (realEnabled && !dryRun && !model) {
     throw new Error(
@@ -113,11 +136,7 @@ export function resolveLlmStageConfig(
     model: model ?? unconfiguredModel,
     mode: realEnabled && !dryRun ? "real" : "mock",
     temperature: envNumber(env, "MINIMAX_TEMPERATURE", defaultTemperature),
-    maxCompletionTokens: envNumber(
-      env,
-      "MINIMAX_MAX_COMPLETION_TOKENS",
-      defaultMaxCompletionTokens
-    )
+    maxCompletionTokens
   };
 }
 

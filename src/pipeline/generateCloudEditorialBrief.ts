@@ -77,6 +77,9 @@ const defaultPipeline: CloudBriefPipelineFns = {
   generateEditorialBrief
 };
 
+const targetCloudCandidateCount = 20;
+const minimumCloudCandidateCount = 10;
+
 function fixedNumber(value: number | undefined, fallback = 0): number {
   return Number((value ?? fallback).toFixed(1));
 }
@@ -308,10 +311,18 @@ async function runExistingBriefPipeline(input: {
   };
   const { candidates } = await runStep("collectNews", input.onStep, async () => {
     const collection = await input.pipeline.collectNewsWithReport(collectOptions);
-    const candidates = collection.candidates.slice(0, 20);
+    const candidates = collection.candidates.slice(0, targetCloudCandidateCount);
 
-    if (candidates.length !== 20) {
-      throw new Error(`Cloud editorial brief requires 20 candidates, got ${candidates.length}.`);
+    if (candidates.length < minimumCloudCandidateCount) {
+      throw new Error(
+        `Cloud editorial brief requires at least ${minimumCloudCandidateCount} candidates, got ${candidates.length}.`
+      );
+    }
+
+    if (candidates.length < targetCloudCandidateCount) {
+      input.logger.warn(
+        `Cloud editorial brief collected ${candidates.length}/${targetCloudCandidateCount} candidates; continuing with available candidates.`
+      );
     }
 
     return { candidates };

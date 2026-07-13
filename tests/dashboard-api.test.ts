@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { executeDashboardAction } from "../apps/dashboard/lib/actions";
-import { getBriefData, getDashboardStatus, getSettingsStatus, readFileForApi } from "../apps/dashboard/lib/dashboard-data";
+import { getArticleData, getBriefData, getDashboardStatus, getSettingsStatus, readFileForApi } from "../apps/dashboard/lib/dashboard-data";
 import {
   createCurrentFeedback,
   cropCover,
@@ -111,6 +111,29 @@ test("dashboard status reads outputs state", async () => {
     assert.equal(status.briefSource, "pipeline-outputs");
     assert.equal(status.steps.find((step) => step.key === "article-review")?.state, "passed");
     assert.equal(status.steps.find((step) => step.key === "wechat-draft")?.state, "passed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dashboard status shows latest article-writing validation failure", async () => {
+  const root = await createTempRoot();
+  try {
+    await writeJson(root, "outputs/selected-topic.json", { selected: { title: "主选题" } });
+    await writeJson(root, "outputs/article-writing-error.json", {
+      failedStep: "article-writer",
+      error: "Article contains forbidden absolute wording: Claude Code 必须花 $200 才能用",
+      suggestedFix: "重新生成 topic-fact-pack 后再从 article 阶段运行。",
+      generatedAt: "2026-06-02T00:00:00.000Z"
+    });
+
+    const status = await getDashboardStatus({ rootDir: root });
+    const article = await getArticleData({ rootDir: root });
+    const articleStep = status.steps.find((step) => step.key === "article");
+
+    assert.equal(articleStep?.state, "failed");
+    assert.match(articleStep?.detail ?? "", /forbidden absolute wording/);
+    assert.match(String(article.llmError?.error), /forbidden absolute wording/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

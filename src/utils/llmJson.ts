@@ -119,6 +119,28 @@ function createRepairPrompt(expectedJsonShape: string): string {
   ].join("\n");
 }
 
+function truncationDiagnostic(
+  completion: LlmChatCompletionResult,
+  maxCompletionTokens: number
+): string | undefined {
+  const finishReason = completion.finishReason?.trim().toLowerCase() ?? "";
+  const completionTokens = completion.usage.completionTokens;
+  const nearLimit =
+    typeof completionTokens === "number" &&
+    completionTokens >= Math.max(1, Math.floor(maxCompletionTokens * 0.95));
+
+  if (
+    finishReason === "length" ||
+    finishReason === "max_tokens" ||
+    finishReason === "content_length" ||
+    nearLimit
+  ) {
+    return `MiniMax output likely hit maxCompletionTokens=${maxCompletionTokens}; finishReason=${completion.finishReason ?? "unknown"}, completionTokens=${completionTokens ?? "unknown"}. Increase the stage token budget or shorten the prompt.`;
+  }
+
+  return undefined;
+}
+
 function createSuggestedFix(input: {
   failedStep: LlmStage;
   retryAttempted: boolean;
@@ -188,6 +210,7 @@ export async function requestLlmJsonWithRepair<T>(input: {
   config: LlmStageConfig;
   systemPrompt: string;
   userPrompt: string;
+  repairUserPrompt?: string;
   expectedJsonShape: string;
   env: NodeJS.ProcessEnv;
   fetchImpl?: LlmFetch;
@@ -213,7 +236,13 @@ export async function requestLlmJsonWithRepair<T>(input: {
     };
   }
 
-  let finalError = first.parseError;
+  const firstTruncation = truncationDiagnostic(
+    completion,
+    input.config.maxCompletionTokens
+  );
+  let finalError = firstTruncation
+    ? `${first.parseError}; ${firstTruncation}`
+    : first.parseError;
   let finalPreview = first.contentPreview;
   let retryCompletion: LlmChatCompletionResult | undefined;
 
@@ -221,9 +250,9 @@ export async function requestLlmJsonWithRepair<T>(input: {
     retryCompletion = await input.chatCompletion({
       model: input.config.model,
       systemPrompt: input.systemPrompt,
-      userPrompt: [input.userPrompt, "", createRepairPrompt(input.expectedJsonShape)].join(
-        "\n"
-      ),
+      userPrompt:
+        input.repairUserPrompt ??
+        [input.userPrompt, "", createRepairPrompt(input.expectedJsonShape)].join("\n"),
       temperature: 0,
       maxCompletionTokens: input.config.maxCompletionTokens,
       responseFormat: "json_object",
@@ -239,10 +268,18 @@ export async function requestLlmJsonWithRepair<T>(input: {
       };
     }
 
-    finalError = `Initial attempt: ${first.parseError}; repair retry: ${second.parseError}`;
+    const secondTruncation = truncationDiagnostic(
+      retryCompletion,
+      input.config.maxCompletionTokens
+    );
+    finalError = `Initial attempt: ${firstTruncation ? `${first.parseError}; ${firstTruncation}` : first.parseError}; repair retry: ${
+      secondTruncation ? `${second.parseError}; ${secondTruncation}` : second.parseError
+    }`;
     finalPreview = second.contentPreview;
   } catch (error) {
-    finalError = `Initial attempt: ${first.parseError}; repair retry request failed: ${safeErrorMessage(
+    finalError = `Initial attempt: ${
+      firstTruncation ? `${first.parseError}; ${firstTruncation}` : first.parseError
+    }; repair retry request failed: ${safeErrorMessage(
       error,
       input.env
     )}`;

@@ -261,8 +261,8 @@ function selectedTopic(items: ShortlistedNewsItem[]): SelectedTopic {
   };
 }
 
-function fakePipeline() {
-  const candidates = Array.from({ length: 20 }, (_, index) => candidate(index + 1));
+function fakePipeline(candidateCount = 20) {
+  const candidates = Array.from({ length: candidateCount }, (_, index) => candidate(index + 1));
   const shortlistedItems = candidates.slice(0, 10).map(shortlisted);
   const topic = selectedTopic(shortlistedItems);
 
@@ -295,7 +295,7 @@ function fakePipeline() {
       markdown: "# 今日 AI 资讯编辑简报\n\n云端报告。",
       brief: {
         generatedAt: "2026-06-02T00:00:00.000Z",
-        candidateCount: 20,
+        candidateCount,
         shortlistedCount: 10,
         candidates: [],
         shortlistedItems: [],
@@ -837,6 +837,24 @@ test("cloud brief generation writes run, 10 shortlisted items, editorial brief, 
   assert.equal(db.briefs[0].reportR2Key, "reports/2026-06-02/editorial-brief.md");
   assert.equal(r2.uploads.length, 1);
   assert.equal(r2.uploads[0].key, "reports/2026-06-02/editorial-brief.md");
+});
+
+test("cloud brief generation continues when collection has fewer than 20 candidates", async () => {
+  const db = new MemoryBriefDb();
+  const r2 = new MemoryR2();
+  const result = await generateCloudEditorialBrief({
+    db,
+    r2,
+    now: new Date("2026-06-02T00:00:00.000Z"),
+    runDate: "2026-06-02",
+    pipeline: fakePipeline(19)
+  });
+
+  assert.equal(result.status, "created");
+  assert.equal(db.runs[0].status, "success");
+  assert.equal(db.newsItems.length, 19);
+  assert.equal(db.shortlistedItems.length, 10);
+  assert.equal(r2.uploads.length, 1);
 });
 
 test("cloud brief generation defaults collection to rules-based localization", async () => {

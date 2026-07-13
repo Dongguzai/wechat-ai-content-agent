@@ -337,6 +337,29 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
         ) : null}
       </section>
 
+      {article.llmError ? (
+        <section className="border border-oxblood/25 bg-oxblood/5 px-5 py-4 text-sm leading-6 text-oxblood">
+          <div className="flex gap-2">
+            <AlertCircle className="mt-1 size-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="font-bold">最近一次文章生成失败</p>
+              <p className="mt-1 break-words">
+                {String(
+                  article.llmError.parseError ??
+                    article.llmError.error ??
+                    "请查看 outputs/article-writing-error.md 或 outputs/llm-json-error-report.md。"
+                )}
+              </p>
+              {article.llmError.suggestedFix ? (
+                <p className="mt-1 break-words text-xs">
+                  {String(article.llmError.suggestedFix)}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_240px]">
         <aside className="space-y-4">
           <section className="border border-line bg-white p-4">

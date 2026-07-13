@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createChatCompletion } from "../adapters/minimax.js";
 import {
   formatLlmUsage,
+  type LlmStageConfig,
   mockLlmMetadata,
   realLlmMetadata,
   resolveLlmStageConfig
@@ -60,10 +61,11 @@ const forbiddenArticlePhrases = [
   "Goose 零成本",
   "Claude Code 必须花 $200 才能用",
   "Claude Code 是单独固定 $200/month 工具",
+  "Claude Code 必须花两百美元级别月费才能用",
+  "Claude Code 是单独固定两百美元级别月费工具",
   "免费平替",
   "免费替代高价工具",
   "完全替代",
-  "$200",
   "能力相同",
   "直接互换"
 ];
@@ -74,7 +76,9 @@ function createOutputFiles(outputDir: string): ArticleWritingOutputFiles {
   return {
     article: join(outputDir, "article.md"),
     articleMeta: join(outputDir, "article-meta.json"),
-    articleWritingReport: join(outputDir, "article-writing-report.md")
+    articleWritingReport: join(outputDir, "article-writing-report.md"),
+    articleWritingError: join(outputDir, "article-writing-error.json"),
+    articleWritingErrorReport: join(outputDir, "article-writing-error.md")
   };
 }
 
@@ -87,16 +91,84 @@ async function readRequiredText(path: string): Promise<string> {
   return readFile(path, "utf8");
 }
 
-async function readOptionalText(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createWritingErrorReport(input: {
+  error: unknown;
+  topic: SelectedTopic;
+  llmConfig: LlmStageConfig;
+  generatedAt: string;
+}): string {
+  const message = errorMessage(input.error);
+  return [
+    "# Article Writing Error",
+    "",
+    `generatedAt: ${input.generatedAt}`,
+    `failedStep: article-writer`,
+    "",
+    "## 选题",
+    "",
+    `- topicId: ${input.topic.selected.id}`,
+    `- topicTitle: ${input.topic.selected.title}`,
+    `- sourceUrl: ${input.topic.selected.url}`,
+    "",
+    "## LLM 配置",
+    "",
+    `- provider: ${input.llmConfig.provider}`,
+    `- model: ${input.llmConfig.model}`,
+    `- mode: ${input.llmConfig.mode}`,
+    `- maxCompletionTokens: ${input.llmConfig.maxCompletionTokens}`,
+    "",
+    "## 错误",
+    "",
+    message,
+    "",
+    "## 建议处理",
+    "",
+    "重新生成 topic-fact-pack 后再从 article 阶段运行；如果错误来自 forbidden wording，请收紧 fact pack 的 safeWording 或降低文章中的绝对化表述。",
+    ""
+  ].join("\n");
+}
+
+async function writeArticleWritingError(input: {
+  files: ArticleWritingOutputFiles;
+  error: unknown;
+  topic: SelectedTopic;
+  llmConfig: LlmStageConfig;
+  now?: Date;
+}): Promise<void> {
+  const generatedAt = (input.now ?? new Date()).toISOString();
+  const payload = {
+    failedStep: "article-writer",
+    topicId: input.topic.selected.id,
+    topicTitle: input.topic.selected.title,
+    provider: input.llmConfig.provider,
+    model: input.llmConfig.model,
+    mode: input.llmConfig.mode,
+    maxCompletionTokens: input.llmConfig.maxCompletionTokens,
+    error: errorMessage(input.error),
+    suggestedFix:
+      "重新生成 topic-fact-pack 后再从 article 阶段运行；如果错误来自 forbidden wording，请收紧 fact pack 的 safeWording 或降低文章中的绝对化表述。",
+    generatedAt
+  };
+
+  await writeJson(input.files.articleWritingError, payload);
+  await writeFile(
+    input.files.articleWritingErrorReport,
+    createWritingErrorReport({
+      error: input.error,
+      topic: input.topic,
+      llmConfig: input.llmConfig,
+      generatedAt
+    }),
+    "utf8"
+  );
 }
 
 export function countArticleChars(markdown: string): number {
@@ -114,6 +186,10 @@ function pickTitle(topic: SelectedTopic): string {
       title.includes("工作流")
     ) ?? "AI 编码代理真正卷到的，不是价格，而是工作流"
   );
+}
+
+function isGenericFactPack(factPack: TopicFactPack): boolean {
+  return factPack.comparison.claudeCode.pricing.startsWith("不适用。");
 }
 
 function sanitizeFactPackTextForHtmlSafety(value: string): string {
@@ -140,7 +216,17 @@ function usedClaimsFromFactPack(factPack: TopicFactPack): ArticleUsedClaim[] {
   }));
 }
 
-function createRiskControls(): string[] {
+function createRiskControls(factPack?: TopicFactPack): string[] {
+  if (factPack && isGenericFactPack(factPack)) {
+    return [
+      "不把搜索摘要、中文化摘要或媒体标题当作官方确定事实。",
+      "涉及参数、benchmark、任务解决率、上下文长度等指标时，只使用 fact pack safeWording 的谨慎表达。",
+      "不复用无关旧专题事实，不把当前选题写成 Claude Code / Goose 价格对比。",
+      "讨论开源、工作流、成本和工具锁定时，限定为对开发者与团队决策的观察维度。",
+      "本阶段只生成公众号正文、meta 和写作报告，不进入封面、HTML 排版、APIMart、后台或浏览器自动化。"
+    ];
+  }
+
   return [
     "高价订阅价格只对应 Claude 高阶个人订阅方案边界，不写成 Claude Code 的单独固定价格。",
     "Goose 的免费表述限定为工具本体免费开源，同时说明外部模型调用可能产生 API Key、订阅或按量费用。",
@@ -150,7 +236,53 @@ function createRiskControls(): string[] {
   ];
 }
 
-function createArticleSections(factPack: TopicFactPack): ArticleSection[] {
+function createGenericArticleSections(
+  topic: SelectedTopic,
+  factPack: TopicFactPack
+): ArticleSection[] {
+  const selected = topic.selected;
+  const sourceTitle = selected.rawTitle || selected.titleZh || selected.title;
+  const summary =
+    selected.summaryZh ||
+    selected.summary ||
+    selected.rawSummary ||
+    selected.selection.publicInterest;
+  const boundary = factPack.safeWritingBoundary[2] ?? "具体指标和产品边界需要回到原文核验。";
+
+  return [
+    {
+      heading: "先把边界说清",
+      body:
+        `${selected.sourceName} 的线索显示，${sourceTitle}。这类 AI 资讯适合写，但不能把搜索摘要或标题化表达直接当成官方结论。更稳的写法，是先交代来源，再把确定性降下来：${boundary}`
+    },
+    {
+      heading: "真正值得看的不是热闹",
+      body:
+        `${summary} 这件事的价值，不只在某个参数或一句能力描述，而在它把模型更新继续推向智能体工作流。对开发者来说，重要问题是工具能不能进入真实项目；对产品团队来说，重要问题是它会不会改变功能设计、协作流程和交付节奏。`
+    },
+    {
+      heading: "团队会重新算账",
+      body:
+        "一旦 AI 能力进入日常流程，成本就不只是模型调用费，还包括接入、权限、审计、稳定性和维护成本。开源方案可能降低试错门槛，闭源平台可能提供更完整的产品体验，但两边都会带来工具锁定和迁移成本。"
+    },
+    {
+      heading: "怎么判断后续影响",
+      body:
+        `${selected.selection.writingAngle} 接下来更值得观察的是三个问题：它是否真的改变开发者工作流，相关指标是否能被原文或官方材料支撑，以及团队采用它时能否控制成本和权限边界。把这三点写清楚，比单纯复述“发布了什么”更有信息量。`
+    },
+    {
+      heading: "结论",
+      body:
+        `${selected.selection.articleThesis} 这不是一句模型更新就能盖棺定论的事，而是 AI 产品竞争继续向工作流入口移动的信号。越接近真实业务流程，越需要把事实边界、成本结构和工具锁定讲明白。`
+    }
+  ];
+}
+
+function createArticleSections(topic: SelectedTopic, factPack: TopicFactPack): ArticleSection[] {
+  if (isGenericFactPack(factPack)) {
+    return createGenericArticleSections(topic, factPack);
+  }
+
   return [
     {
       heading: "冲突先摆出来",
@@ -318,11 +450,11 @@ export function writeArticle(
   }
 
   const title = pickTitle(topic);
-  const sections = createArticleSections(factPack);
+  const sections = createArticleSections(topic, factPack);
   const markdown = createArticleMarkdown(title, sections, topic.selected.url);
   const wordCount = countArticleChars(markdown);
   const usedClaims = usedClaimsFromFactPack(factPack);
-  const riskControls = createRiskControls();
+  const riskControls = createRiskControls(factPack);
   const article: ArticleDraft = {
     title,
     subtitle: "这不是简单的价格对比，而是 coding agent 工作流入口之争。",
@@ -469,12 +601,12 @@ function createArticleWriterSystemPrompt(): string {
 function createArticleWriterUserPrompt(input: {
   topic: SelectedTopic;
   factPack: TopicFactPack;
-  topicSelectionReport: string;
-  topicFactPackReport: string;
   editorialStyle?: EditorialStyleLoadResult;
   editorialApproval?: EditorialApproval;
   titleContext?: string;
 }): string {
+  const writerContext = createArticleWriterContext(input);
+
   return [
     "请生成一篇中文公众号正文。",
     "只返回 JSON，不要 Markdown，不要解释，不要代码块，不要前后缀文本，不要输出 <think> 或任何思考过程。",
@@ -493,32 +625,82 @@ function createArticleWriterUserPrompt(input: {
     "- 必须解释开源、工作流、成本、工具锁定中的至少 3 个主题。",
     "- 结尾保留原始选题线索 URL。",
     "",
-    "selected-topic.json:",
-    JSON.stringify(input.topic, null, 2),
-    "",
-    "topic-fact-pack.json:",
-    JSON.stringify(input.factPack, null, 2),
-    "",
-    "topic-selection-report.md:",
-    input.topicSelectionReport,
-    "",
-    "topic-fact-pack.md:",
-    input.topicFactPackReport,
-    "",
-    "editorial-style.md:",
-    input.editorialStyle?.content ?? "not loaded",
-    "",
-    "editorial-approval.json:",
-    input.editorialApproval
-      ? JSON.stringify(input.editorialApproval, null, 2)
-      : "not provided",
-    "",
-    "user approval notes:",
-    input.editorialApproval?.notes || "none",
-    "",
-    "title-candidates or selected title if present:",
-    input.titleContext ?? "not available"
+    "writer-context.json:",
+    JSON.stringify(writerContext, null, 2)
   ].join("\n");
+}
+
+function createArticleWriterRepairPrompt(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  editorialApproval?: EditorialApproval;
+  titleContext?: string;
+}): string {
+  const writerContext = createArticleWriterContext(input);
+
+  return [
+    "上一次返回内容不是合法 JSON，或疑似被截断。",
+    "请重新生成一篇更短的完整中文公众号文章，并且只返回合法 JSON。",
+    "不要 Markdown，不要解释，不要代码块，不要 JSON 外的任何文字。",
+    "正文控制在 900 到 1200 个中文字符，避免输出过长导致截断。",
+    "必须符合以下结构：",
+    articleWriterExpectedJsonShape,
+    "",
+    "writer-context.json:",
+    JSON.stringify(writerContext, null, 2)
+  ].join("\n");
+}
+
+function createArticleWriterContext(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  editorialStyle?: EditorialStyleLoadResult;
+  editorialApproval?: EditorialApproval;
+  titleContext?: string;
+}) {
+  const selected = input.topic.selected;
+
+  return {
+    topic: {
+      id: selected.id,
+      title: selected.title,
+      titleZh: selected.titleZh,
+      url: selected.url,
+      sourceName: selected.sourceName,
+      sourceReliability: selected.selection.sourceReliability,
+      articleThesis: selected.selection.articleThesis,
+      writingAngle: selected.selection.writingAngle,
+      coreConflict: selected.selection.coreConflict,
+      suggestedTitles: selected.selection.suggestedTitles
+    },
+    factPack: {
+      sourceReliability: input.factPack.sourceReliability,
+      recommendedFraming: input.factPack.recommendedFraming,
+      safeWritingBoundary: input.factPack.safeWritingBoundary,
+      riskNotes: input.factPack.riskNotes,
+      articleAngleSuggestions: input.factPack.articleAngleSuggestions,
+      verifiedClaims: input.factPack.verifiedClaims.map((claim) => ({
+        claim: claim.claim,
+        safeWording: claim.safeWording,
+        sourceUrls: claim.sourceUrls,
+        risk: claim.risk
+      })),
+      unsafeComparisonClaims: input.factPack.comparison.unsafeComparisonClaims
+    },
+    editorialStyle: input.editorialStyle?.loaded
+      ? {
+          structure: "冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断",
+          tone: "第三视角、旁观者分析、通俗但犀利、非通稿、非营销号腔"
+        }
+      : undefined,
+    approval: input.editorialApproval
+      ? {
+          approvedTitle: input.editorialApproval.approvedTitle,
+          notes: input.editorialApproval.notes
+        }
+      : undefined,
+    titleReference: input.titleContext
+  };
 }
 
 async function writeArticleWithMiniMax(input: {
@@ -542,6 +724,7 @@ async function writeArticleWithMiniMax(input: {
     config,
     systemPrompt: createArticleWriterSystemPrompt(),
     userPrompt: createArticleWriterUserPrompt(input),
+    repairUserPrompt: createArticleWriterRepairPrompt(input),
     expectedJsonShape: articleWriterExpectedJsonShape,
     env: input.env,
     fetchImpl: input.fetchImpl,
@@ -557,7 +740,7 @@ async function writeArticleWithMiniMax(input: {
     ? payload.riskControls.filter((value): value is string => typeof value === "string")
     : [];
   const riskControls = [
-    ...new Set([...riskControlsFromModel, ...createRiskControls()])
+    ...new Set([...riskControlsFromModel, ...createRiskControls(input.factPack)])
   ];
   const article: ArticleDraft = {
     title,
@@ -621,30 +804,50 @@ export async function writeArticleWithReport(
     options.topicSelectionReport ?? (await readRequiredText(topicSelectionReportFile));
   const topicFactPackReport =
     options.topicFactPackReport ?? (await readRequiredText(topicFactPackReportFile));
-  const titleContext = await readOptionalText(join(outputDir, "title-candidates.json"));
-  const { article, llm } =
-    llmConfig.mode === "real"
-      ? await writeArticleWithMiniMax({
-          outputDir,
-          topic,
-          factPack,
-          topicSelectionReport,
-          topicFactPackReport,
-          editorialStyle,
-          editorialApproval: options.editorialApproval,
-          titleContext,
-          env,
-          fetchImpl: options.fetchImpl,
-          chatCompletion,
-          now: options.now
-        })
-      : {
-          article: writeArticle(topic, factPack, {
-            now: options.now,
-            editorialApproval: options.editorialApproval
-          }),
-          llm: mockLlmMetadata(llmConfig)
-        };
+  const titleContext = options.editorialApproval?.approvedTitle
+    ? `approvedTitle: ${options.editorialApproval.approvedTitle}`
+    : undefined;
+  let generated: { article: ArticleDraft; llm: LlmRunMetadata };
+
+  try {
+    generated =
+      llmConfig.mode === "real"
+        ? await writeArticleWithMiniMax({
+            outputDir,
+            topic,
+            factPack,
+            topicSelectionReport,
+            topicFactPackReport,
+            editorialStyle,
+            editorialApproval: options.editorialApproval,
+            titleContext,
+            env,
+            fetchImpl: options.fetchImpl,
+            chatCompletion,
+            now: options.now
+          })
+        : {
+            article: writeArticle(topic, factPack, {
+              now: options.now,
+              editorialApproval: options.editorialApproval
+            }),
+            llm: mockLlmMetadata(llmConfig)
+          };
+  } catch (error) {
+    if (writeOutputs) {
+      await mkdir(outputDir, { recursive: true });
+      await writeArticleWritingError({
+        files,
+        error,
+        topic,
+        llmConfig,
+        now: options.now
+      });
+    }
+    throw error;
+  }
+
+  const { article, llm } = generated;
   const meta = createMeta(
     article,
     article.createdAt,

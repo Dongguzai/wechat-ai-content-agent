@@ -120,6 +120,10 @@ function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function isGenericFactPack(factPack: TopicFactPack): boolean {
+  return factPack.comparison.claudeCode.pricing.startsWith("不适用。");
+}
+
 function textWithoutTitle(markdown: string): string {
   const lines = markdown.split(/\r?\n/);
   const firstNonEmpty = lines.findIndex((line) => line.trim().length > 0);
@@ -179,6 +183,13 @@ function findForbiddenTerms(
     /Claude Code.{0,12}(被)?Goose.{0,12}(平替|替代|取代)/.test(title)
   ) {
     violations.push("暗示 Goose 免费替代 Claude Code");
+  }
+
+  if (
+    isGenericFactPack(factPack) &&
+    /(默认流程|写进默认|已经落地|全面落地|已经证明|官方确认|成为标准|接管流程)/.test(title)
+  ) {
+    violations.push("通用资讯标题过度落地");
   }
 
   return [...new Set(violations)];
@@ -473,6 +484,7 @@ function createTitleGeneratorSystemPrompt(): string {
     "必须符合给定字段结构。",
     "中文内容放在 JSON 字段值里。",
     "必须遵守 fact pack 安全边界，不得标题党。",
+    "通用资讯线索不得写成默认流程、已经落地、官方确认或成为标准。",
     "不得写免费平替、完全替代、能力相同、零成本、发布、群发等 forbidden terms。"
   ].join("\n");
 }

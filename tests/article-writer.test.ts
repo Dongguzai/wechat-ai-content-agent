@@ -150,6 +150,11 @@ test("writeArticleWithReport writes article outputs and obeys safety boundaries"
       "# Topic Selection Report\n",
       "utf8"
     );
+    await writeFile(
+      join(outputDir, "title-candidates.json"),
+      JSON.stringify({ selectedTitle: "上一轮旧标题不应进入新文章 Prompt" }),
+      "utf8"
+    );
     await buildTopicFactPack({
       outputDir,
       topic,
@@ -298,7 +303,8 @@ test("writeArticleWithReport real mode calls MiniMax adapter and records usage",
       chatCompletion: async (input: LlmChatCompletionInput) => {
         called += 1;
         assert.equal(input.model, "minimax-m3-test");
-        assert.match(input.userPrompt ?? "", /selected-topic\.json/);
+        assert.match(input.userPrompt ?? "", /writer-context\.json/);
+        assert.doesNotMatch(input.userPrompt ?? "", /上一轮旧标题不应进入新文章 Prompt/);
         return {
           provider: "minimax",
           model: "minimax-m3-test",
@@ -401,7 +407,9 @@ test("writeArticleWithReport retries once when MiniMax returns invalid JSON", as
           };
         }
 
-        assert.match(input.userPrompt ?? "", /你上一次返回的内容不是合法 JSON/);
+        assert.match(input.userPrompt ?? "", /上一次返回内容不是合法 JSON/);
+        assert.match(input.userPrompt ?? "", /writer-context\.json/);
+        assert.doesNotMatch(input.userPrompt ?? "", /topic-selection-report\.md/);
         return {
           provider: "minimax",
           model: "minimax-m3-test",
@@ -494,6 +502,148 @@ test("writeArticleWithReport stops after failed repair retry and writes sanitize
     assert.match(report, /retrySucceeded: false/);
     assert.doesNotMatch(report, /SECRET_MINIMAX_KEY/);
     assert.doesNotMatch(jsonReport, /SECRET_MINIMAX_KEY/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("writeArticleWithReport reports likely token truncation for malformed MiniMax JSON", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-writer-truncated-"));
+  const topic = selectedTopicFixture();
+
+  try {
+    await writeFile(
+      join(outputDir, "selected-topic.json"),
+      `${JSON.stringify(topic, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(outputDir, "topic-selection-report.md"),
+      "# Topic Selection Report\n",
+      "utf8"
+    );
+    const factPack = await buildTopicFactPack({
+      outputDir,
+      topic,
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    await assert.rejects(
+      () =>
+        writeArticleWithReport({
+          outputDir,
+          topic,
+          factPack: factPack.factPack,
+          topicSelectionReport: "# Topic Selection Report",
+          topicFactPackReport: "# Topic Fact Pack",
+          env: {
+            LLM_PROVIDER: "minimax",
+            LLM_ENABLE_REAL_API: "true",
+            LLM_DRY_RUN: "false",
+            ARTICLE_WRITER_PROVIDER: "minimax",
+            ARTICLE_WRITER_MODEL: "minimax-m3-test",
+            ARTICLE_WRITER_MAX_COMPLETION_TOKENS: "4096"
+          },
+          chatCompletion: async () => ({
+            provider: "minimax",
+            model: "minimax-m3-test",
+            content: "{\"title\":\"截断的文章\",\"body\":\"正文没有结束",
+            usage: {
+              promptTokens: 100,
+              completionTokens: 4096,
+              totalTokens: 4196
+            },
+            finishReason: "length",
+            generatedAt: "2026-05-29T00:00:00.000Z"
+          }),
+          logger: silentLogger,
+          now: new Date("2026-05-29T00:00:00.000Z")
+        }),
+      /MiniMax JSON output could not be accepted for article-writer/
+    );
+
+    const report = await readFile(join(outputDir, "llm-json-error-report.md"), "utf8");
+    assert.match(report, /maxCompletionTokens=4096/);
+    assert.match(report, /finishReason=length/);
+    assert.match(report, /completionTokens=4096/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("writeArticleWithReport writes article-writing-error when validation rejects model output", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "article-writer-validation-fail-"));
+  const topic = selectedTopicFixture();
+
+  try {
+    await writeFile(
+      join(outputDir, "selected-topic.json"),
+      `${JSON.stringify(topic, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(outputDir, "topic-selection-report.md"),
+      "# Topic Selection Report\n",
+      "utf8"
+    );
+    const factPack = await buildTopicFactPack({
+      outputDir,
+      topic,
+      topicSelectionReport: "# Topic Selection Report",
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    await assert.rejects(
+      () =>
+        writeArticleWithReport({
+          outputDir,
+          topic,
+          factPack: factPack.factPack,
+          topicSelectionReport: "# Topic Selection Report",
+          topicFactPackReport: "# Topic Fact Pack",
+          env: {
+            LLM_PROVIDER: "minimax",
+            LLM_ENABLE_REAL_API: "true",
+            LLM_DRY_RUN: "false",
+            ARTICLE_WRITER_PROVIDER: "minimax",
+            ARTICLE_WRITER_MODEL: "minimax-m3-test"
+          },
+          chatCompletion: async () => ({
+            provider: "minimax",
+            model: "minimax-m3-test",
+            content: JSON.stringify({
+              ...validMiniMaxArticlePayload(),
+              sections: [
+                {
+                  heading: "错误事实边界",
+                  body:
+                    "Claude Code 必须花 $200 才能用。这个说法同时讨论开源、工作流、成本和工具锁定，但它仍然是禁止写法。"
+                }
+              ]
+            }),
+            usage: { promptTokens: 20, completionTokens: 20, totalTokens: 40 },
+            finishReason: "stop",
+            generatedAt: "2026-05-29T00:00:00.000Z"
+          }),
+          logger: silentLogger,
+          now: new Date("2026-05-29T00:00:00.000Z")
+        }),
+      /Article contains forbidden absolute wording/
+    );
+
+    await assertFileMissing(join(outputDir, "article-meta.json"));
+    const errorJson = JSON.parse(
+      await readFile(join(outputDir, "article-writing-error.json"), "utf8")
+    ) as Record<string, unknown>;
+    const errorReport = await readFile(join(outputDir, "article-writing-error.md"), "utf8");
+    assert.equal(errorJson.failedStep, "article-writer");
+    assert.equal(errorJson.model, "minimax-m3-test");
+    assert.match(String(errorJson.error), /forbidden absolute wording/);
+    assert.match(errorReport, /failedStep: article-writer/);
+    assert.match(errorReport, /Claude Code 必须花 \$200 才能用/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

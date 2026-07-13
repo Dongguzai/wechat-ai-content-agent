@@ -67,6 +67,7 @@ export interface ArticleData {
   markdown?: string;
   meta?: JsonObject;
   review?: JsonObject;
+  llmError?: JsonObject;
   wordCount: number;
 }
 
@@ -130,6 +131,54 @@ export interface SettingsStatus {
 export const SAFE_NOTICE =
   "系统只创建公众号草稿，不会发布，不会群发，最终发布需人工确认。";
 
+async function readJsonWithMtime<T>(
+  relativePath: string,
+  options: DashboardFsOptions
+): Promise<{ value?: T; mtimeMs?: number }> {
+  try {
+    const { absolutePath } = resolveSafeReadPath(relativePath, options);
+    const [content, stats] = await Promise.all([
+      readFile(absolutePath, "utf8"),
+      stat(absolutePath)
+    ]);
+
+    return {
+      value: JSON.parse(content) as T,
+      mtimeMs: stats.mtimeMs
+    };
+  } catch {
+    return {};
+  }
+}
+
+function isNewerFailure(input: {
+  failureMtimeMs?: number;
+  successMtimeMs?: number;
+}): boolean {
+  return Boolean(
+    input.failureMtimeMs &&
+      (!input.successMtimeMs || input.failureMtimeMs > input.successMtimeMs)
+  );
+}
+
+function latestFailureWithMtime(
+  failures: Array<{ value?: JsonObject; mtimeMs?: number; reportPath: string }>
+): { value?: JsonObject; mtimeMs?: number; reportPath: string } | undefined {
+  return failures
+    .filter((failure) => failure.mtimeMs)
+    .sort((a, b) => Number(b.mtimeMs) - Number(a.mtimeMs))[0];
+}
+
+function articleFailureDetail(
+  failure?: { value?: JsonObject; reportPath: string }
+): string {
+  return String(
+    failure?.value?.parseError ??
+      failure?.value?.error ??
+      (failure ? `请查看 ${failure.reportPath}。` : "请查看文章生成失败报告。")
+  );
+}
+
 export async function getDashboardStatus(
   options: DashboardFsOptions = {}
 ): Promise<DashboardStatus> {
@@ -148,7 +197,10 @@ export async function getDashboardStatus(
     apiPreflight,
     draft,
     apiDraft,
-    titleCandidates
+    titleCandidates,
+    articleMetaWithMtime,
+    llmJsonErrorWithMtime,
+    articleWritingErrorWithMtime
   ] = await Promise.all([
     safeFileExists("outputs/editorial-brief.json", options),
     safeFileExists("outputs/editorial-brief.md", options),
@@ -164,8 +216,27 @@ export async function getDashboardStatus(
     readJsonFile<JsonObject>("outputs/wechat-api-preflight.json", options),
     readJsonFile<JsonObject>("outputs/wechat-draft-result.json", options),
     readJsonFile<JsonObject>("outputs/wechat-api-draft-result.json", options),
-    readJsonFile<JsonObject>("outputs/title-candidates.json", options)
+    readJsonFile<JsonObject>("outputs/title-candidates.json", options),
+    readJsonWithMtime<JsonObject>("outputs/article-meta.json", options),
+    readJsonWithMtime<JsonObject>("outputs/llm-json-error.json", options),
+    readJsonWithMtime<JsonObject>("outputs/article-writing-error.json", options)
   ]);
+  const latestArticleFailure = latestFailureWithMtime([
+    {
+      value: llmJsonErrorWithMtime.value,
+      mtimeMs: llmJsonErrorWithMtime.mtimeMs,
+      reportPath: "outputs/llm-json-error-report.md"
+    },
+    {
+      value: articleWritingErrorWithMtime.value,
+      mtimeMs: articleWritingErrorWithMtime.mtimeMs,
+      reportPath: "outputs/article-writing-error.md"
+    }
+  ]);
+  const articleWriterFailed = isNewerFailure({
+    failureMtimeMs: latestArticleFailure?.mtimeMs,
+    successMtimeMs: articleMetaWithMtime.mtimeMs
+  });
 
   const briefSource: DashboardStatus["briefSource"] =
     editorialBriefJsonExists || editorialBriefMdExists
@@ -213,8 +284,10 @@ export async function getDashboardStatus(
       {
         key: "article",
         label: "文章生成",
-        state: articleMeta?.title ? "passed" : "missing",
-        detail: articleMeta?.title ?? "尚未生成 article.md / article-meta.json。"
+        state: articleWriterFailed ? "failed" : articleMeta?.title ? "passed" : "missing",
+        detail: articleWriterFailed
+          ? `生成失败：${articleFailureDetail(latestArticleFailure)}`
+          : articleMeta?.title ?? "尚未生成 article.md / article-meta.json。"
       },
       stateFromPassedFile("article-review", "文章审核", articleReview),
       stateFromPassedFile("cover-review", "封面审核", coverReview),
@@ -324,16 +397,43 @@ export async function getApprovalData(
 }
 
 export async function getArticleData(options: DashboardFsOptions = {}): Promise<ArticleData> {
-  const [markdown, meta, review] = await Promise.all([
+  const [
+    markdown,
+    meta,
+    review,
+    metaWithMtime,
+    llmJsonErrorWithMtime,
+    articleWritingErrorWithMtime
+  ] = await Promise.all([
     readTextFile("outputs/article.md", options),
     readJsonFile<JsonObject>("outputs/article-meta.json", options),
-    readJsonFile<JsonObject>("outputs/article-review.json", options)
+    readJsonFile<JsonObject>("outputs/article-review.json", options),
+    readJsonWithMtime<JsonObject>("outputs/article-meta.json", options),
+    readJsonWithMtime<JsonObject>("outputs/llm-json-error.json", options),
+    readJsonWithMtime<JsonObject>("outputs/article-writing-error.json", options)
   ]);
+  const latestArticleFailure = latestFailureWithMtime([
+    {
+      value: llmJsonErrorWithMtime.value,
+      mtimeMs: llmJsonErrorWithMtime.mtimeMs,
+      reportPath: "outputs/llm-json-error-report.md"
+    },
+    {
+      value: articleWritingErrorWithMtime.value,
+      mtimeMs: articleWritingErrorWithMtime.mtimeMs,
+      reportPath: "outputs/article-writing-error.md"
+    }
+  ]);
+  const articleWriterFailed = isNewerFailure({
+    failureMtimeMs: latestArticleFailure?.mtimeMs,
+    successMtimeMs: metaWithMtime.mtimeMs
+  });
 
   return {
     markdown,
     meta,
     review,
+    llmError: articleWriterFailed ? latestArticleFailure?.value : undefined,
     wordCount: Number(meta?.wordCount ?? countReadableUnits(markdown ?? ""))
   };
 }

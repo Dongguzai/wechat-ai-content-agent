@@ -54,6 +54,7 @@ const restrictedReplacements: Array<{
   code: string;
   pattern: RegExp;
   replacement: string;
+  blocking?: boolean;
 }> = [
   {
     code: "wechat-send-action",
@@ -62,8 +63,14 @@ const restrictedReplacements: Array<{
   },
   {
     code: "wechat-publish-action",
+    pattern: /点击发布|自动发布|确认发布|立即发布|发布到公众号|公众号后台发布|最终发布/g,
+    replacement: "人工上线动作"
+  },
+  {
+    code: "news-publish-wording",
     pattern: /发布/g,
-    replacement: "上线"
+    replacement: "上线",
+    blocking: false
   },
   {
     code: "absolute-substitute-claim",
@@ -170,7 +177,9 @@ function sanitizeRestrictedText(value: string): SanitizedText {
 
   for (const item of restrictedReplacements) {
     if (item.pattern.test(text)) {
-      warningCodes.add(item.code);
+      if (item.blocking !== false) {
+        warningCodes.add(item.code);
+      }
       text = text.replace(item.pattern, item.replacement);
     }
     item.pattern.lastIndex = 0;
