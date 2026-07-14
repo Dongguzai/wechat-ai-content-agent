@@ -6,6 +6,7 @@ import test from "node:test";
 import { buildTopicFactPack } from "../src/pipeline/buildTopicFactPack.js";
 import type { TopicFactPack } from "../src/types/factPack.js";
 import type { SelectedTopic } from "../src/types/news.js";
+import type { SourceEvidence } from "../src/types/sourceEvidence.js";
 import type { Logger } from "../src/utils/logger.js";
 
 const silentLogger: Logger = {
@@ -139,10 +140,33 @@ function genericSelectedTopicFixture(): SelectedTopic {
 }
 
 function assertFactPackContract(factPack: TopicFactPack): void {
+  assert.equal(factPack.schemaVersion, "2.0");
+  assert.ok(factPack.topicId);
   assert.ok(factPack.topicTitle);
   assert.ok(factPack.generatedAt);
+  assert.ok(Array.isArray(factPack.entities));
   assert.notEqual(factPack.sourceReliability, "low");
+  assert.ok(factPack.sourceReliabilityReason);
+  assert.ok(factPack.claims.length >= 3);
   assert.ok(factPack.verifiedClaims.length >= 3);
+  assert.equal(factPack.verifiedClaims.length, factPack.claims.length);
+  assert.ok(Array.isArray(factPack.unsupportedClaims));
+  assert.ok(Array.isArray(factPack.conflictingClaims));
+
+  for (const claim of factPack.claims) {
+    assert.ok(claim.id);
+    assert.ok(claim.statement);
+    assert.ok(claim.status);
+    assert.ok(["verified", "partially_verified", "conflicting", "unverified"].includes(claim.status));
+    assert.ok(Array.isArray(claim.evidenceIds));
+    assert.ok(Array.isArray(claim.sourceUrls));
+    assert.ok(claim.sourceUrls.length > 0);
+    assert.ok(typeof claim.confidence === "number");
+    assert.ok(claim.safeWording);
+    assert.ok(Array.isArray(claim.requiredQualifiers));
+    assert.ok(Array.isArray(claim.forbiddenWording));
+    assert.ok(Array.isArray(claim.riskDimensions));
+  }
 
   for (const claim of factPack.verifiedClaims) {
     assert.ok(claim.claim);
@@ -153,12 +177,10 @@ function assertFactPackContract(factPack: TopicFactPack): void {
     assert.ok(claim.risk);
   }
 
-  assert.ok(factPack.comparison.claudeCode);
-  assert.ok(factPack.comparison.goose);
-  assert.ok(factPack.comparison.unsafeComparisonClaims.length >= 2);
   assert.ok(factPack.safeWritingBoundary.length >= 3);
   assert.ok(factPack.riskNotes.length >= 3);
   assert.ok(factPack.recommendedFraming);
+  assert.ok(factPack.sourceEvidenceIds.length > 0);
 }
 
 test("buildTopicFactPack writes JSON and Markdown fact pack outputs", async () => {
@@ -181,13 +203,15 @@ test("buildTopicFactPack writes JSON and Markdown fact pack outputs", async () =
       await readFile(result.files.topicFactPackJson, "utf8")
     ) as TopicFactPack;
     assertFactPackContract(writtenFactPack);
+    assert.equal("comparison" in writtenFactPack, false);
 
     const report = await readFile(result.files.topicFactPackReport, "utf8");
+    assert.match(report, /Dynamic Topic Fact Pack/);
     assert.match(report, /主选题/);
     assert.match(report, /已核验事实/);
     assert.match(report, /部分核验事实/);
+    assert.match(report, /冲突事实/);
     assert.match(report, /未核验或高风险事实/);
-    assert.match(report, /Claude Code 与 Goose 对比/);
     assert.match(report, /安全写法/);
     assert.match(report, /禁止写法/);
     assert.match(report, /推荐公众号切入角度/);
@@ -226,11 +250,63 @@ test("buildTopicFactPack uses current topic facts for generic AI news", async ()
     const written = await readFile(result.files.topicFactPackJson, "utf8");
     const report = await readFile(result.files.topicFactPackReport, "utf8");
     assert.doesNotMatch(written, /\$200|Claude Code costs|Goose does the same thing/);
-    assert.match(report, /选题核验维度/);
+    assert.match(report, /Dynamic Topic Fact Pack/);
     assert.doesNotMatch(report, /Claude Code 与 Goose 对比/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
+});
+
+test("buildTopicFactPack does not verify numeric claims unless snippets contain the same numbers", async () => {
+  const topic = selectedTopicFixture("high");
+  const sourceEvidence: SourceEvidence = {
+    schemaVersion: "1.0",
+    id: "source-evidence-fixture-claude-code-goose",
+    topicId: topic.selected.id,
+    collectionMode: "extracted",
+    generatedAt: "2026-05-29T00:00:00.000Z",
+    unsupportedReasons: [],
+    items: [
+      {
+        id: "source-evidence-1",
+        topicId: topic.selected.id,
+        url: topic.selected.url,
+        title: topic.selected.title,
+        sourceName: topic.selected.sourceName,
+        kind: "original_url",
+        status: "available_body",
+        extractionStatus: "success",
+        evidenceSnippets: [
+          {
+            id: "source-evidence-1-snippet-1",
+            text: "The article discusses paid subscription paths and an open source coding agent, but this snippet deliberately omits the numeric price.",
+            supportsTaskIds: ["research-task-source-boundary"],
+            extractedFrom: "body"
+          }
+        ],
+        supportsTaskIds: ["research-task-source-boundary"],
+        reliability: "medium",
+        usableAsEvidence: true,
+        canSupportVerifiedClaim: true,
+        evidenceUse: "primary",
+        notes: [],
+        policyIds: [],
+        collectedAt: "2026-05-29T00:00:00.000Z"
+      }
+    ]
+  };
+
+  const result = await buildTopicFactPack({
+    topic,
+    sourceEvidence,
+    topicSelectionReport: "# Topic Selection Report",
+    writeOutputs: false,
+    logger: silentLogger,
+    now: new Date("2026-05-29T00:00:00.000Z")
+  });
+
+  const sourceTopicClaim = result.factPack.claims.find((claim) => claim.id === "claim-source-topic");
+  assert.equal(sourceTopicClaim?.status, "partially_verified");
 });
 
 test("buildTopicFactPack stops when selected topic source reliability is low", async () => {

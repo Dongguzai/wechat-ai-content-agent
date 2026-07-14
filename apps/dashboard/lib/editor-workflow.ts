@@ -621,7 +621,7 @@ function buildRegeneratedCoverPrompt(input: {
     "2K quality, crisp details, clean edges, polished commercial illustration, warm friendly 3D animated movie style, professional technology magazine cover.",
     "",
     "Avoid:",
-    "No real brand logos, no official product marks, no official marks for Claude or Goose, no concrete price tags, no zero-cost replacement slogan, no absolute replacement claim, no real people, no clutter, no cheap synthetic look, no specific animation studio imitation."
+    "No real brand logos, no official product marks, no concrete price tags, no zero-cost replacement slogan, no absolute replacement claim, no real people, no clutter, no cheap synthetic look, no specific animation studio imitation."
   ].join("\n");
 }
 
@@ -630,8 +630,6 @@ function buildRegeneratedNegativePrompt(currentNegativePrompt: string): string {
     sanitizeCoverPromptText(currentNegativePrompt),
     "real brand marks",
     "official product marks",
-    "official marks for Claude",
-    "official marks for Goose",
     "price labels",
     "zero-cost replacement slogan",
     "absolute replacement claim",
@@ -650,8 +648,7 @@ function sanitizeCoverPromptText(value: string): string {
   return sanitizeCoverStyle(value)
     .replace(/\$200/g, "具体价格")
     .replace(/\b(?:100|200|299|399|999)\s*(?:USD|dollars?|美元|美金|\/month|\/月|元|刀)\b/gi, "具体价格")
-    .replace(/Claude\s+Logo/gi, "Claude 官方标识")
-    .replace(/Goose\s+Logo/gi, "Goose 官方标识")
+    .replace(/\b[\w-]+\s+Logo\b/gi, "品牌官方标识")
     .replace(/免费平替/g, "低成本替换口号")
     .replace(/完全替代/g, "绝对替换")
     .replace(/免费替代高价工具/g, "单点价格对比")
@@ -679,6 +676,16 @@ function reviewRegeneratedCover(input: {
   generatedAt: string;
 }): JsonObject {
   const promptForChecks = [input.imagePrompt, input.negativePrompt, input.coverText].join("\n");
+  const affirmativePromptForChecks = promptForChecks
+    .split(/\r?\n/)
+    .filter(
+      (line) =>
+        !/^\s*(?:no\b|avoid\b|negative prompt\b|do not\b|without\b|禁止|不允许|不要|避免|不得)/i.test(
+          line
+        ) &&
+        !/(?:不使用|不包含|不能出现|不要出现|避免出现|禁止出现)/.test(line)
+    )
+    .join("\n");
   const checks = {
     providerIsApimart: true,
     coverTextIsChinese: /[\u3400-\u9fff]/.test(input.coverText),
@@ -688,7 +695,7 @@ function reviewRegeneratedCover(input: {
     mentionsChineseHeadline: /Chinese headline|中文大标题|Chinese main headline/i.test(promptForChecks),
     mentionsSafeMargins: /safe margins|安全边距/i.test(promptForChecks),
     hasVisualCenter: /visual center|central subject|clear subject|视觉中心|中心主体/i.test(promptForChecks),
-    doesNotRequestOfficialMarks: !/Claude\s+Logo|Goose\s+Logo|Claude\s*官方\s*Logo|Goose\s*官方\s*Logo/i.test(promptForChecks),
+    doesNotRequestOfficialMarks: !/(官方\s*)?(Logo|logo|品牌标识|产品标识|商标)/i.test(affirmativePromptForChecks),
     doesNotIncludeSpecificPrice: !/\$200|\b(?:100|200|299|399|999)\s*(?:USD|dollars?|美元|美金|\/month|\/月|元|刀)\b/i.test(promptForChecks),
     doesNotIncludeFreeSubstituteSlogan: !/免费平替/.test(promptForChecks),
     doesNotIncludeAbsoluteSubstituteClaim: !/完全替代/.test(promptForChecks),

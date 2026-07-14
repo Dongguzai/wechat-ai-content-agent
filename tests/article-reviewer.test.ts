@@ -3,6 +3,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { resolvePoliciesForProfile } from "../src/config/policyRegistry.js";
 import { buildTopicFactPack } from "../src/pipeline/buildTopicFactPack.js";
 import {
   reviewArticle,
@@ -13,6 +14,7 @@ import type { ArticleMeta, ArticleReviewResult } from "../src/types/article.js";
 import type { TopicFactPack } from "../src/types/factPack.js";
 import type { LlmChatCompletionInput } from "../src/types/llm.js";
 import type { SelectedTopic } from "../src/types/news.js";
+import type { TopicProfile } from "../src/types/topicProfile.js";
 import type { Logger } from "../src/utils/logger.js";
 
 const silentLogger: Logger = {
@@ -109,6 +111,12 @@ function assertReviewContract(review: ArticleReviewResult): void {
   assert.ok(review.score >= 0);
   assert.ok(review.score <= 100);
   assert.ok(Array.isArray(review.issues));
+  assert.ok(Array.isArray(review.reviewPolicies ?? []));
+  for (const issue of review.issues) {
+    assert.ok(issue.ruleId);
+    assert.ok(issue.source);
+    assert.equal(typeof issue.blocking, "boolean");
+  }
   assert.ok(review.factBoundaryCheck);
   assert.equal(typeof review.factBoundaryCheck.passed, "boolean");
   assert.ok(Array.isArray(review.factBoundaryCheck.violations));
@@ -335,6 +343,162 @@ test("reviewArticle fails when the article says Goose has zero cost", async () =
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
+});
+
+test("reviewArticle applies dynamic ReviewPolicy issues with rule traceability", async () => {
+  const now = "2026-05-29T00:00:00.000Z";
+  const topicProfile: TopicProfile = {
+    schemaVersion: "1.0",
+    id: "topic-profile-pricing",
+    topicId: "topic-pricing",
+    primaryDomain: "tooling",
+    secondaryDomains: [],
+    eventTypes: ["pricing"],
+    entities: [{ name: "Example AI", type: "product" }],
+    targetAudiences: ["开发者"],
+    readerQuestions: ["免费层边界是什么？"],
+    evidenceNeeds: ["官方价格页"],
+    riskDimensions: ["币种", "生效日期", "订阅与 API 差异", "免费层边界"],
+    recommendedContentMode: "explainer",
+    confidence: 0.9,
+    classificationReason: "价格调整题。",
+    generatedAt: now
+  };
+  const reviewPolicies = await resolvePoliciesForProfile(topicProfile, {
+    scopes: ["review"],
+    now: new Date(now)
+  });
+  const selectedTopic = {
+    selected: {
+      title: "Example AI pricing update",
+      url: "https://example.com/pricing",
+      sourceName: "Example",
+      selection: {
+        suggestedTitles: ["Example AI 调整免费层边界"],
+        articleThesis: "价格变化真正影响的是套餐边界。",
+        sourceReliability: "high",
+        writingAngle: "解释免费层边界"
+      }
+    },
+    runnersUp: [],
+    rejected: [],
+    generatedAt: now
+  } as unknown as SelectedTopic;
+  const factPack: TopicFactPack = {
+    schemaVersion: "2.0",
+    topicId: "topic-pricing",
+    topicTitle: "Example AI pricing update",
+    generatedAt: now,
+    entities: [{ name: "Example AI", type: "product" }],
+    sourceReliability: "high",
+    sourceReliabilityReason: "官方来源。",
+    claims: [
+      {
+        id: "claim-price-change",
+        statement: "Example AI 在 2026 年调整免费层边界。",
+        status: "verified",
+        evidenceIds: ["evidence-pricing"],
+        sourceUrls: ["https://example.com/pricing"],
+        confidence: 0.9,
+        safeWording: "可以写成 Example AI 调整免费层边界。",
+        requiredQualifiers: ["据官方价格页"],
+        forbiddenWording: ["零成本", "永久免费"],
+        riskDimensions: ["免费层边界"]
+      },
+      {
+        id: "claim-api-boundary",
+        statement: "订阅套餐和 API 调用需要分开说明。",
+        status: "verified",
+        evidenceIds: ["evidence-pricing"],
+        sourceUrls: ["https://example.com/pricing"],
+        confidence: 0.9,
+        safeWording: "可以写成订阅套餐和 API 调用是不同计费边界。",
+        requiredQualifiers: ["分别说明"],
+        forbiddenWording: ["订阅和 API 完全一样"],
+        riskDimensions: ["订阅与 API 差异"]
+      },
+      {
+        id: "claim-effective-date",
+        statement: "价格说明需要保留生效日期。",
+        status: "verified",
+        evidenceIds: ["evidence-pricing"],
+        sourceUrls: ["https://example.com/pricing"],
+        confidence: 0.9,
+        safeWording: "可以写成价格信息需要回到官方页面核对生效日期。",
+        requiredQualifiers: ["生效日期"],
+        forbiddenWording: ["所有用户都涨价"],
+        riskDimensions: ["生效日期"]
+      }
+    ],
+    unsupportedClaims: [],
+    conflictingClaims: [],
+    verifiedClaims: [],
+    safeWritingBoundary: ["不写零成本。"],
+    riskNotes: ["定价题需要说明免费层边界。"],
+    recommendedFraming: "解释免费层边界。",
+    articleAngleSuggestions: ["从套餐边界解释影响。"],
+    sourceEvidenceIds: ["evidence-pricing"]
+  };
+  const articleMeta: ArticleMeta = {
+    title: "Example AI 调整免费层边界，开发者为什么要重新算账",
+    wordCount: 180,
+    sourceTopic: "Example AI pricing update",
+    articleThesis: "价格变化真正影响的是套餐边界。",
+    usedClaims: factPack.claims.map((claim) => ({
+      id: claim.id,
+      claim: claim.statement,
+      safeWording: claim.safeWording,
+      sourceUrls: claim.sourceUrls,
+      evidenceIds: claim.evidenceIds,
+      status: claim.status
+    })),
+    riskControls: ["不写零成本"],
+    editorialPlan: {
+      id: "editorial-plan-pricing",
+      contentMode: "explainer",
+      sectionClaimMap: [{ sectionId: "section-1", allowedClaimIds: ["claim-price-change"] }],
+      requiredThemes: ["免费层边界", "订阅与 API 差异", "生效日期"]
+    },
+    generatedAt: now
+  };
+  const articleMarkdown = [
+    "# Example AI 调整免费层边界，开发者为什么要重新算账",
+    "",
+    "## 免费层边界",
+    "",
+    "据官方价格页，Example AI 在 2026 年调整免费层边界，但这次免费层是零成本。",
+    "",
+    "## 计费差异",
+    "",
+    "订阅套餐和 API 调用需要分开说明，价格信息需要回到官方页面核对生效日期。",
+    "",
+    "来源：https://example.com/pricing"
+  ].join("\n");
+
+  const review = reviewArticle(
+    {
+      articleMarkdown,
+      articleMeta,
+      factPack,
+      selectedTopic,
+      topicProfile,
+      reviewPolicies
+    },
+    { now: new Date(now) }
+  );
+
+  assertReviewContract(review);
+  assert.equal(review.passed, false);
+  assert.ok(review.reviewPolicies?.some((policy) => policy.id === "pricing"));
+  assert.ok(
+    review.issues.some(
+      (issue) =>
+        issue.policyId === "pricing" &&
+        issue.ruleId === "review-policy.pricing.free-tier-zero-cost" &&
+        issue.source === "review_policy" &&
+        issue.blocking
+    )
+  );
 });
 
 test("reviewArticle fails when the article exceeds 1500 characters", async () => {

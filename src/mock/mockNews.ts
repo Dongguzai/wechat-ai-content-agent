@@ -26,12 +26,12 @@ function isoHoursAgo(now: Date, hoursAgo: number): string {
 
 const mockRssTemplates: MockRssTemplate[] = [
   {
-    id: "rss-claude-code-goose",
-    title: "Claude Code 高阶订阅与 Goose 免费开源对比，引发编码代理成本争议",
-    url: "https://venturebeat.com/infrastructure/claude-code-costs-up-to-usd200-a-month-goose-does-the-same-thing-for-free",
-    sourceName: "VentureBeat AI",
+    id: "rss-enterprise-agent-workbench",
+    title: "企业智能体工作台加入权限审计，AI 流程治理成为新焦点",
+    url: "https://example.com/rss/enterprise-agent-workbench-governance",
+    sourceName: "Mock RSS / Enterprise AI",
     snippet:
-      "Claude Code 存在付费订阅路径，Goose 被描述为免费开源的 AI 编码代理，引发开发者工作流、成本和工具锁定讨论。",
+      "新的企业智能体工作台把权限、日志、工具调用和人工接管整合到同一控制面板，引发团队效率、合规和流程边界讨论。",
     hoursAgo: 4,
     highHeat: true
   },

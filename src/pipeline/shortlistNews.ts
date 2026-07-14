@@ -282,12 +282,12 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
     tags.add("policy");
   }
 
-  if (/\b(agent|agentic|agents|codex|claude code|slackbot|cowork)\b|智能体|编码代理/.test(text)) {
+  if (/\b(agent|agentic|agents|assistant|automation|copilot)\b|智能体|代理|自动化/.test(text)) {
     tags.add("agent");
   }
 
   if (
-    /\b(tooling|developer|workflow|coding|code|codex|github|sdk|framework|terminal|agents\.md|sqlite|warp|goose)\b|开发者|工作流|编码|代码|工具|框架|终端|仓库|运行时/.test(
+    /\b(tooling|developer|workflow|coding|code|github|sdk|framework|terminal|repository|runtime)\b|开发者|工作流|编码|代码|工具|框架|终端|仓库|运行时/.test(
       text
     )
   ) {
@@ -295,7 +295,7 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
     tags.add("developer-workflow");
   }
 
-  if (/\b(open source|open-source|github|goose|sqlite|agents\.md|warp)\b|开源/.test(text)) {
+  if (/\b(open source|open-source|github|repository|maintainer)\b|开源|仓库|维护者/.test(text)) {
     tags.add("open-source");
   }
 
@@ -303,7 +303,7 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
     tags.add("model");
   }
 
-  if (/\b(product|launch|desktop|slackbot|copilot|workspace)\b|产品|发布|工作台|办公套件/.test(text)) {
+  if (/\b(product|launch|desktop|assistant|copilot|workspace)\b|产品|发布|工作台|办公套件/.test(text)) {
     tags.add("product");
   }
 
@@ -319,7 +319,7 @@ function canonicalTagsFor(item: NormalizedNewsItem): NewsTag[] {
     tags.add("business");
   }
 
-  if (/\b(community|maintainer|open source|github|sqlite)\b|社区|维护者|开源/.test(text)) {
+  if (/\b(community|maintainer|open source|github|repository)\b|社区|维护者|开源|仓库/.test(text)) {
     tags.add("community");
   }
 
@@ -337,52 +337,39 @@ function topicAngleFor(item: NormalizedNewsItem): string {
   }
 
   const text = combinedText(item).toLowerCase();
+  const title = displayTitle(item);
+  const categoryAngles: Record<NewsCategory, string> = {
+    model:
+      `表面上是关于 ${title} 的模型能力更新，真正要讨论的是它在什么条件下能进入真实产品和团队流程。对读者来说，关键不是参数热闹，而是能力边界、成本和可复现效果。`,
+    product:
+      `表面上是关于 ${title} 的产品变化，背后要看它把 AI 能力放进了哪个用户入口。对普通读者和团队来说，重点是开放范围、权限边界和工作流是否真的改变。`,
+    tooling:
+      `表面上是关于 ${title} 的工具链新闻，背后要看团队如何评估效率、成本、可控性和长期治理。对开发者或技术负责人，它影响真实工作流里的默认选择。`,
+    research:
+      `表面上是关于 ${title} 的研究进展，真正要讨论的是实验设置、样本范围和泛化限制。对读者来说，重点是哪些结论能支持产业判断，哪些还只是证据线索。`,
+    funding:
+      `表面上是关于 ${title} 的融资或商业信息，背后要看资本押注的是哪个真实需求。对创业者和企业读者来说，关键是场景、壁垒和交付难度。`,
+    policy:
+      `表面上是关于 ${title} 的政策或治理变化，真正要看适用对象、生效时间和实际义务。对企业和产品团队来说，它影响默认流程和风险控制。`
+  };
 
-  if (text.includes("claude code") && text.includes("goose")) {
-    return "表面上是 Claude Code 与 Goose 的价格对比，真正的问题是编码代理会不会从昂贵订阅走向开源替代。对开发者来说，这关系到工具选型、团队成本和代码工作流是否被单一平台锁住。";
+  if (/\b(pricing|price|subscription|cost|paid|free)\b|价格|定价|订阅|免费|成本/.test(text)) {
+    return `表面上是关于 ${title} 的价格或成本变化，真正要讨论的是套餐边界、适用对象和额外用量。对读者来说，重点不是贵或便宜，而是总成本和使用条件。`;
   }
 
-  if (text.includes("cowork")) {
-    return "表面上是 Claude Desktop 加入能操作文件的 Cowork，背后矛盾是 agent 从程序员工具走向普通办公用户时，便利性和文件权限风险如何平衡。适合讨论非技术团队会不会开始重构日常工作流。";
+  if (/\b(benchmark|evaluation|eval|score)\b|基准测试|评测|指标/.test(text)) {
+    return `表面上是关于 ${title} 的评测结果，真正要讨论的是指标定义、测试条件和复现状态。对读者来说，重点不是谁赢，而是这个指标能说明什么。`;
   }
 
-  if (text.includes("slackbot")) {
-    return "表面上是 Slackbot 升级为 AI agent，背后是企业聊天入口到底归协作软件、CRM 还是办公套件控制。对普通职场读者，它影响信息搜索、销售跟进和内部知识流动的默认入口。";
-  }
-
-  if (text.includes("product-market fit")) {
-    return "表面上是判断 Anthropic 和 OpenAI 找到产品市场匹配，背后是基础模型公司到底靠模型能力还是具体工作流变现。对创业者和产品经理，这是判断 AI 机会还剩在哪里的线索。";
-  }
-
-  if (text.includes("itbench-aa")) {
-    return "表面上是企业 IT agent 基准测试分数低，真正值得讨论的是演示里的自动化和真实企业环境之间差了多少权限、系统和异常处理。对技术负责人，它提醒别把 agent 采购等同于马上省人。";
-  }
-
-  if (text.includes("funding") || text.includes("startup")) {
-    return "表面上是企业知识 agent 创业公司融资，背后是资本还在押注检索、权限、评估这些不显眼的基础设施。对创业者，它提示 AI 应用赚钱可能不在聊天界面，而在企业知识流的脏活累活。";
-  }
-
-  if (text.includes("warp")) {
-    return "表面上是 Warp 用 GPT-5.5 押注开源建设，背后是开发工具厂商既想借开源扩散，又要守住商业产品入口。对开发者，它影响终端、代码生成和社区贡献会不会被 agent 工作流重新组织。";
-  }
-
-  if (text.includes("sqlite") || text.includes("agents.md")) {
-    return "表面上只是 sqlite 仓库出现 AGENTS.md，真正有意思的是开源项目开始给 coding agent 写协作说明。对开发者，这可能像 README 一样成为新基础设施，改变维护者和 AI 工具的协作边界。";
-  }
-
-  if (text.includes("tax agents")) {
-    return "表面上是用 Codex 构建会自我改进的税务 agent，背后矛盾是专业服务能自动化多少、责任又由谁承担。对普通读者和创业者，它展示 AI agent 正在进入高门槛知识流程，而不是只写代码。";
-  }
-
-  if (text.includes("endava")) {
-    return "表面上是 Endava 讲如何用 Codex 做 agentic organization，背后是企业转型到底靠买工具还是重写流程和管理方式。对管理者，它提示 AI 落地的难点可能是组织协作，而不是模型调用。";
+  if (/\b(security|incident|leak|breach|vulnerability)\b|安全|事故|泄露|漏洞/.test(text)) {
+    return `表面上是关于 ${title} 的安全风险，真正要讨论的是确认事实、影响范围、修复状态和仍待核验的信息。`;
   }
 
   if (item.sourceType === "global_search") {
     return "表面上是一条搜索发现的 AI 资讯线索，真正要讨论的是它是否代表了某个新场景正在升温。对编辑部来说，这类题只能先进入备选清单，后续必须回到原文核验事实和可写性。";
   }
 
-  return `表面上是关于 ${item.title} 的一条 AI 资讯，背后值得追问的是它改变了哪类人的工作流程、成本结构或决策方式。对读者来说，重点不是新闻本身，而是这类变化会不会进入自己的工具箱。`;
+  return categoryAngles[item.category];
 }
 
 function recommendedUseFor(

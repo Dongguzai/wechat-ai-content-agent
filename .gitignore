@@ -18,3 +18,7 @@ feedback/*.json
 !feedback/template.json
 inputs/manual-topic.md
 inputs/editorial-approval.json
+
+# Local regression artifacts
+reports/
+tmp/

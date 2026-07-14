@@ -6,6 +6,10 @@ import type { ArticleMeta } from "../types/article.js";
 import type { CoverPipelineResult, CoverResult, CoverReviewResult } from "../types/cover.js";
 import type { EditorialBrief } from "../types/editorial.js";
 import type { TopicFactPack } from "../types/factPack.js";
+import type { TopicProfile } from "../types/topicProfile.js";
+import type { ResearchPlan } from "../types/researchPlan.js";
+import type { SourceEvidence } from "../types/sourceEvidence.js";
+import type { EditorialPlan } from "../types/editorialPlan.js";
 import type {
   DailyPipelineArtifacts,
   DailyPipelineResult,
@@ -18,6 +22,10 @@ import type {
 } from "../types/news.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 import { buildTopicFactPack } from "./buildTopicFactPack.js";
+import { buildEditorialPlan } from "./buildEditorialPlan.js";
+import { buildResearchPlan } from "./buildResearchPlan.js";
+import { classifyTopicWithReport } from "./classifyTopic.js";
+import { collectSourceEvidence } from "./collectSourceEvidence.js";
 import { checkSourceHealthWithReport } from "./checkSourceHealth.js";
 import { collectNewsWithReport } from "./collectNews.js";
 import { generateCoverWithReport, reviewCover } from "./generateCover.js";
@@ -85,6 +93,14 @@ function createOutputFiles(outputDir: string): PipelineOutputFiles {
     topicSelectionReport: join(outputDir, "topic-selection-report.md"),
     editorialBrief: join(outputDir, "editorial-brief.md"),
     editorialBriefJson: join(outputDir, "editorial-brief.json"),
+    topicProfileJson: join(outputDir, "topic-profile.json"),
+    topicProfileReport: join(outputDir, "topic-profile-report.md"),
+    researchPlanJson: join(outputDir, "research-plan.json"),
+    researchPlanReport: join(outputDir, "research-plan-report.md"),
+    sourceEvidenceJson: join(outputDir, "source-evidence.json"),
+    sourceEvidenceReport: join(outputDir, "source-evidence-report.md"),
+    editorialPlanJson: join(outputDir, "editorial-plan.json"),
+    editorialPlanReport: join(outputDir, "editorial-plan.md"),
     topicFactPackJson: join(outputDir, "topic-fact-pack.json"),
     topicFactPackReport: join(outputDir, "topic-fact-pack.md"),
     article: join(outputDir, "article.md"),
@@ -145,6 +161,85 @@ function asEditorialApproval(input: DailyPipelineArtifacts["editorialApproval"])
         notes: input.notes
       }
     : undefined;
+}
+
+function requireDynamicArtifact<T extends { topicId: string }>(
+  value: T | undefined,
+  fileName: string,
+  expectedTopicId: string
+): T {
+  if (!value) {
+    throw new Error(
+      `Missing ${fileName}; run pnpm run:daily -- --from article to rebuild dynamic content artifacts before --from layout.`
+    );
+  }
+
+  if (value.topicId !== expectedTopicId) {
+    throw new Error(
+      `${fileName} topicId mismatch: expected ${expectedTopicId}, got ${value.topicId}. Re-run pnpm run:daily -- --from article to avoid cross-topic artifact reuse.`
+    );
+  }
+
+  return value;
+}
+
+function assertLayoutDynamicArtifacts(input: {
+  selectedTopic: SelectedTopic;
+  topicProfile?: TopicProfile;
+  researchPlan?: ResearchPlan;
+  sourceEvidence?: SourceEvidence;
+  editorialPlan?: EditorialPlan;
+  factPack: TopicFactPack;
+  articleMeta: ArticleMeta;
+}): {
+  topicProfile: TopicProfile;
+  researchPlan: ResearchPlan;
+  sourceEvidence: SourceEvidence;
+  editorialPlan: EditorialPlan;
+} {
+  const expectedTopicId = input.selectedTopic.selected.id;
+  const topicProfile = requireDynamicArtifact(
+    input.topicProfile,
+    "topic-profile.json",
+    expectedTopicId
+  );
+  const researchPlan = requireDynamicArtifact(
+    input.researchPlan,
+    "research-plan.json",
+    expectedTopicId
+  );
+  const sourceEvidence = requireDynamicArtifact(
+    input.sourceEvidence,
+    "source-evidence.json",
+    expectedTopicId
+  );
+  const editorialPlan = requireDynamicArtifact(
+    input.editorialPlan,
+    "editorial-plan.json",
+    expectedTopicId
+  );
+
+  if (input.factPack.topicId !== expectedTopicId) {
+    throw new Error(
+      `topic-fact-pack.json topicId mismatch: expected ${expectedTopicId}, got ${input.factPack.topicId}. Re-run pnpm run:daily -- --from article.`
+    );
+  }
+
+  if (
+    input.articleMeta.editorialPlan?.id &&
+    input.articleMeta.editorialPlan.id !== editorialPlan.id
+  ) {
+    throw new Error(
+      `article-meta.json editorialPlan.id mismatch: expected ${editorialPlan.id}, got ${input.articleMeta.editorialPlan.id}. Re-run pnpm run:daily -- --from article.`
+    );
+  }
+
+  return {
+    topicProfile,
+    researchPlan,
+    sourceEvidence,
+    editorialPlan
+  };
 }
 
 async function reuseExistingCoverIfAvailable(
@@ -290,6 +385,9 @@ function createDailyReport(input: ReportInput): string {
     `- Selected topic: ${selected?.title ?? "not selected"}`,
     `- Selected topic id: ${selected?.id ?? "none"}`,
     `- Selected source reliability: ${selected?.selection.sourceReliability ?? "unknown"}`,
+    `- Topic profile: ${artifacts.topicProfile ? `${artifacts.topicProfile.primaryDomain} / ${artifacts.topicProfile.recommendedContentMode}` : "not run"}`,
+    `- Research plan tasks: ${artifacts.researchPlan?.tasks.length ?? "not run"}`,
+    `- Source evidence items: ${artifacts.sourceEvidence?.items.length ?? "not run"}`,
     `- Editorial style read: ${artifacts.editorialStyle?.loaded ? "yes" : "no"}`,
     `- Feedback read: ${artifacts.editorialFeedback?.feedbackRead ? "yes" : "no"}`,
     `- Source health passed: ${artifacts.sourceHealth?.passed ? "yes" : "not checked"}`,
@@ -317,6 +415,9 @@ function createDailyReport(input: ReportInput): string {
     `- selected-topic.json: ${files.selectedTopic}`,
     `- editorial-brief.md: ${files.editorialBrief}`,
     `- editorial-brief.json: ${files.editorialBriefJson}`,
+    `- topic-profile.json: ${files.topicProfileJson}`,
+    `- research-plan.json: ${files.researchPlanJson}`,
+    `- source-evidence.json: ${files.sourceEvidenceJson}`,
     `- topic-fact-pack.json: ${files.topicFactPackJson}`,
     `- article.md: ${files.article}`,
     `- article-meta.json: ${files.articleMeta}`,
@@ -501,7 +602,39 @@ async function runArticleStage(input: {
     files.editorialBriefJson
   );
 
-  logger.info("1/7 buildTopicFactPack: verifying approved topic claims.");
+  logger.info("1/8 classifyTopic: building approved topic profile.");
+  const topicProfile = await classifyTopicWithReport({
+    outputDir,
+    topic: selectedTopic,
+    logger,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
+    writeOutputs: true,
+    now: input.now
+  });
+
+  logger.info("2/10 buildResearchPlan: planning topic-specific evidence tasks.");
+  const researchPlan = await buildResearchPlan({
+    outputDir,
+    topicProfile: topicProfile.profile,
+    logger,
+    writeOutputs: true,
+    now: input.now
+  });
+
+  logger.info("3/10 collectSourceEvidence: recording source metadata boundaries.");
+  const sourceEvidence = await collectSourceEvidence({
+    outputDir,
+    selectedTopic,
+    researchPlan: researchPlan.plan,
+    logger,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
+    writeOutputs: true,
+    now: input.now
+  });
+
+  logger.info("4/10 buildTopicFactPack: verifying approved topic claims.");
   const factPack = await buildTopicFactPack({
     outputDir,
     topic: selectedTopic,
@@ -510,11 +643,24 @@ async function runArticleStage(input: {
     now: input.now
   });
 
-  logger.info("2/7 writeArticle: writing with editorial approval notes.");
+  logger.info("5/11 buildEditorialPlan: planning article structure.");
+  const editorialPlan = await buildEditorialPlan({
+    outputDir,
+    topic: selectedTopic,
+    topicProfile: topicProfile.profile,
+    researchPlan: researchPlan.plan,
+    factPack: factPack.factPack,
+    logger,
+    writeOutputs: true,
+    now: input.now
+  });
+
+  logger.info("6/11 writeArticle: writing with editorial plan and approval notes.");
   const article = await writeArticleWithReport({
     outputDir,
     topic: selectedTopic,
     factPack: factPack.factPack,
+    editorialPlan: editorialPlan.plan,
     editorialStyle,
     editorialApproval: asEditorialApproval(editorialApproval),
     logger,
@@ -524,7 +670,7 @@ async function runArticleStage(input: {
     now: input.now
   });
 
-  logger.info("3/7 generateTitles: using approvedTitle as a checked reference.");
+  logger.info("7/11 generateTitles: using approvedTitle as a checked reference.");
   const titleGeneration = await generateTitlesWithReport({
     outputDir,
     articleMarkdown: article.article.markdown,
@@ -548,13 +694,14 @@ async function runArticleStage(input: {
   };
   const articleMetaForNextStages = titleGeneration.articleMeta;
 
-  logger.info("4/7 reviewArticle: auditing approved article.");
+  logger.info("8/11 reviewArticle: auditing approved article.");
   const articleReview = await reviewArticleWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
     articleMeta: articleMetaForNextStages,
     factPack: factPack.factPack,
     selectedTopic,
+    topicProfile: topicProfile.profile,
     logger,
     env: input.env,
     fetchImpl: input.fetchImpl,
@@ -562,7 +709,7 @@ async function runArticleStage(input: {
     now: input.now
   });
 
-  logger.info("5/7 cover: generating or reusing cover artifacts.");
+  logger.info("9/11 cover: generating or reusing cover artifacts.");
   const cover =
     (await reuseExistingCoverIfAvailable(outputDir, logger)) ??
     (await generateCoverWithReport({
@@ -578,7 +725,7 @@ async function runArticleStage(input: {
       now: input.now
     }));
 
-  logger.info("6/7 renderWechatHtml: creating WeChat HTML layout.");
+  logger.info("10/11 renderWechatHtml: creating WeChat HTML layout.");
   const wechatLayout = await renderWechatHtmlWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
@@ -591,7 +738,7 @@ async function runArticleStage(input: {
     now: input.now
   });
 
-  logger.info("7/7 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
+  logger.info("11/11 saveWechatDraft: creating mock WeChat draft dry-run outputs.");
   const wechatDraft = await saveWechatDraftWithReport({
     outputDir,
     articleMarkdown: articleForNextStages.markdown,
@@ -613,6 +760,10 @@ async function runArticleStage(input: {
     editorialFeedback,
     editorialBrief: existingBrief,
     editorialApproval,
+    topicProfile: topicProfile.profile,
+    researchPlan: researchPlan.plan,
+    sourceEvidence: sourceEvidence.evidence,
+    editorialPlan: editorialPlan.plan,
     topicFactPack: factPack.factPack,
     article: articleForNextStages,
     articleMeta: articleMetaForNextStages,
@@ -647,11 +798,25 @@ async function runLayoutStage(input: {
   approvalFile?: string;
 }): Promise<Omit<DailyPipelineResult, "durationMs">> {
   const { outputDir, files, logger } = input;
-  const [articleMarkdown, articleMeta, selectedTopic, factPack, cover] =
+  const [
+    articleMarkdown,
+    articleMeta,
+    selectedTopic,
+    topicProfile,
+    researchPlan,
+    sourceEvidence,
+    editorialPlan,
+    factPack,
+    cover
+  ] =
     await Promise.all([
       readFile(files.article, "utf8"),
       readJsonFile<ArticleMeta>(files.articleMeta),
       readJsonFile<SelectedTopic>(files.selectedTopic),
+      readOptionalJsonFile<TopicProfile>(files.topicProfileJson),
+      readOptionalJsonFile<ResearchPlan>(files.researchPlanJson),
+      readOptionalJsonFile<SourceEvidence>(files.sourceEvidenceJson),
+      readOptionalJsonFile<EditorialPlan>(files.editorialPlanJson),
       readJsonFile<TopicFactPack>(files.topicFactPackJson),
       readJsonFile<CoverResult>(files.cover)
     ]);
@@ -660,6 +825,15 @@ async function runLayoutStage(input: {
     loadEditorialFeedback({ logger }),
     loadEditorialApproval({ approvalFile: input.approvalFile, logger })
   ]);
+  const dynamicArtifacts = assertLayoutDynamicArtifacts({
+    selectedTopic,
+    topicProfile,
+    researchPlan,
+    sourceEvidence,
+    editorialPlan,
+    factPack,
+    articleMeta
+  });
 
   logger.info("1/4 reviewArticle: rechecking existing article artifacts.");
   const articleReview = await reviewArticleWithReport({
@@ -668,6 +842,7 @@ async function runLayoutStage(input: {
     articleMeta,
     factPack,
     selectedTopic,
+    topicProfile: dynamicArtifacts.topicProfile,
     logger,
     env: input.env,
     fetchImpl: input.fetchImpl,
@@ -717,6 +892,10 @@ async function runLayoutStage(input: {
     editorialStyle,
     editorialFeedback,
     editorialApproval: approval,
+    topicProfile: dynamicArtifacts.topicProfile,
+    researchPlan: dynamicArtifacts.researchPlan,
+    sourceEvidence: dynamicArtifacts.sourceEvidence,
+    editorialPlan: dynamicArtifacts.editorialPlan,
     topicFactPack: factPack,
     articleMeta,
     articleReview: articleReview.review,

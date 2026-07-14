@@ -196,7 +196,9 @@ test("writeArticleWithReport writes article outputs and obeys safety boundaries"
       assert.equal(article.includes(phrase), false, `forbidden phrase: ${phrase}`);
     }
 
-    const discussedThemes = ["开源", "工作流", "成本", "工具锁定"].filter((term) =>
+    assert.ok(meta.editorialPlan);
+    assert.ok(meta.editorialPlan.sectionClaimMap.length >= 3);
+    const discussedThemes = meta.editorialPlan.requiredThemes.filter((term) =>
       article.includes(term)
     );
     assert.ok(discussedThemes.length >= 3);
@@ -204,6 +206,7 @@ test("writeArticleWithReport writes article outputs and obeys safety boundaries"
     assert.match(report, /文章标题/);
     assert.match(report, /字数/);
     assert.match(report, /使用的 fact pack claim/);
+    assert.match(report, /Editorial Plan Section Claim Map/);
     assert.match(report, /避免的高风险表达/);
     assert.match(report, /1500 字限制/);
     assert.match(report, /阶段边界/);
@@ -573,7 +576,7 @@ test("writeArticleWithReport reports likely token truncation for malformed MiniM
   }
 });
 
-test("writeArticleWithReport writes article-writing-error when validation rejects model output", async () => {
+test("writeArticleWithReport repairs forbidden model wording and records validation attempts", async () => {
   const outputDir = await mkdtemp(join(tmpdir(), "article-writer-validation-fail-"));
   const topic = selectedTopicFixture();
 
@@ -596,9 +599,7 @@ test("writeArticleWithReport writes article-writing-error when validation reject
       now: new Date("2026-05-29T00:00:00.000Z")
     });
 
-    await assert.rejects(
-      () =>
-        writeArticleWithReport({
+    const result = await writeArticleWithReport({
           outputDir,
           topic,
           factPack: factPack.factPack,
@@ -620,7 +621,7 @@ test("writeArticleWithReport writes article-writing-error when validation reject
                 {
                   heading: "错误事实边界",
                   body:
-                    "Claude Code 必须花 $200 才能用。这个说法同时讨论开源、工作流、成本和工具锁定，但它仍然是禁止写法。"
+                    "这个案例已经证明 AI 工具会终结现有流程。这个说法同时讨论事实边界、读者影响和风险控制，但它仍然是禁止写法。"
                 }
               ]
             }),
@@ -630,20 +631,23 @@ test("writeArticleWithReport writes article-writing-error when validation reject
           }),
           logger: silentLogger,
           now: new Date("2026-05-29T00:00:00.000Z")
-        }),
-      /Article contains forbidden absolute wording/
-    );
+        });
 
-    await assertFileMissing(join(outputDir, "article-meta.json"));
-    const errorJson = JSON.parse(
-      await readFile(join(outputDir, "article-writing-error.json"), "utf8")
+    assert.doesNotMatch(result.article.markdown, /已经证明|终结/);
+    await access(join(outputDir, "article-meta.json"));
+    const attempt = JSON.parse(
+      await readFile(join(outputDir, "article-attempt-1.json"), "utf8")
     ) as Record<string, unknown>;
-    const errorReport = await readFile(join(outputDir, "article-writing-error.md"), "utf8");
-    assert.equal(errorJson.failedStep, "article-writer");
-    assert.equal(errorJson.model, "minimax-m3-test");
-    assert.match(String(errorJson.error), /forbidden absolute wording/);
-    assert.match(errorReport, /failedStep: article-writer/);
-    assert.match(errorReport, /Claude Code 必须花 \$200 才能用/);
+    const repair = JSON.parse(
+      await readFile(join(outputDir, "article-repair-1.json"), "utf8")
+    ) as Record<string, unknown>;
+    const validation = JSON.parse(
+      await readFile(join(outputDir, "article-validation.json"), "utf8")
+    ) as Record<string, unknown>;
+    assert.equal(attempt.passed, false);
+    assert.equal(repair.passed, true);
+    assert.equal(validation.passed, true);
+    await assertFileMissing(join(outputDir, "article-writing-error.json"));
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

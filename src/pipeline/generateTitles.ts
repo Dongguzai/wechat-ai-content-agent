@@ -79,10 +79,6 @@ export const FORBIDDEN_TITLE_TERMS = [
   "能力完全一样",
   "零成本",
   "没有任何成本",
-  "$200",
-  "200/month",
-  "200 美元",
-  "200美元",
   "确认发送",
   "立即发送",
   "群发"
@@ -121,7 +117,7 @@ function clampScore(value: number): number {
 }
 
 function isGenericFactPack(factPack: TopicFactPack): boolean {
-  return factPack.comparison.claudeCode.pricing.startsWith("不适用。");
+  return factPack.schemaVersion === "2.0";
 }
 
 function textWithoutTitle(markdown: string): string {
@@ -148,24 +144,173 @@ function replaceMarkdownTitle(markdown: string, title: string): string {
 }
 
 function keywordSet(value: string): Set<string> {
-  const keywords = [
-    "AI",
-    "编码代理",
-    "Claude Code",
-    "Goose",
-    "开源",
-    "工作流",
-    "成本",
-    "价格",
-    "工具锁定",
-    "开发者",
-    "团队",
-    "入口",
-    "基础设施",
-    "趋势"
-  ];
+  const keywords = titleKeywordUniverse(value);
 
   return new Set(keywords.filter((keyword) => value.includes(keyword)));
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function shortText(value: string | undefined, fallback: string, maxLength = 18): string {
+  const text = (value ?? fallback)
+    .replace(/[#*_`>\[\]()]/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  if (!text) {
+    return fallback;
+  }
+
+  return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+function titleKeywordUniverse(value: string): string[] {
+  const extractedTerms = value.match(/[\u4e00-\u9fa5A-Za-z0-9/.-]{2,16}/g) ?? [];
+
+  return unique([
+    "AI",
+    "模型",
+    "产品",
+    "工具",
+    "研究",
+    "政策",
+    "融资",
+    "并购",
+    "案例",
+    "事故",
+    "安全",
+    "价格",
+    "成本",
+    "benchmark",
+    "测试",
+    "指标",
+    "发布",
+    "更新",
+    "影响",
+    "边界",
+    "风险",
+    "开发者",
+    "团队",
+    "企业",
+    "普通人",
+    "创作者",
+    "工作流",
+    "流程",
+    "入口",
+    "趋势",
+    ...extractedTerms
+  ]);
+}
+
+function eventLabelFromMeta(articleMeta: ArticleMeta): string {
+  const themes = articleMeta.editorialPlan?.requiredThemes ?? [];
+  if (themes.includes("价格")) {
+    return "价格";
+  }
+  if (themes.includes("测试")) {
+    return "测试";
+  }
+  if (themes.includes("政策")) {
+    return "政策";
+  }
+  if (themes.includes("融资")) {
+    return "融资";
+  }
+  if (themes.includes("研究")) {
+    return "研究";
+  }
+  if (themes.includes("案例")) {
+    return "案例";
+  }
+  if (themes.includes("影响")) {
+    return "影响";
+  }
+  if (themes.includes("发布")) {
+    return "发布";
+  }
+
+  return themes[0] ?? "变化";
+}
+
+function primaryAudience(topic: SelectedTopic, articleMeta: ArticleMeta): string {
+  const source = [
+    topic.selected.editorial?.audienceFit,
+    articleMeta.articleThesis,
+    articleMeta.sourceTopic
+  ].join("\n");
+
+  if (/企业|团队|组织/.test(source)) {
+    return "团队";
+  }
+  if (/开发者|工程/.test(source)) {
+    return "开发者";
+  }
+  if (/创作者|内容/.test(source)) {
+    return "创作者";
+  }
+  if (/普通|用户/.test(source)) {
+    return "普通用户";
+  }
+
+  return "读者";
+}
+
+function claimTextForIds(factPack: TopicFactPack, claimIds: string[]): string {
+  const idSet = new Set(claimIds);
+  return factPack.claims
+    .filter((claim) => idSet.has(claim.id))
+    .map((claim) => `${claim.statement} ${claim.safeWording}`)
+    .join("\n");
+}
+
+function claimIdsForTitle(title: string, factPack: TopicFactPack): string[] {
+  const matches = factPack.claims
+    .filter((claim) => {
+      const claimText = `${claim.statement} ${claim.safeWording}`;
+      const terms = unique([
+        ...claimText.match(/[\u4e00-\u9fa5A-Za-z0-9/.-]{2,12}/g) ?? [],
+        ...claim.riskDimensions,
+        ...claim.requiredQualifiers
+      ]);
+      return terms.some((term) => title.includes(term));
+    })
+    .map((claim) => claim.id);
+
+  return matches.length > 0
+    ? unique(matches)
+    : factPack.claims.slice(0, 1).map((claim) => claim.id);
+}
+
+function matchedThemesForTitle(title: string, articleMeta: ArticleMeta): string[] {
+  return unique(
+    (articleMeta.editorialPlan?.requiredThemes ?? []).filter((theme) =>
+      title.includes(theme)
+    )
+  );
+}
+
+function titleContainsUnsupportedNumber(title: string, factPack: TopicFactPack): boolean {
+  const numbers = title.match(/\d+(?:\.\d+)?\s*(?:%|美元|美金|亿|万|倍|x|X|分|年|月|天|小时|分钟)?/g) ?? [];
+  if (numbers.length === 0) {
+    return false;
+  }
+
+  const claimText = factPack.claims
+    .map((claim) => `${claim.statement} ${claim.safeWording}`)
+    .join("\n");
+
+  return numbers.some((number) => !claimText.includes(number.trim()));
+}
+
+function titleContainsHardFactWithoutClaim(title: string, factPack: TopicFactPack): boolean {
+  const hardFactPattern = /(价格|融资|估值|benchmark|测试|指标|合规|法规|事故|泄露|收购|并购|正式发布|全面开放)/;
+  if (!hardFactPattern.test(title)) {
+    return false;
+  }
+
+  return claimIdsForTitle(title, factPack).length === 0;
 }
 
 function findForbiddenTerms(
@@ -173,17 +318,11 @@ function findForbiddenTerms(
   factPack: TopicFactPack
 ): string[] {
   const terms = new Set<string>(FORBIDDEN_TITLE_TERMS);
-  for (const unsafe of factPack.comparison.unsafeComparisonClaims) {
+  for (const unsafe of factPack.claims.flatMap((claim) => claim.forbiddenWording)) {
     terms.add(unsafe);
   }
 
   const violations = [...terms].filter((term) => title.includes(term));
-  if (
-    /Goose.{0,12}(免费|开源).{0,12}(平替|替代|取代).{0,12}Claude Code/.test(title) ||
-    /Claude Code.{0,12}(被)?Goose.{0,12}(平替|替代|取代)/.test(title)
-  ) {
-    violations.push("暗示 Goose 免费替代 Claude Code");
-  }
 
   if (
     isGenericFactPack(factPack) &&
@@ -197,90 +336,89 @@ function findForbiddenTerms(
 
 function createRawCandidates(
   topic: SelectedTopic,
-  approvedTitleReference?: string
+  input: {
+    factPack: TopicFactPack;
+    articleMeta: ArticleMeta;
+    articleMarkdown: string;
+    approvedTitleReference?: string;
+  }
 ): Array<{
   kind: TitleCandidateKind;
   title: string;
   rationale: string;
+  sourceClaimIds: string[];
+  matchedThemes: string[];
 }> {
-  const thesis = topic.selected.selection.articleThesis;
-  const isCodingAgentTopic = /Claude Code|Goose|编码代理|coding agent/i.test(
-    `${topic.selected.title} ${thesis}`
+  const { factPack, articleMeta, approvedTitleReference } = input;
+  const eventLabel = eventLabelFromMeta(articleMeta);
+  const audience = primaryAudience(topic, articleMeta);
+  const topicSignal = shortText(
+    topic.selected.titleZh || topic.selected.rawTitle || topic.selected.title,
+    "这条 AI 资讯",
+    16
   );
-
-  if (!isCodingAgentTopic) {
-    const genericCandidates: Array<{
-      kind: TitleCandidateKind;
-      title: string;
-      rationale: string;
-    }> = [
-      {
-        kind: "judgement",
-        title: approvedTitleReference || "AI 工具真正改变的，不是功能，而是工作流",
-        rationale: approvedTitleReference
-          ? "来自人工确认标题参考，仍会经过 forbidden terms 检查。"
-          : "用判断句压住观点，避免复述资讯。"
-      },
-      {
-        kind: "contrast",
-        title: "这条 AI 新闻的反差，不在表面热闹",
-        rationale: "保留反差感，但不放大未经核验的事实。"
-      },
-      {
-        kind: "trend",
-        title: "AI 应用开始从功能竞争转向流程竞争",
-        rationale: "把选题放入趋势判断。"
-      },
-      {
-        kind: "publicImpact",
-        title: "普通人会先感到变化，行业才会重新洗牌",
-        rationale: "强调影响人群，不写厂商口吻。"
-      },
-      {
-        kind: "techDiscussion",
-        title: "技术圈争论背后，是工作流入口之争",
-        rationale: "给技术读者留下讨论空间。"
-      }
-    ];
-    return genericCandidates;
-  }
-
-  return [
+  const thesisSignal = shortText(articleMeta.articleThesis, "事实边界", 12);
+  const firstSection = articleMeta.editorialPlan?.sectionClaimMap[0];
+  const secondSection = articleMeta.editorialPlan?.sectionClaimMap[1];
+  const firstClaimText = shortText(
+    claimTextForIds(factPack, firstSection?.allowedClaimIds ?? []),
+    "来源边界",
+    10
+  );
+  const secondClaimText = shortText(
+    claimTextForIds(factPack, secondSection?.allowedClaimIds ?? []),
+    eventLabel,
+    10
+  );
+  const rawCandidates = [
     {
-      kind: "judgement",
+      kind: "judgement" as const,
       title:
-        approvedTitleReference || "AI 编码代理真正卷到的，不是价格，而是工作流",
+        approvedTitleReference ||
+        `${topicSignal}，真正要看的是${thesisSignal}`,
       rationale: approvedTitleReference
-        ? "来自人工确认标题参考，仍会经过 forbidden terms 检查。"
-        : "判断明确，贴合文章中心论点，避免胜负式标题。"
+        ? "来自人工确认标题参考，仍会经过 forbidden terms 和 claim 支撑检查。"
+        : "用选题主题加中心论点生成判断型标题。"
     },
     {
-      kind: "contrast",
-      title: "Claude Code 和 Goose 的分歧，不止在价格",
-      rationale: "保留反差，但不写免费替代或能力等同。"
+      kind: "contrast" as const,
+      title: `${eventLabel}的反差，不在热闹而在${firstClaimText}`,
+      rationale: "用 EditorialPlan 的来源边界制造反差，不补写 fact pack 外事实。"
     },
     {
-      kind: "trend",
-      title: "编码代理开始从付费产品走向开源基础设施",
-      rationale: "把单条资讯放进行业趋势。"
+      kind: "trend" as const,
+      title: `AI ${eventLabel}开始考验${secondClaimText}`,
+      rationale: "把正文第二段的事实或核验问题转成趋势视角。"
     },
     {
-      kind: "publicImpact",
-      title: "AI 写代码变成账单后，团队要重新算成本",
-      rationale: "解释普通团队和非技术决策者会感到的变化。"
+      kind: "publicImpact" as const,
+      title: `${audience}最该关注的，是这次${eventLabel}边界`,
+      rationale: "根据选题受众生成影响型标题，避免厂商口吻。"
     },
     {
-      kind: "techDiscussion",
-      title: "开发者争论 Goose，背后是工作流入口之争",
-      rationale: "给技术圈讨论点，但不引向能力胜负。"
+      kind: "techDiscussion" as const,
+      title: `技术圈争论${eventLabel}，其实是在争${thesisSignal}`,
+      rationale: "保留讨论感，但落在文章 thesis 和动态主题上。"
     }
   ];
+
+  return rawCandidates.map((candidate) => ({
+    ...candidate,
+    title:
+      candidate.kind === "judgement" && approvedTitleReference
+        ? approvedTitleReference
+        : shortText(candidate.title, candidate.title, 30),
+    sourceClaimIds: claimIdsForTitle(candidate.title, factPack),
+    matchedThemes: matchedThemesForTitle(candidate.title, articleMeta)
+  }));
 }
 
 function scoreCandidate(input: {
   kind: TitleCandidateKind;
   title: string;
   rationale: string;
+  sourceClaimIds?: string[];
+  matchedThemes?: string[];
   articleMarkdown: string;
   articleMeta: ArticleMeta;
   factPack: TopicFactPack;
@@ -290,10 +428,18 @@ function scoreCandidate(input: {
     input;
   const titleLength = readableLength(title);
   const body = textWithoutTitle(articleMarkdown);
-  const titleKeywords = keywordSet(title);
+  const sourceClaimIds = input.sourceClaimIds ?? claimIdsForTitle(title, factPack);
+  const matchedThemes = input.matchedThemes ?? matchedThemesForTitle(title, articleMeta);
+  const titleKeywords = keywordSet(`${title} ${matchedThemes.join(" ")}`);
   const thesisKeywords = keywordSet(`${articleMeta.articleThesis} ${body}`);
   const overlap = [...titleKeywords].filter((keyword) => thesisKeywords.has(keyword));
-  const forbiddenTerms = findForbiddenTerms(title, factPack);
+  const unsupportedNumber = titleContainsUnsupportedNumber(title, factPack);
+  const hardFactWithoutClaim = titleContainsHardFactWithoutClaim(title, factPack);
+  const forbiddenTerms = [
+    ...findForbiddenTerms(title, factPack),
+    ...(unsupportedNumber ? ["标题数字缺少 claim 支撑"] : []),
+    ...(hardFactWithoutClaim ? ["标题强事实缺少 claim 支撑"] : [])
+  ];
   const clickbaitPenalty = /(震惊|炸了|史上|必看|封神|内幕|彻底|终结|碾压|吊打|全网都在)/.test(
     title
   )
@@ -308,7 +454,10 @@ function scoreCandidate(input: {
       (titleLength >= 14 && titleLength <= 28 ? 8 : -6)
   );
   const accuracyScore = clampScore(
-    96 - forbiddenTerms.length * 35 - (/\$|200/.test(title) ? 20 : 0)
+    96 -
+      forbiddenTerms.length * 35 -
+      (/\$|200/.test(title) ? 20 : 0) +
+      Math.min(sourceClaimIds.length, 3) * 3
   );
   const nonClickbaitScore = clampScore(
     100 - clickbaitPenalty - forbiddenTerms.length * 25 - (stricterFromFeedback ? 3 : 0)
@@ -320,7 +469,13 @@ function scoreCandidate(input: {
       (titleLength > 36 ? 20 : 0)
   );
   const thesisMatchScore = clampScore(
-    66 + overlap.length * 8 + (title.includes("工作流") ? 10 : 0)
+    64 +
+      overlap.length * 7 +
+      matchedThemes.length * 8 +
+      (articleMeta.editorialPlan?.contentMode &&
+      title.includes(eventLabelFromMeta(articleMeta))
+        ? 6
+        : 0)
   );
   const finalScore = clampScore(
     spreadScore * 0.2 +
@@ -335,6 +490,8 @@ function scoreCandidate(input: {
     kindLabel: candidateLabels[kind],
     title,
     rationale,
+    sourceClaimIds,
+    matchedThemes,
     spreadScore,
     accuracyScore,
     nonClickbaitScore,
@@ -409,6 +566,8 @@ function createReport(selection: TitleSelectionSummary): string {
     `- wechatFitScore: ${candidate.wechatFitScore}`,
     `- thesisMatchScore: ${candidate.thesisMatchScore}`,
     `- finalScore: ${candidate.finalScore}`,
+    `- sourceClaimIds: ${candidate.sourceClaimIds.join(", ") || "none"}`,
+    `- matchedThemes: ${candidate.matchedThemes.join(" / ") || "none"}`,
     `- violations: ${candidate.violations.length > 0 ? candidate.violations.join(" / ") : "none"}`,
     `- rationale: ${candidate.rationale}`,
     ""
@@ -460,7 +619,12 @@ export function generateTitleCandidates(input: {
 }): TitleCandidate[] {
   return createRawCandidates(
     input.topic,
-    input.editorialApproval?.approvedTitle
+    {
+      factPack: input.factPack,
+      articleMeta: input.articleMeta,
+      articleMarkdown: input.articleMarkdown,
+      approvedTitleReference: input.editorialApproval?.approvedTitle
+    }
   ).map((candidate) =>
     scoreCandidate({
       ...candidate,
@@ -485,7 +649,7 @@ function createTitleGeneratorSystemPrompt(): string {
     "中文内容放在 JSON 字段值里。",
     "必须遵守 fact pack 安全边界，不得标题党。",
     "通用资讯线索不得写成默认流程、已经落地、官方确认或成为标准。",
-    "不得写免费平替、完全替代、能力相同、零成本、发布、群发等 forbidden terms。"
+    "不得写免费平替、完全替代、能力相同、零成本、发布、群发等 forbidden terms；具体禁用表述以 fact pack 为准。"
   ].join("\n");
 }
 
@@ -526,6 +690,9 @@ function createTitleGeneratorUserPrompt(input: {
     "字段 type 必须使用 judgement, contrast, trend, publicImpact, techDiscussion 之一。",
     "每个候选必须包含 type、title、rationale、scores。",
     "finalSelectedTitle 必须存在，且必须是 candidates 中的一个 title。",
+    "标题必须围绕 article-meta.editorialPlan.requiredThemes 和正文中心论点。",
+    "如果标题出现数字、价格、benchmark、融资金额、监管义务、事故影响范围等强事实，必须能在 topic-fact-pack.claims 中找到对应支撑。",
+    "不要复用无关旧专题结构，不要强行写工作流、成本或开源，除非这些主题来自 editorialPlan 或正文。",
     "返回 JSON 结构：",
     titleGeneratorExpectedJsonShape,
     "",
@@ -715,15 +882,18 @@ async function generateTitleCandidatesWithMiniMax(input: {
   const rawCandidates = payload.candidates;
 
   return {
-    candidates: rawCandidates.map((candidate) =>
-      scoreCandidate({
+    candidates: rawCandidates.map((candidate) => {
+      const sourceClaimIds = claimIdsForTitle(candidate.title, input.factPack);
+      return scoreCandidate({
         ...candidate,
+        sourceClaimIds,
+        matchedThemes: matchedThemesForTitle(candidate.title, input.articleMeta),
         articleMarkdown: input.articleMarkdown,
         articleMeta: input.articleMeta,
         factPack: input.factPack,
         feedback: input.feedback
-      })
-    ),
+      });
+    }),
     llm: realLlmMetadata(completion, "real")
   };
 }

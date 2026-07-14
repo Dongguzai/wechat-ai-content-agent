@@ -212,27 +212,17 @@ function selectedTopicFixture(): SelectedTopic {
 
 function factPackFixture(): TopicFactPack {
   return {
+    schemaVersion: "2.0",
+    topicId: "fixture-workflow-entry",
     topicTitle: "AI coding agent workflow entry competition",
     generatedAt: "2026-05-29T00:00:00.000Z",
+    entities: [],
     sourceReliability: "medium",
+    sourceReliabilityReason: "测试夹具使用保守来源边界。",
+    claims: [],
+    unsupportedClaims: [],
+    conflictingClaims: [],
     verifiedClaims: [],
-    comparison: {
-      claudeCode: {
-        pricing: "订阅、API 和企业部署都会影响实际成本。",
-        positioning: "产品化编码代理入口。",
-        capabilities: ["项目级编码任务", "工具连接"],
-        sourceUrls: ["https://example.com/subscription-entry"]
-      },
-      goose: {
-        pricing: "工具本体可免费获取，但模型调用取决于外部供应商。",
-        positioning: "开源本地开发者代理工具。",
-        capabilities: ["本地运行", "可选模型"],
-        sourceUrls: ["https://example.com/open-toolchain"]
-      },
-      similarities: ["都面向开发者自动化。"],
-      differences: ["一个偏产品化入口，一个偏可控工具链。"],
-      unsafeComparisonClaims: ["能力等同或全量互换。"]
-    },
     safeWritingBoundary: [
       "只写工作流重叠和路径差异，不写绝对胜负。",
       "不写具体价格口号。"
@@ -240,7 +230,8 @@ function factPackFixture(): TopicFactPack {
     riskNotes: ["避免把媒体标题当成事实结论。"],
     recommendedFraming:
       "这不是简单的工具替换，而是 coding agent 正在从付费产品变成可控工作流基础设施的一次信号。",
-    articleAngleSuggestions: ["从工作流控制权解释 coding agent 竞争变化。"]
+    articleAngleSuggestions: ["从工作流控制权解释 coding agent 竞争变化。"],
+    sourceEvidenceIds: []
   };
 }
 

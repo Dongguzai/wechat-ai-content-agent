@@ -75,3 +75,19 @@ test("non-writer stages keep the shared completion token budget", () => {
 
   assert.equal(config.maxCompletionTokens, 2048);
 });
+
+test("topic-classifier supports stage-specific MiniMax config", () => {
+  const config = resolveLlmStageConfig("topic-classifier", {
+    LLM_PROVIDER: "minimax",
+    LLM_ENABLE_REAL_API: "true",
+    LLM_DRY_RUN: "false",
+    MINIMAX_MODEL: "minimax-m3-shared",
+    TOPIC_CLASSIFIER_PROVIDER: "minimax",
+    TOPIC_CLASSIFIER_MODEL: "minimax-topic",
+    TOPIC_CLASSIFIER_MAX_COMPLETION_TOKENS: "1024"
+  });
+
+  assert.equal(config.model, "minimax-topic");
+  assert.equal(config.mode, "real");
+  assert.equal(config.maxCompletionTokens, 1024);
+});

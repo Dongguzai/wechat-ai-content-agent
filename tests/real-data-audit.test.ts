@@ -109,38 +109,48 @@ function selectedTopicFixture(input: {
 }
 
 function factPackFixture(sourceUrls = realSourceUrls): TopicFactPack {
+  const claims = [0, 1, 2].map((index) => ({
+    id: `fixture-claim-${index + 1}`,
+    statement: `Verified production claim ${index + 1}`,
+    status: "verified" as const,
+    evidenceIds: [`fixture-evidence-${index + 1}`],
+    sourceUrls: sourceUrls[index] ? [sourceUrls[index]] : [],
+    confidence: 0.9,
+    safeWording: `Safe wording ${index + 1}`,
+    requiredQualifiers: ["据来源显示"],
+    forbiddenWording: [],
+    riskDimensions: ["source quality"]
+  }));
+
   return {
+    schemaVersion: "2.0",
+    topicId: "fixture-real-agent-workflow",
     topicTitle: "OpenAI ships a real AI agent workflow update",
     generatedAt: "2026-05-29T00:00:00.000Z",
+    entities: [],
     sourceReliability: "medium",
-    verifiedClaims: [0, 1, 2].map((index) => ({
-      claim: `Verified production claim ${index + 1}`,
-      status: "verified",
-      sourceUrls: sourceUrls[index] ? [sourceUrls[index]] : [],
-      safeWording: `Safe wording ${index + 1}`,
-      risk: "low"
+    sourceReliabilityReason: "测试夹具使用真实来源 URL。",
+    claims,
+    unsupportedClaims: [],
+    conflictingClaims: [],
+    verifiedClaims: claims.map((claim) => ({
+      id: claim.id,
+      claim: claim.statement,
+      status: claim.status,
+      sourceUrls: claim.sourceUrls,
+      safeWording: claim.safeWording,
+      risk: "low",
+      evidenceIds: claim.evidenceIds,
+      confidence: claim.confidence,
+      requiredQualifiers: claim.requiredQualifiers,
+      forbiddenWording: claim.forbiddenWording,
+      riskDimensions: claim.riskDimensions
     })),
-    comparison: {
-      claudeCode: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls
-      },
-      goose: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls
-      },
-      similarities: [],
-      differences: [],
-      unsafeComparisonClaims: []
-    },
     safeWritingBoundary: [],
     riskNotes: [],
     recommendedFraming: "Use verified sources only.",
-    articleAngleSuggestions: []
+    articleAngleSuggestions: [],
+    sourceEvidenceIds: claims.flatMap((claim) => claim.evidenceIds)
   };
 }
 

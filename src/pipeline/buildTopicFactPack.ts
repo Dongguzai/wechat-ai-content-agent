@@ -2,20 +2,31 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  FactPackClaim,
+  DynamicFactClaim,
   FactClaimStatus,
+  FactPackClaim,
+  FactRiskLevel,
   TopicFactPack,
   TopicFactPackOutputFiles,
   TopicFactPackResult
 } from "../types/factPack.js";
 import type { SelectedTopic, SourceReliability } from "../types/news.js";
+import type { ResearchPlan } from "../types/researchPlan.js";
+import type { SourceEvidence } from "../types/sourceEvidence.js";
+import type { TopicProfile } from "../types/topicProfile.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 
 export interface BuildTopicFactPackOptions {
   outputDir?: string;
   selectedTopicFile?: string;
   topicSelectionReportFile?: string;
+  topicProfileFile?: string;
+  researchPlanFile?: string;
+  sourceEvidenceFile?: string;
   topic?: SelectedTopic;
+  topicProfile?: TopicProfile;
+  researchPlan?: ResearchPlan;
+  sourceEvidence?: SourceEvidence;
   topicSelectionReport?: string;
   logger?: Logger;
   writeOutputs?: boolean;
@@ -25,21 +36,6 @@ export interface BuildTopicFactPackOptions {
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 
-const sourceUrls = {
-  selectedTopic:
-    "https://venturebeat.com/infrastructure/claude-code-costs-up-to-usd200-a-month-goose-does-the-same-thing-for-free",
-  claudePricing: "https://claude.com/pricing",
-  claudePlanHelp:
-    "https://support.claude.com/en/articles/11049762-choose-a-claude-plan",
-  claudeCodePlanHelp:
-    "https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan",
-  claudeCodeOverview: "https://code.claude.com/docs/en/overview",
-  claudeCodeCosts: "https://code.claude.com/docs/en/costs",
-  gooseGithub: "https://github.com/aaif-goose/goose",
-  gooseProviders: "https://goose-docs.ai/docs/getting-started/providers/",
-  gooseTips: "https://block.github.io/goose/docs/guides/tips/"
-} as const;
-
 function createOutputFiles(outputDir: string): TopicFactPackOutputFiles {
   return {
     topicFactPackJson: join(outputDir, "topic-fact-pack.json"),
@@ -47,9 +43,13 @@ function createOutputFiles(outputDir: string): TopicFactPackOutputFiles {
   };
 }
 
-async function readSelectedTopic(path: string): Promise<SelectedTopic> {
+async function readJsonFile<T>(path: string): Promise<T> {
   const content = await readFile(path, "utf8");
-  const parsed = JSON.parse(content) as unknown;
+  return JSON.parse(content) as T;
+}
+
+async function readSelectedTopic(path: string): Promise<SelectedTopic> {
+  const parsed = await readJsonFile<unknown>(path);
 
   if (
     !parsed ||
@@ -63,6 +63,14 @@ async function readSelectedTopic(path: string): Promise<SelectedTopic> {
   return parsed as SelectedTopic;
 }
 
+async function readOptionalJsonFile<T>(path: string): Promise<T | undefined> {
+  try {
+    return await readJsonFile<T>(path);
+  } catch {
+    return undefined;
+  }
+}
+
 async function readTopicSelectionReport(path: string): Promise<string> {
   return readFile(path, "utf8");
 }
@@ -71,50 +79,12 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function reliabilityForFactPack(topic: SelectedTopic): SourceReliability {
-  if (topic.selected.selection.sourceReliability === "low") {
-    return "low";
-  }
-
-  if (!isClaudeGooseTopic(topic)) {
-    return topic.selected.selection.sourceReliability === "high" ? "medium" : topic.selected.selection.sourceReliability;
-  }
-
-  const hasOfficialClaudeSources = [
-    sourceUrls.claudePricing,
-    sourceUrls.claudePlanHelp,
-    sourceUrls.claudeCodePlanHelp,
-    sourceUrls.claudeCodeOverview
-  ].every((url) => url.startsWith("https://"));
-  const hasOfficialGooseSources = [
-    sourceUrls.gooseGithub,
-    sourceUrls.gooseProviders
-  ].every((url) => url.startsWith("https://"));
-
-  return hasOfficialClaudeSources && hasOfficialGooseSources ? "medium" : "low";
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
-function topicText(topic: SelectedTopic): string {
-  const selected = topic.selected;
-  return [
-    selected.title,
-    selected.rawTitle,
-    selected.titleZh,
-    selected.summary,
-    selected.rawSummary,
-    selected.summaryZh,
-    selected.url,
-    selected.selection.articleThesis,
-    selected.selection.writingAngle
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .toLowerCase();
-}
-
-function isClaudeGooseTopic(topic: SelectedTopic): boolean {
-  const text = topicText(topic);
-  return text.includes("claude code") && text.includes("goose");
+function compact(values: Array<string | undefined>): string[] {
+  return values.map((value) => value?.trim() ?? "").filter(Boolean);
 }
 
 function currentTopicSourceUrls(topic: SelectedTopic): string[] {
@@ -122,319 +92,499 @@ function currentTopicSourceUrls(topic: SelectedTopic): string[] {
     topic.selected.url,
     ...(topic.selected.evidence ?? [])
       .map((item) => item.match(/https?:\/\/\S+/)?.[0]?.replace(/[),.;，。]+$/, "") ?? "")
-      .filter(Boolean)
+      .filter(Boolean),
+    ...(topic.selected.duplicateSources ?? []).map((item) => item.url)
   ];
 
-  return [...new Set(urls.filter((url) => /^https?:\/\//i.test(url)))];
+  return unique(urls.filter((url) => /^https?:\/\//i.test(url)));
 }
 
 function displayTitle(topic: SelectedTopic): string {
-  return topic.selected.titleZh || topic.selected.title || topic.selected.rawTitle || "当前 AI 资讯选题";
+  return (
+    topic.selected.titleZh ||
+    topic.selected.title ||
+    topic.selected.rawTitle ||
+    "当前 AI 资讯选题"
+  );
 }
 
 function originalTitle(topic: SelectedTopic): string {
-  return topic.selected.rawTitle || topic.selected.title || topic.selected.titleZh || "当前 AI 资讯";
+  return (
+    topic.selected.rawTitle ||
+    topic.selected.title ||
+    topic.selected.titleZh ||
+    "当前 AI 资讯"
+  );
 }
 
 function topicSummary(topic: SelectedTopic): string {
-  return topic.selected.summaryZh || topic.selected.summary || topic.selected.rawSummary || topic.selected.selection.publicInterest;
+  return (
+    topic.selected.summaryZh ||
+    topic.selected.summary ||
+    topic.selected.rawSummary ||
+    topic.selected.selection.publicInterest
+  );
 }
 
-function createGenericClaims(topic: SelectedTopic): FactPackClaim[] {
-  const urls = currentTopicSourceUrls(topic);
-  const title = originalTitle(topic);
-  const summary = topicSummary(topic);
-  const sourceLabel = topic.selected.sourceType === "global_search"
-    ? "搜索线索"
-    : topic.selected.sourceType === "rss"
-      ? "RSS 来源"
-      : "人工选题来源";
+function fallbackTopicProfile(topic: SelectedTopic, now: Date): TopicProfile {
+  const riskNotes = topic.selected.selection.riskNotes ?? [];
 
-  return [
-    {
-      claim: `当前选题来自 ${topic.selected.sourceName}：${title}。`,
-      status: "partially_verified",
-      sourceUrls: urls,
-      safeWording: `可以写成“${topic.selected.sourceName} 的一条${sourceLabel}显示，${title}”，但必须提醒读者具体发布时间、产品边界和指标口径仍需回到原文核验。`,
-      risk: topic.selected.sourceType === "global_search" ? "medium" : "low"
-    },
-    {
-      claim: summary,
-      status: "partially_verified",
-      sourceUrls: urls,
-      safeWording: `可以把该线索概括为“${summary}”，但不能把搜索摘要、译写摘要或媒体标题扩展成官方结论。`,
-      risk: "medium"
-    },
-    {
-      claim: topic.selected.selection.writingAngle,
-      status: "partially_verified",
-      sourceUrls: urls,
-      safeWording: `正文适合从“${topic.selected.selection.writingAngle}”切入，重点写它可能怎样影响开发者、产品团队或内容生产工作流。`,
-      risk: "medium"
-    },
-    {
-      claim: "该选题包含模型、智能体或开发者工作流相关信号。",
-      status: "partially_verified",
-      sourceUrls: urls,
-      safeWording: "可以讨论它释放出的产品和工作流信号，但不要写成已被官方完整证实的行业结论，也不要直接复述未经核验的夸张性能对比。",
-      risk: "medium"
-    }
-  ];
-}
-
-function createClaims(topic: SelectedTopic): FactPackClaim[] {
-  if (!isClaudeGooseTopic(topic)) {
-    return createGenericClaims(topic);
-  }
-
-  return [
-    {
-      claim: "媒体提到的两百美元级别月费对应 Claude Max 20x 个人套餐价格，而不是 Claude Code 的单独固定价格。",
-      status: "verified",
-      sourceUrls: [
-        sourceUrls.claudePricing,
-        sourceUrls.claudePlanHelp,
-        sourceUrls.claudeCodePlanHelp
-      ],
-      safeWording:
-        "Anthropic 官方页面列出 Max 20x 为两百美元级别月费；Claude Code 包含在 Pro/Max 等付费 Claude 计划中，因此应写成“高阶个人订阅方案可使用 Claude Code”，不能写成“Claude Code 必须花两百美元级别月费才能用”。",
-      risk: "medium"
-    },
-    {
-      claim: "Claude Code 可处理项目级编码任务，包括跨文件修改、测试、修 bug、Git/PR 和 MCP 工具连接。",
-      status: "verified",
-      sourceUrls: [sourceUrls.claudeCodeOverview],
-      safeWording:
-        "Claude Code 是 Anthropic 面向开发者的编码代理，可在项目中规划、修改代码、运行验证，并连接外部工具。",
-      risk: "low"
-    },
-    {
-      claim: "Claude Code 的成本不只一种形态：订阅计划、API token 消耗、团队/企业计划和额外用量都可能影响实际成本。",
-      status: "verified",
-      sourceUrls: [
-        sourceUrls.claudeCodeCosts,
-        sourceUrls.claudeCodePlanHelp,
-        sourceUrls.claudePricing
-      ],
-      safeWording:
-        "Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。",
-      risk: "medium"
-    },
-    {
-      claim: "Goose 是开源 AI agent，本体可免费获取和使用。",
-      status: "verified",
-      sourceUrls: [sourceUrls.gooseGithub, sourceUrls.gooseProviders],
-      safeWording:
-        "Goose 可安全表述为“免费开源的本地 AI agent/开发者代理工具”。",
-      risk: "low"
-    },
-    {
-      claim: "Goose 免费不等于零成本：使用 Anthropic、OpenAI、Google、Groq、OpenRouter 等模型时，可能需要 API Key、订阅或供应商侧费用。",
-      status: "verified",
-      sourceUrls: [sourceUrls.gooseProviders, sourceUrls.gooseGithub],
-      safeWording:
-        "更稳妥的说法是“Goose 本体免费开源，但模型调用费用取决于你接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用”。",
-      risk: "medium"
-    },
-    {
-      claim: "Claude Code 和 Goose 都可归入 coding agent / developer agent 范畴，能力存在重叠。",
-      status: "partially_verified",
-      sourceUrls: [
-        sourceUrls.claudeCodeOverview,
-        sourceUrls.gooseGithub,
-        sourceUrls.gooseTips
-      ],
-      safeWording:
-        "两者都面向开发者自动化，能覆盖代码理解、文件修改、命令执行或项目级任务的一部分场景；但产品形态、模型后端、权限治理、交互体验和成熟度不同。",
-      risk: "medium"
-    },
-    {
-      claim: "“Goose does the same thing as Claude Code”是过度绝对的说法。",
-      status: "unverified",
-      sourceUrls: [
-        sourceUrls.selectedTopic,
-        sourceUrls.claudeCodeOverview,
-        sourceUrls.gooseGithub
-      ],
-      safeWording:
-        "可以写“Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径”，不要写“能力完全一样”或“完全替代”。",
-      risk: "high"
-    }
-  ];
-}
-
-function createFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
-  if (!isClaudeGooseTopic(topic)) {
-    return createGenericFactPack(topic, now);
-  }
-
-  const factPack: TopicFactPack = {
-    topicTitle: topic.selected.title,
-    generatedAt: now.toISOString(),
-    sourceReliability: reliabilityForFactPack(topic),
-    verifiedClaims: createClaims(topic),
-    comparison: {
-      claudeCode: {
-        pricing:
-          "不是独立两百美元级别月费单品。Claude 官方价格页显示 Pro、Max 等订阅层级，帮助中心列出 Max 20x 为两百美元级别月费；Claude Code 包含在 Pro/Max 等付费计划中，也可在 API/PAYG 或团队/企业场景产生不同成本。",
-        positioning:
-          "Anthropic 的官方编码代理，面向项目级开发任务、代码修改、测试、Git/PR、MCP 工具连接和团队工作流。",
-        capabilities: [
-          "理解项目上下文并规划编码任务",
-          "跨文件写代码、修 bug、补测试",
-          "运行验证、处理 lint/test 失败",
-          "使用 Git 创建提交、分支和 PR",
-          "通过 MCP 连接设计文档、Issue、Slack、Jira 或自定义工具"
-        ],
-        sourceUrls: [
-          sourceUrls.claudePricing,
-          sourceUrls.claudePlanHelp,
-          sourceUrls.claudeCodePlanHelp,
-          sourceUrls.claudeCodeOverview,
-          sourceUrls.claudeCodeCosts
-        ]
-      },
-      goose: {
-        pricing:
-          "Goose 本体免费开源，但需要配置模型提供商。接入 Claude、OpenAI、Google、OpenRouter 等模型时，费用取决于对应提供商、API Key、订阅或免费层限制。",
-        positioning:
-          "AAIF/Linux Foundation 旗下的开源本地 AI agent，提供 Desktop、CLI 和 API，可用于代码、自动化、数据分析、写作等工作流。",
-        capabilities: [
-          "本地运行，提供桌面应用、CLI 和 API",
-          "支持多模型提供商和自定义 provider",
-          "可通过扩展/MCP 连接外部工具",
-          "可执行工程任务，如代码修改、命令运行、测试和自动化",
-          "允许用户选择监督模式和模型配置"
-        ],
-        sourceUrls: [
-          sourceUrls.gooseGithub,
-          sourceUrls.gooseProviders,
-          sourceUrls.gooseTips
-        ]
-      },
-      similarities: [
-        "都可以被放进 coding agent / developer agent 讨论框架。",
-        "都强调项目级任务处理，而不只是代码补全。",
-        "都涉及代码理解、文件修改、命令/工具调用和工作流自动化。",
-        "都需要用户关注权限、上下文、模型成本和执行安全。"
-      ],
-      differences: [
-        "Claude Code 是 Anthropic 官方产品，绑定 Claude 订阅、API 或企业部署路径；Goose 是开源本地 agent，可自选模型提供商。",
-        "Claude Code 的能力、模型和产品体验由 Anthropic 打包；Goose 的体验更依赖用户选择的模型、扩展和配置。",
-        "Claude Code 的费用主要来自 Claude 订阅/API/企业用量；Goose 本体免费，但底层模型调用可能收费。",
-        "Claude Code 更像付费产品化编码代理；Goose 更像可扩展、可自托管、可替换后端的开源 agent 基础设施。"
-      ],
-      unsafeComparisonClaims: [
-        "Goose 完全替代 Claude Code。",
-        "Goose 和 Claude Code 能力完全一样。",
-        "Goose 完全免费且没有任何成本。",
-        "Claude Code 必须花两百美元级别月费才能用。",
-        "只凭 VentureBeat 标题就断言两者做同一件事。"
-      ]
-    },
-    safeWritingBoundary: [
-      "可以写：Claude Max 20x 官方帮助中心列出两百美元级别月费，但这对应 Claude 订阅层级，不是 Claude Code 单独强制价格。",
-      "可以写：Claude Code 包含在 Pro/Max 等付费 Claude 计划中，且 API Key/PAYG 或企业部署可能产生不同成本。",
-      "可以写：Goose 是免费开源 AI agent，但调用外部 LLM 可能需要 API Key、订阅或按量付费。",
-      "可以写：两者在 coding agent 工作流上有重叠，但不能写成能力完全一致。",
-      "可以写：这件事反映 coding agent 从单一付费产品扩散到开源基础设施的趋势信号。"
-    ],
-    riskNotes: [
-      "价格信息会变，下一阶段写作前仍应以 Claude 官方价格页和帮助中心为准。",
-      "VentureBeat 标题是选题线索，不能替代 Anthropic 或 Goose 官方来源。",
-      "Goose 免费属性只适用于工具本体和开源许可，不覆盖模型供应商成本。",
-      "“does the same thing”属于标题化概括，正文必须降级为“部分工作流重叠”。",
-      "不要写能力评测结论，除非另有实测或第三方 benchmark 支撑。"
-    ],
-    recommendedFraming:
-      "这不是简单的免费替代高价工具，而是 coding agent 正在从付费产品变成开源基础设施的一次信号。",
-    articleAngleSuggestions: [
-      "从“价格对比”转向“工作流控制权”：为什么开发者开始关心开源 coding agent。",
-      "从“免费”转向“总成本”：工具本体、模型调用、配置维护和安全治理分别花在哪里。",
-      "从“同类工具”转向“生态路径”：Claude Code 代表产品化闭环，Goose 代表可替换模型和开源扩展。",
-      "从“替代”转向“组合”：团队可能用开源 agent 做试点和成本对冲，而非立刻放弃付费工具。"
-    ]
+  return {
+    schemaVersion: "1.0",
+    id: `topic-profile-${topic.selected.id}`,
+    topicId: topic.selected.id,
+    primaryDomain: topic.selected.category === "funding" ? "business" : topic.selected.category,
+    secondaryDomains: [],
+    eventTypes: ["opinion"],
+    entities: [{ name: topic.selected.sourceName, type: "source" }],
+    targetAudiences: ["普通 AI 关注者"],
+    readerQuestions: ["这件事是否有可靠来源？"],
+    evidenceNeeds: ["选题原始 URL"],
+    riskDimensions: riskNotes.length > 0
+      ? riskNotes
+      : ["来源可靠性", "事实边界"],
+    recommendedContentMode: "news_analysis",
+    confidence: 0.3,
+    classificationReason: "未找到 topic-profile.json，使用保守 fallback。",
+    generatedAt: now.toISOString()
   };
-
-  if (factPack.sourceReliability === "low") {
-    throw new Error("Topic fact pack sourceReliability is low; stop before writing.");
-  }
-
-  return factPack;
 }
 
-function createGenericFactPack(topic: SelectedTopic, now: Date): TopicFactPack {
+function fallbackResearchPlan(profile: TopicProfile, now: Date): ResearchPlan {
+  return {
+    schemaVersion: "1.0",
+    id: `research-plan-${profile.topicId}`,
+    topicId: profile.topicId,
+    primaryDomain: profile.primaryDomain,
+    eventTypes: profile.eventTypes,
+    riskDimensions: profile.riskDimensions,
+    policyRefs: [],
+    tasks: [
+      {
+        id: "research-task-source-boundary",
+        question: "哪些来源可以支持事实，哪些只能作为线索？",
+        expectedEvidence: profile.evidenceNeeds,
+        priority: "high",
+        relatedEventTypes: profile.eventTypes,
+        relatedRiskDimensions: profile.riskDimensions,
+        policyIds: []
+      }
+    ],
+    sourcePriorities: ["选题原始 URL", "官方公告或原文", "搜索摘要只能作为 search_lead"],
+    stopConditions: [
+      "缺少原始 URL 时停止进入 verified fact pack。",
+      "只有 search_lead 时不得生成 verified claim。"
+    ],
+    generatedAt: now.toISOString()
+  };
+}
+
+function fallbackSourceEvidence(
+  topic: SelectedTopic,
+  now: Date
+): SourceEvidence {
   const urls = currentTopicSourceUrls(topic);
-  const title = displayTitle(topic);
-  const rawTitle = originalTitle(topic);
-  const sourceRisk =
-    topic.selected.sourceType === "global_search"
-      ? "这条选题来自 global_search，搜索摘要只能作为线索，正文不能把它当确定事实。"
-      : "正文仍需回到原始来源确认发布时间、产品边界和指标口径。";
+
+  return {
+    schemaVersion: "1.0",
+    id: `source-evidence-${topic.selected.id}`,
+    topicId: topic.selected.id,
+    items: urls.map((url, index) => ({
+      id: `source-evidence-${index + 1}`,
+      topicId: topic.selected.id,
+      url,
+      title: displayTitle(topic),
+      sourceName: topic.selected.sourceName,
+      kind: topic.selected.sourceType === "global_search" ? "search_lead" : "original_url",
+      status: topic.selected.sourceType === "global_search" ? "lead_only" : "not_fetched",
+      extractionStatus: "metadata_only",
+      evidenceSnippets: [],
+      supportsTaskIds: [],
+      reliability: topic.selected.sourceType === "global_search" ? "low" : "medium",
+      usableAsEvidence: false,
+      rejectionReason: "未找到 source-evidence.json，使用来源元数据 fallback。",
+      canSupportVerifiedClaim: false,
+      evidenceUse: topic.selected.sourceType === "global_search" ? "lead_only" : "primary",
+      unavailableReason: "未找到 source-evidence.json，使用来源元数据 fallback。",
+      notes: ["未伪造网页抓取结果。"],
+      policyIds: [],
+      collectedAt: now.toISOString()
+    })),
+    unsupportedReasons: [
+      "未找到 source-evidence.json。",
+      "当前 fact pack 只使用来源元数据，不能自动生成 verified claim。"
+    ],
+    collectionMode: "metadata_only",
+    generatedAt: now.toISOString()
+  };
+}
+
+function reliabilityForFactPack(input: {
+  topic: SelectedTopic;
+  evidence: SourceEvidence;
+}): SourceReliability {
+  if (input.topic.selected.selection.sourceReliability === "low") {
+    return "low";
+  }
+
+  if (input.evidence.items.length === 0) {
+    return "low";
+  }
+
+  if (input.evidence.items.every((item) => item.kind === "search_lead")) {
+    return "medium";
+  }
+
+  if (!input.evidence.items.some((item) => item.usableAsEvidence)) {
+    return "medium";
+  }
+
+  return input.topic.selected.selection.sourceReliability === "high"
+    ? "medium"
+    : input.topic.selected.selection.sourceReliability;
+}
+
+function reliabilityReason(reliability: SourceReliability, evidence: SourceEvidence): string {
+  if (reliability === "low") {
+    return "缺少可用于事实包的可靠来源元数据。";
+  }
+
+  if (evidence.collectionMode === "metadata_only") {
+    return "当前仅记录来源元数据，未执行网页抓取或正文核验，因此不生成 verified claim。";
+  }
+
+  const usableCount = evidence.items.filter((item) => item.usableAsEvidence).length;
+  return `来源可用于建立事实边界；${usableCount} 个来源提供了可用正文片段。`;
+}
+
+function riskForStatus(status: FactClaimStatus): FactRiskLevel {
+  if (status === "verified") {
+    return "low";
+  }
+  if (status === "partially_verified") {
+    return "medium";
+  }
+  return "high";
+}
+
+function claimStatusFor(input: {
+  evidenceIds: string[];
+  evidenceSnippetIds: string[];
+  statement: string;
+  evidence: SourceEvidence;
+}): FactClaimStatus {
+  if (input.evidenceIds.length === 0) {
+    return "unverified";
+  }
+
+  const items = input.evidence.items.filter((item) => input.evidenceIds.includes(item.id));
+  const snippets = items.flatMap((item) =>
+    item.evidenceSnippets.filter((snippet) => input.evidenceSnippetIds.includes(snippet.id))
+  );
+  const statementNumbers = numbersInText(input.statement);
+  const snippetsText = snippets.map((snippet) => snippet.text).join(" ");
+  const numbersSupported = statementNumbers.every((number) => snippetsText.includes(number));
+
+  if (
+    items.length > 0 &&
+    snippets.length > 0 &&
+    numbersSupported &&
+    items.every((item) => item.usableAsEvidence && item.canSupportVerifiedClaim)
+  ) {
+    return "verified";
+  }
+  if (items.length > 0 && items.every((item) => item.kind === "search_lead")) {
+    return "unverified";
+  }
+
+  return "partially_verified";
+}
+
+function numbersInText(value: string | undefined): string[] {
+  return unique((value ?? "").match(/\d+(?:[.,]\d+)?%?|\$?\d+(?:[.,]\d+)?/g) ?? []);
+}
+
+function supportForEvidence(input: {
+  evidence: SourceEvidence;
+  taskId?: string;
+}): { evidenceIds: string[]; evidenceSnippetIds: string[] } {
+  const usableItems = input.evidence.items.filter((item) => item.usableAsEvidence);
+  const selectedItems = input.taskId
+    ? usableItems.filter((item) =>
+        item.evidenceSnippets.some((snippet) => snippet.supportsTaskIds.includes(input.taskId!))
+      )
+    : usableItems;
+  const items = selectedItems.length > 0 ? selectedItems : usableItems;
+
+  return {
+    evidenceIds: items.map((item) => item.id),
+    evidenceSnippetIds: items.flatMap((item) =>
+      item.evidenceSnippets
+        .filter((snippet) => !input.taskId || snippet.supportsTaskIds.includes(input.taskId))
+        .map((snippet) => snippet.id)
+    )
+  };
+}
+
+function forbiddenWordingFor(profile: TopicProfile): string[] {
+  const terms = [
+    "已经证明",
+    "全面领先",
+    "碾压",
+    "终结",
+    "唯一选择",
+    "完全替代",
+    "零成本",
+    "官方确认所有细节"
+  ];
+
+  if (profile.eventTypes.includes("pricing")) {
+    terms.push("永久免费", "没有任何成本");
+  }
+  if (profile.eventTypes.includes("benchmark")) {
+    terms.push("最好", "第一", "全面领先");
+  }
+  if (profile.eventTypes.includes("regulation")) {
+    terms.push("所有地区都必须", "已经违法");
+  }
+
+  return unique(terms);
+}
+
+function createClaim(input: {
+  id: string;
+  statement: string;
+  evidenceIds: string[];
+  evidenceSnippetIds: string[];
+  sourceUrls: string[];
+  evidence: SourceEvidence;
+  safeWording: string;
+  requiredQualifiers: string[];
+  forbiddenWording: string[];
+  riskDimensions: string[];
+  confidence?: number;
+}): DynamicFactClaim {
+  const status = claimStatusFor({
+    evidenceIds: input.evidenceIds,
+    evidenceSnippetIds: input.evidenceSnippetIds,
+    statement: input.statement,
+    evidence: input.evidence
+  });
+
+  return {
+    id: input.id,
+    statement: input.statement,
+    status,
+    evidenceIds: input.evidenceIds,
+    evidenceSnippetIds: input.evidenceSnippetIds,
+    sourceUrls: input.sourceUrls,
+    confidence:
+      input.confidence ??
+      (status === "verified" ? 0.9 : status === "partially_verified" ? 0.55 : 0.25),
+    safeWording: input.safeWording,
+    requiredQualifiers: input.requiredQualifiers,
+    forbiddenWording: input.forbiddenWording,
+    riskDimensions: input.riskDimensions
+  };
+}
+
+function sourceUrlsForEvidence(evidence: SourceEvidence, evidenceIds: string[]): string[] {
+  return evidence.items
+    .filter((item) => evidenceIds.includes(item.id))
+    .map((item) => item.url);
+}
+
+function createClaims(input: {
+  topic: SelectedTopic;
+  profile: TopicProfile;
+  plan: ResearchPlan;
+  evidence: SourceEvidence;
+}): DynamicFactClaim[] {
+  const genericSupport = supportForEvidence({ evidence: input.evidence });
+  const fallbackEvidenceIds = genericSupport.evidenceIds.length > 0
+    ? genericSupport.evidenceIds
+    : input.evidence.items.map((item) => item.id);
+  const sourceUrls = sourceUrlsForEvidence(input.evidence, fallbackEvidenceIds);
+  const forbidden = forbiddenWordingFor(input.profile);
+  const sourceLabel =
+    input.topic.selected.sourceType === "global_search"
+      ? "搜索线索"
+      : input.topic.selected.sourceType === "rss"
+        ? "RSS 来源"
+        : "人工选题来源";
+  const title = originalTitle(input.topic);
+  const summary = topicSummary(input.topic);
+  const claims = [
+    createClaim({
+      id: "claim-source-topic",
+      statement: `当前选题来自 ${input.topic.selected.sourceName}：${title}。`,
+      evidenceIds: fallbackEvidenceIds,
+      evidenceSnippetIds: genericSupport.evidenceSnippetIds,
+      sourceUrls,
+      evidence: input.evidence,
+      safeWording: `可以写成“${input.topic.selected.sourceName} 的一条${sourceLabel}显示，${title}”，但必须说明当前事实边界仍需回到原始来源核验。`,
+      requiredQualifiers: ["据来源显示", "仍需核验"],
+      forbiddenWording: forbidden,
+      riskDimensions: ["来源可靠性", ...input.profile.riskDimensions]
+    }),
+    createClaim({
+      id: "claim-topic-summary",
+      statement: summary,
+      evidenceIds: fallbackEvidenceIds,
+      evidenceSnippetIds: genericSupport.evidenceSnippetIds,
+      sourceUrls,
+      evidence: input.evidence,
+      safeWording: `可以概括为“${summary}”，但不能把摘要扩展成官方结论或已验证事实。`,
+      requiredQualifiers: ["可以概括为", "据目前来源"],
+      forbiddenWording: forbidden,
+      riskDimensions: input.profile.riskDimensions
+    }),
+    createClaim({
+      id: "claim-editorial-angle",
+      statement: input.topic.selected.selection.writingAngle,
+      evidenceIds: fallbackEvidenceIds,
+      evidenceSnippetIds: genericSupport.evidenceSnippetIds,
+      sourceUrls,
+      evidence: input.evidence,
+      safeWording: `正文适合从“${input.topic.selected.selection.writingAngle}”切入，但该角度属于编辑策略，不是事实本身。`,
+      requiredQualifiers: ["适合观察", "可以从这个角度分析"],
+      forbiddenWording: forbidden,
+      riskDimensions: ["编辑判断", ...input.profile.riskDimensions]
+    })
+  ];
+
+  for (const task of input.plan.tasks.filter((task) => task.id !== "research-task-source-boundary")) {
+    const taskSupport = supportForEvidence({ evidence: input.evidence, taskId: task.id });
+    const taskEvidenceIds = taskSupport.evidenceIds.length > 0
+      ? taskSupport.evidenceIds
+      : fallbackEvidenceIds;
+    claims.push(
+      createClaim({
+        id: `claim-${task.id.replace(/^research-task-/, "")}`,
+        statement: task.question,
+        evidenceIds: taskEvidenceIds,
+        evidenceSnippetIds: taskSupport.evidenceSnippetIds,
+        sourceUrls: sourceUrlsForEvidence(input.evidence, taskEvidenceIds),
+        evidence: input.evidence,
+        safeWording: `写作前需要回答：“${task.question}” 需要的证据包括 ${task.expectedEvidence.join("、")}。当前阶段只能把它作为事实边界和核验清单。`,
+        requiredQualifiers: ["需要核验", "当前阶段不能直接断言"],
+        forbiddenWording: forbidden,
+        riskDimensions: task.relatedRiskDimensions.length > 0
+          ? task.relatedRiskDimensions
+          : input.profile.riskDimensions,
+        confidence: 0.45
+      })
+    );
+  }
+
+  return claims;
+}
+
+function compatibilityClaims(claims: DynamicFactClaim[]): FactPackClaim[] {
+  return claims.map((claim) => ({
+    id: claim.id,
+    claim: claim.statement,
+    status: claim.status,
+    sourceUrls: claim.sourceUrls,
+    safeWording: claim.safeWording,
+    risk: riskForStatus(claim.status),
+    evidenceIds: claim.evidenceIds,
+    evidenceSnippetIds: claim.evidenceSnippetIds,
+    confidence: claim.confidence,
+    requiredQualifiers: claim.requiredQualifiers,
+    forbiddenWording: claim.forbiddenWording,
+    riskDimensions: claim.riskDimensions
+  }));
+}
+
+function safeWritingBoundaryFor(input: {
+  topic: SelectedTopic;
+  profile: TopicProfile;
+  evidence: SourceEvidence;
+}): string[] {
+  const title = originalTitle(input.topic);
+  const boundaries = [
+    `可以写：${input.topic.selected.sourceName} 的来源显示，${title}。`,
+    `必须写清：本选题主要领域为 ${input.profile.primaryDomain}，事件类型为 ${input.profile.eventTypes.join(" / ")}。`,
+    "必须区分原始来源事实、搜索线索、编辑概括和趋势判断。",
+    "不能写：搜索摘要或中文化摘要已经证明未经核验的结论。",
+    "不能写：FactPack 外的数字、价格、benchmark 结果、融资金额、政策义务或事故范围。"
+  ];
+
+  if (input.evidence.items.every((item) => item.kind === "search_lead")) {
+    boundaries.push("当前只有 search_lead，不能生成 verified claim，也不能把线索当作官方事实。");
+  }
+
+  return boundaries;
+}
+
+function riskNotesFor(input: {
+  topic: SelectedTopic;
+  profile: TopicProfile;
+  evidence: SourceEvidence;
+}): string[] {
+  const topicRiskNotes = input.topic.selected.selection.riskNotes ?? [];
+
+  return unique([
+    ...input.profile.riskDimensions.map((risk) => `风险维度：${risk}`),
+    ...input.evidence.unsupportedReasons,
+    ...topicRiskNotes,
+    "标题、摘要和中文化改写只用于编辑判断，不能替代原文事实。",
+    "涉及数字、价格、benchmark、融资、法规义务或事故范围时必须等待可用证据。"
+  ]);
+}
+
+function recommendedFramingFor(topic: SelectedTopic, profile: TopicProfile): string {
+  return (
+    topic.selected.selection.writingAngle ||
+    `从 ${profile.primaryDomain} / ${profile.eventTypes.join(" / ")} 角度解释这条 AI 资讯的事实边界和读者影响。`
+  );
+}
+
+function articleAnglesFor(input: {
+  topic: SelectedTopic;
+  profile: TopicProfile;
+  plan: ResearchPlan;
+}): string[] {
+  const baseAngles = [
+    input.topic.selected.selection.writingAngle,
+    `从“${input.profile.recommendedContentMode}”模式切入，先交代事实边界，再解释影响。`,
+    `从读者问题切入：${input.profile.readerQuestions[0] ?? "这件事为什么重要？"}`,
+    `从核验任务切入：${input.plan.tasks[0]?.question ?? "哪些事实还不能确定？"}`
+  ];
+
+  return unique(compact(baseAngles));
+}
+
+function createFactPack(input: {
+  topic: SelectedTopic;
+  profile: TopicProfile;
+  plan: ResearchPlan;
+  evidence: SourceEvidence;
+  now: Date;
+}): TopicFactPack {
+  const sourceReliability = reliabilityForFactPack({
+    topic: input.topic,
+    evidence: input.evidence
+  });
+  const claims = createClaims(input);
   const factPack: TopicFactPack = {
-    topicTitle: title,
-    generatedAt: now.toISOString(),
-    sourceReliability: reliabilityForFactPack(topic),
-    verifiedClaims: createGenericClaims(topic),
-    comparison: {
-      claudeCode: {
-        pricing: "不适用。本选题不是 Claude Code / Goose 价格对比专题。",
-        positioning: `${topic.selected.sourceName} 的当前 AI 资讯线索：${rawTitle}`,
-        capabilities: [
-          topic.selected.selection.technicalSignificance,
-          topic.selected.selection.businessImpact,
-          topic.selected.selection.predictedImpact
-        ].filter(Boolean),
-        sourceUrls: urls
-      },
-      goose: {
-        pricing: "不适用。本选题不涉及 Goose 定价。",
-        positioning: "作为对照维度，可关注该线索对智能体工作流、模型能力或开发者工具生态的影响。",
-        capabilities: [
-          "观察它是否改变开发者或产品团队的默认工作流。",
-          "区分来源声称、搜索摘要和可核验事实。",
-          "避免把单条资讯写成行业定论。"
-        ],
-        sourceUrls: urls
-      },
-      similarities: [
-        "都应围绕开发者工作流、模型能力或产品落地影响展开。",
-        "都需要区分原始来源事实和编辑概括。",
-        "都不能把未经核验的指标或对比写成确定结论。"
-      ],
-      differences: [
-        "当前选题应服务于所选来源，而不是复用旧专题事实。",
-        "当前选题的风险在于来源和指标口径核验，不是 Claude/Goose 价格比较。",
-        "如果来源是搜索线索，正文需要显式降低确定性。"
-      ],
-      unsafeComparisonClaims: [
-        "把搜索摘要当作官方发布。",
-        "把单篇资讯中的性能数字写成无条件事实。",
-        "把“接近”“追平”“超过”等标题化表达写成已证实结论。",
-        "脱离当前来源，复用无关产品或旧专题事实。"
-      ]
-    },
-    safeWritingBoundary: [
-      `可以写：${topic.selected.sourceName} 的线索显示，${rawTitle}。`,
-      "可以写：这类更新值得从智能体工作流、开发者工具链和产品落地角度观察。",
-      "必须写清：具体发布时间、指标口径和产品边界需要回到原文核验。",
-      "不能写：搜索摘要已经证明某模型或产品全面追平、超过另一个未核验对象。"
-    ],
-    riskNotes: [
-      sourceRisk,
-      "标题、摘要和中文化改写只用于编辑判断，不能替代原文事实。",
-      "涉及参数规模、任务解决率、幻觉率、上下文长度、benchmark 或竞品对比时必须使用谨慎表达。",
-      "如果原文不是官方来源，正文应避免使用“官方确认”“已经证明”等确定性措辞。"
-    ],
-    recommendedFraming:
-      topic.selected.selection.writingAngle ||
-      "从这条 AI 资讯看智能体能力更新对开发者工作流的影响。",
-    articleAngleSuggestions: [
-      topic.selected.selection.writingAngle,
-      "从“产品更新”转向“工作流影响”：它会改变谁的日常流程。",
-      "从“能力数字”转向“可信边界”：哪些指标需要回到原文核验。",
-      "从“模型热闹”转向“落地场景”：开发者和团队该观察什么。"
-    ].filter(Boolean)
+    schemaVersion: "2.0",
+    topicId: input.topic.selected.id,
+    topicTitle: displayTitle(input.topic),
+    generatedAt: input.now.toISOString(),
+    entities: input.profile.entities,
+    sourceReliability,
+    sourceReliabilityReason: reliabilityReason(sourceReliability, input.evidence),
+    claims,
+    unsupportedClaims: claims.filter((claim) => claim.status === "unverified"),
+    conflictingClaims: claims.filter((claim) => claim.status === "conflicting"),
+    verifiedClaims: compatibilityClaims(claims),
+    safeWritingBoundary: safeWritingBoundaryFor(input),
+    riskNotes: riskNotesFor(input),
+    recommendedFraming: recommendedFramingFor(input.topic, input.profile),
+    articleAngleSuggestions: articleAnglesFor(input),
+    sourceEvidenceIds: input.evidence.items.map((item) => item.id)
   };
 
   if (factPack.sourceReliability === "low") {
@@ -448,13 +598,14 @@ function statusHeading(status: FactClaimStatus): string {
   const headings: Record<FactClaimStatus, string> = {
     verified: "已核验事实",
     partially_verified: "部分核验事实",
+    conflicting: "冲突事实",
     unverified: "未核验或高风险事实"
   };
 
   return headings[status];
 }
 
-function claimLines(claims: FactPackClaim[], status: FactClaimStatus): string[] {
+function claimLines(claims: DynamicFactClaim[], status: FactClaimStatus): string[] {
   const filtered = claims.filter((claim) => claim.status === status);
 
   if (filtered.length === 0) {
@@ -463,16 +614,22 @@ function claimLines(claims: FactPackClaim[], status: FactClaimStatus): string[] 
 
   return filtered.map((claim) => {
     const urls = claim.sourceUrls.map((url) => `<${url}>`).join(", ");
-    return `- ${claim.claim}\n  - status: ${claim.status}\n  - risk: ${claim.risk}\n  - safeWording: ${claim.safeWording}\n  - sources: ${urls}`;
+    return [
+      `- ${claim.id}: ${claim.statement}`,
+      `  - status: ${claim.status}`,
+      `  - confidence: ${claim.confidence}`,
+      `  - evidenceIds: ${claim.evidenceIds.join(", ") || "none"}`,
+      `  - safeWording: ${claim.safeWording}`,
+      `  - requiredQualifiers: ${claim.requiredQualifiers.join(" / ") || "none"}`,
+      `  - forbiddenWording: ${claim.forbiddenWording.join(" / ") || "none"}`,
+      `  - sources: ${urls || "none"}`
+    ].join("\n");
   });
 }
 
 function createMarkdownReport(factPack: TopicFactPack): string {
-  const comparison = factPack.comparison;
-  const isGeneric = comparison.claudeCode.pricing.startsWith("不适用。");
-
   return [
-    "# Topic Fact Pack",
+    "# Dynamic Topic Fact Pack",
     "",
     `Generated at: ${factPack.generatedAt}`,
     "",
@@ -480,43 +637,26 @@ function createMarkdownReport(factPack: TopicFactPack): string {
     "",
     factPack.topicTitle,
     "",
-    `sourceReliability: ${factPack.sourceReliability}`,
+    `- schemaVersion: ${factPack.schemaVersion}`,
+    `- topicId: ${factPack.topicId}`,
+    `- sourceReliability: ${factPack.sourceReliability}`,
+    `- sourceReliabilityReason: ${factPack.sourceReliabilityReason}`,
     "",
     `## ${statusHeading("verified")}`,
     "",
-    ...claimLines(factPack.verifiedClaims, "verified"),
+    ...claimLines(factPack.claims, "verified"),
     "",
     `## ${statusHeading("partially_verified")}`,
     "",
-    ...claimLines(factPack.verifiedClaims, "partially_verified"),
+    ...claimLines(factPack.claims, "partially_verified"),
+    "",
+    `## ${statusHeading("conflicting")}`,
+    "",
+    ...claimLines(factPack.claims, "conflicting"),
     "",
     `## ${statusHeading("unverified")}`,
     "",
-    ...claimLines(factPack.verifiedClaims, "unverified"),
-    "",
-    isGeneric ? "## 选题核验维度" : "## Claude Code 与 Goose 对比",
-    "",
-    isGeneric ? "### 当前来源" : "### Claude Code",
-    "",
-    `- pricing: ${comparison.claudeCode.pricing}`,
-    `- positioning: ${comparison.claudeCode.positioning}`,
-    ...comparison.claudeCode.capabilities.map((item) => `- capability: ${item}`),
-    `- sources: ${comparison.claudeCode.sourceUrls.map((url) => `<${url}>`).join(", ")}`,
-    "",
-    isGeneric ? "### 对照观察维度" : "### Goose",
-    "",
-    `- pricing: ${comparison.goose.pricing}`,
-    `- positioning: ${comparison.goose.positioning}`,
-    ...comparison.goose.capabilities.map((item) => `- capability: ${item}`),
-    `- sources: ${comparison.goose.sourceUrls.map((url) => `<${url}>`).join(", ")}`,
-    "",
-    "### Similarities",
-    "",
-    ...comparison.similarities.map((item) => `- ${item}`),
-    "",
-    "### Differences",
-    "",
-    ...comparison.differences.map((item) => `- ${item}`),
+    ...claimLines(factPack.claims, "unverified"),
     "",
     "## 安全写法",
     "",
@@ -524,7 +664,9 @@ function createMarkdownReport(factPack: TopicFactPack): string {
     "",
     "## 禁止写法",
     "",
-    ...comparison.unsafeComparisonClaims.map((item) => `- ${item}`),
+    ...unique(factPack.claims.flatMap((claim) => claim.forbiddenWording)).map(
+      (item) => `- ${item}`
+    ),
     "",
     "## 写作风险提醒",
     "",
@@ -538,7 +680,7 @@ function createMarkdownReport(factPack: TopicFactPack): string {
     "",
     "## 阶段边界",
     "",
-    "- 本阶段只生成 fact pack。",
+    "- 本阶段只生成 dynamic fact pack。",
     "- 不写公众号正文，不生成封面，不排版 HTML。",
     "- 不调用 APIMart，不操作公众号后台，不加入 Playwright 或浏览器自动化。",
     ""
@@ -554,15 +696,38 @@ export async function buildTopicFactPack(
     options.selectedTopicFile ?? join(outputDir, "selected-topic.json");
   const topicSelectionReportFile =
     options.topicSelectionReportFile ?? join(outputDir, "topic-selection-report.md");
+  const topicProfileFile = options.topicProfileFile ?? join(outputDir, "topic-profile.json");
+  const researchPlanFile = options.researchPlanFile ?? join(outputDir, "research-plan.json");
+  const sourceEvidenceFile =
+    options.sourceEvidenceFile ?? join(outputDir, "source-evidence.json");
   const writeOutputs = options.writeOutputs ?? true;
   const files = createOutputFiles(outputDir);
+  const now = options.now ?? new Date();
   const topic = options.topic ?? (await readSelectedTopic(selectedTopicFile));
 
   if (!options.topicSelectionReport) {
     await readTopicSelectionReport(topicSelectionReportFile);
   }
 
-  const factPack = createFactPack(topic, options.now ?? new Date());
+  const profile =
+    options.topicProfile ??
+    (await readOptionalJsonFile<TopicProfile>(topicProfileFile)) ??
+    fallbackTopicProfile(topic, now);
+  const plan =
+    options.researchPlan ??
+    (await readOptionalJsonFile<ResearchPlan>(researchPlanFile)) ??
+    fallbackResearchPlan(profile, now);
+  const evidence =
+    options.sourceEvidence ??
+    (await readOptionalJsonFile<SourceEvidence>(sourceEvidenceFile)) ??
+    fallbackSourceEvidence(topic, now);
+  const factPack = createFactPack({
+    topic,
+    profile,
+    plan,
+    evidence,
+    now
+  });
 
   if (writeOutputs) {
     await mkdir(outputDir, { recursive: true });
@@ -571,7 +736,7 @@ export async function buildTopicFactPack(
   }
 
   logger.info(
-    `Built topic fact pack for ${factPack.topicTitle} with ${factPack.verifiedClaims.length} claims.`
+    `Built dynamic topic fact pack for ${factPack.topicTitle} with ${factPack.claims.length} claims.`
   );
 
   return {

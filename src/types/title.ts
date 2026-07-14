@@ -12,6 +12,8 @@ export interface TitleCandidate {
   kindLabel: string;
   title: string;
   rationale: string;
+  sourceClaimIds: string[];
+  matchedThemes: string[];
   spreadScore: number;
   accuracyScore: number;
   nonClickbaitScore: number;

@@ -88,7 +88,7 @@ function escapeSvgText(value: string): string {
 }
 
 function createMockSvg(coverText: string): string {
-  const [lineOne = "AI 编码代理", lineTwo = "卷向工作流"] = coverText.split(/\r?\n/);
+  const [lineOne = "AI 资讯", lineTwo = "边界观察"] = coverText.split(/\r?\n/);
 
   return [
     '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="383" viewBox="0 0 900 383" role="img" aria-label="mock cover">',

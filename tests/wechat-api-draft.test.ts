@@ -161,31 +161,22 @@ function topicFactPackFixture(
   sourceReliability: "high" | "medium" | "low"
 ): TopicFactPack {
   return {
+    schemaVersion: "2.0",
+    topicId: "fixture-wechat-api-draft",
     topicTitle: "AI 编码代理真正卷到的，不是价格，而是工作流",
     generatedAt: "2026-05-29T00:00:00.000Z",
+    entities: [],
     sourceReliability,
+    sourceReliabilityReason: "测试夹具使用最小事实包结构。",
+    claims: [],
+    unsupportedClaims: [],
+    conflictingClaims: [],
     verifiedClaims: [],
-    comparison: {
-      claudeCode: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls: []
-      },
-      goose: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls: []
-      },
-      similarities: [],
-      differences: [],
-      unsafeComparisonClaims: []
-    },
     safeWritingBoundary: [],
     riskNotes: [],
     recommendedFraming: "",
-    articleAngleSuggestions: []
+    articleAngleSuggestions: [],
+    sourceEvidenceIds: []
   };
 }
 

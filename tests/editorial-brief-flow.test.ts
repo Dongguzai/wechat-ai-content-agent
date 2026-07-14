@@ -340,3 +340,55 @@ test("--from article allows user to choose a non-recommended shortlisted topic",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("--from layout blocks when dynamic artifacts are missing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "editorial-layout-dynamic-"));
+  const outputDir = join(root, "outputs");
+  const approvalFile = join(root, "inputs", "editorial-approval.json");
+
+  try {
+    const briefRun = await runBrief(outputDir);
+    const approvedTopicId = briefRun.artifacts.selectedTopic?.selected.id;
+    assert.ok(approvedTopicId);
+    await writeApproval(approvalFile, {
+      approvedByUser: true,
+      approvedTopicId
+    });
+
+    await runDailyPipeline({
+      outputDir,
+      from: "article",
+      approvalFile,
+      logger: silentLogger,
+      env: {
+        SEARCH_ENABLE_REAL_API: "false",
+        WECHAT_DRAFT_DRY_RUN: "true",
+        WECHAT_API_ENABLE_REAL_DRAFT: "false",
+        WECHAT_DRAFT_ALLOW_REAL_API: "false"
+      },
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+
+    await rm(join(outputDir, "topic-profile.json"), { force: true });
+
+    await assert.rejects(
+      () =>
+        runDailyPipeline({
+          outputDir,
+          from: "layout",
+          approvalFile,
+          logger: silentLogger,
+          env: {
+            SEARCH_ENABLE_REAL_API: "false",
+            WECHAT_DRAFT_DRY_RUN: "true",
+            WECHAT_API_ENABLE_REAL_DRAFT: "false",
+            WECHAT_DRAFT_ALLOW_REAL_API: "false"
+          },
+          now: new Date("2026-05-29T00:00:00.000Z")
+        }),
+      /Missing topic-profile\.json/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

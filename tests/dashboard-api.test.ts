@@ -99,8 +99,31 @@ test("dashboard status reads outputs state", async () => {
     await writeJson(root, "outputs/candidate-news.json", [{ title: "候选" }]);
     await writeJson(root, "outputs/shortlisted-news.json", [{ title: "入围" }]);
     await writeJson(root, "outputs/selected-topic.json", { selected: { title: "主选题" } });
+    await writeJson(root, "outputs/topic-profile.json", {
+      topicId: "topic-1",
+      primaryDomain: "product",
+      eventTypes: ["launch"]
+    });
+    await writeJson(root, "outputs/research-plan.json", {
+      topicId: "topic-1",
+      tasks: [{ id: "task-1" }],
+      policyRefs: [{ id: "product-launch" }]
+    });
+    await writeJson(root, "outputs/source-evidence.json", {
+      topicId: "topic-1",
+      collectionMode: "metadata_only",
+      items: [{ id: "evidence-1" }]
+    });
+    await writeJson(root, "outputs/editorial-plan.json", {
+      topicId: "topic-1",
+      contentMode: "news_analysis",
+      sections: [{ id: "section-1" }]
+    });
     await writeJson(root, "outputs/article-meta.json", { title: "文章标题" });
-    await writeJson(root, "outputs/article-review.json", { passed: true });
+    await writeJson(root, "outputs/article-review.json", {
+      passed: true,
+      reviewPolicies: [{ id: "product-launch", version: "1.0" }]
+    });
     await writeJson(root, "outputs/cover-review.json", { passed: true });
     await writeJson(root, "outputs/wechat-layout.json", { allowedNextStage: true, compatibleWithWechat: true });
     await writeJson(root, "outputs/wechat-api-preflight.json", { passed: true });
@@ -109,8 +132,20 @@ test("dashboard status reads outputs state", async () => {
     const status = await getDashboardStatus({ rootDir: root });
 
     assert.equal(status.briefSource, "pipeline-outputs");
+    assert.equal(status.steps.find((step) => step.key === "topic-profile")?.state, "passed");
+    assert.equal(status.steps.find((step) => step.key === "research-plan")?.state, "passed");
+    assert.equal(status.steps.find((step) => step.key === "source-evidence")?.state, "passed");
+    assert.equal(status.steps.find((step) => step.key === "editorial-plan")?.state, "passed");
+    assert.equal(status.steps.find((step) => step.key === "review-policy")?.state, "passed");
+    assert.ok(status.dynamicArtifacts.some((artifact) => artifact.key === "review-policy"));
     assert.equal(status.steps.find((step) => step.key === "article-review")?.state, "passed");
     assert.equal(status.steps.find((step) => step.key === "wechat-draft")?.state, "passed");
+
+    const article = await getArticleData({ rootDir: root });
+    assert.equal(article.topicProfile?.primaryDomain, "product");
+    assert.equal(article.researchPlan?.tasks?.length, 1);
+    assert.equal(article.sourceEvidence?.items?.length, 1);
+    assert.equal(article.editorialPlan?.sections?.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

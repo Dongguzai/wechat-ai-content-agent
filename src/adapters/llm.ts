@@ -10,7 +10,8 @@ export type LlmStage =
   | "article-writer"
   | "title-generator"
   | "article-reviewer"
-  | "news-localizer";
+  | "news-localizer"
+  | "topic-classifier";
 
 export interface LlmStageConfig {
   stage: LlmStage;
@@ -33,21 +34,24 @@ const stageProviderEnv: Record<LlmStage, string> = {
   "article-writer": "ARTICLE_WRITER_PROVIDER",
   "title-generator": "TITLE_GENERATOR_PROVIDER",
   "article-reviewer": "ARTICLE_REVIEWER_PROVIDER",
-  "news-localizer": "NEWS_LOCALIZER_PROVIDER"
+  "news-localizer": "NEWS_LOCALIZER_PROVIDER",
+  "topic-classifier": "TOPIC_CLASSIFIER_PROVIDER"
 };
 
 const stageModelEnv: Record<LlmStage, string> = {
   "article-writer": "ARTICLE_WRITER_MODEL",
   "title-generator": "TITLE_GENERATOR_MODEL",
   "article-reviewer": "ARTICLE_REVIEWER_MODEL",
-  "news-localizer": "NEWS_LOCALIZER_MODEL"
+  "news-localizer": "NEWS_LOCALIZER_MODEL",
+  "topic-classifier": "TOPIC_CLASSIFIER_MODEL"
 };
 
 const stageMaxCompletionTokensEnv: Record<LlmStage, string> = {
   "article-writer": "ARTICLE_WRITER_MAX_COMPLETION_TOKENS",
   "title-generator": "TITLE_GENERATOR_MAX_COMPLETION_TOKENS",
   "article-reviewer": "ARTICLE_REVIEWER_MAX_COMPLETION_TOKENS",
-  "news-localizer": "NEWS_LOCALIZER_MAX_COMPLETION_TOKENS"
+  "news-localizer": "NEWS_LOCALIZER_MAX_COMPLETION_TOKENS",
+  "topic-classifier": "TOPIC_CLASSIFIER_MAX_COMPLETION_TOKENS"
 };
 
 const nullUsage: LlmUsage = {

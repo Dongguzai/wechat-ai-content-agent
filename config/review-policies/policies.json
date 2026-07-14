@@ -1,0 +1,199 @@
+[
+  {
+    "id": "product-launch",
+    "version": "1.0",
+    "title": "产品发布审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["product", "model", "tooling", "creator"],
+      "eventTypes": ["launch", "update"]
+    },
+    "priority": 60,
+    "instructions": [
+      "检查是否说明正式发布、可用地区、开放对象和功能边界。",
+      "检查是否把 preview、waitlist 或灰度写成全量可用。"
+    ],
+    "riskRules": [
+      "禁止无来源写全面开放。",
+      "禁止把演示能力写成稳定能力。"
+    ]
+  },
+  {
+    "id": "model-benchmark",
+    "version": "1.0",
+    "title": "Benchmark 审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["model", "research"],
+      "eventTypes": ["benchmark"],
+      "riskDimensions": ["指标定义", "测试条件", "厂商自测", "第三方复现"]
+    },
+    "priority": 80,
+    "instructions": [
+      "检查标题和正文是否绑定具体 benchmark、指标和测试条件。",
+      "检查是否区分厂商自测和第三方复现。"
+    ],
+    "riskRules": [
+      "禁止全面领先、碾压、最好等绝对化表达。",
+      "禁止用单项指标推出整体胜负。"
+    ]
+  },
+  {
+    "id": "pricing",
+    "version": "1.0",
+    "title": "定价审核",
+    "scope": "review",
+    "match": {
+      "eventTypes": ["pricing"],
+      "riskDimensions": ["币种", "生效日期", "订阅与 API 差异", "免费层边界"]
+    },
+    "priority": 75,
+    "instructions": [
+      "检查所有价格数字是否来自事实包。",
+      "检查币种、周期、生效日期、套餐和额外用量是否清楚。"
+    ],
+    "riskRules": [
+      "禁止把免费层写成零成本。",
+      "禁止混淆订阅和 API 计费。"
+    ]
+  },
+  {
+    "id": "funding",
+    "version": "1.0",
+    "title": "融资审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["business"],
+      "eventTypes": ["funding"],
+      "riskDimensions": ["融资金额", "轮次", "投资方", "估值确认状态"]
+    },
+    "priority": 70,
+    "instructions": [
+      "检查融资金额、轮次和投资方是否有来源。",
+      "检查估值是否明确官方确认、媒体引用或未确认。"
+    ],
+    "riskRules": [
+      "禁止把融资写成商业成功定论。",
+      "禁止把传闻估值写成确定事实。"
+    ]
+  },
+  {
+    "id": "acquisition",
+    "version": "1.0",
+    "title": "并购审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["business"],
+      "eventTypes": ["acquisition"],
+      "riskDimensions": ["交易价格", "监管审批", "整合计划"]
+    },
+    "priority": 70,
+    "instructions": [
+      "检查交易状态是否区分宣布、签署、待审批和完成。",
+      "检查交易价格和整合时间表是否有来源。"
+    ],
+    "riskRules": [
+      "禁止把待审批交易写成完成。",
+      "禁止无来源预测裁员、关闭产品或确定整合结果。"
+    ]
+  },
+  {
+    "id": "regulation",
+    "version": "1.0",
+    "title": "政策审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["policy"],
+      "eventTypes": ["regulation"],
+      "riskDimensions": ["司法辖区", "生效时间", "适用对象", "实际义务"]
+    },
+    "priority": 85,
+    "instructions": [
+      "检查是否说明司法辖区、适用对象、生效时间和义务范围。",
+      "检查是否把草案、指南、正式法规混写。"
+    ],
+    "riskRules": [
+      "禁止输出法律意见口吻。",
+      "禁止跨司法辖区泛化。"
+    ]
+  },
+  {
+    "id": "research-release",
+    "version": "1.0",
+    "title": "研究发布审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["research"],
+      "eventTypes": ["research_release"],
+      "riskDimensions": ["实验设置", "样本规模", "泛化限制"]
+    },
+    "priority": 65,
+    "instructions": [
+      "检查研究方法、实验设置和局限是否出现。",
+      "检查是否把预印本或实验结果写成产品可用能力。"
+    ],
+    "riskRules": [
+      "禁止忽略论文局限。",
+      "禁止把潜在影响写成已经落地。"
+    ]
+  },
+  {
+    "id": "security-incident",
+    "version": "1.0",
+    "title": "安全事故审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["security"],
+      "eventTypes": ["incident"],
+      "riskDimensions": ["影响范围", "披露时间线", "用户数据类型", "修复状态"]
+    },
+    "priority": 90,
+    "instructions": [
+      "检查影响范围、数据类型、修复状态和披露时间线是否准确。",
+      "检查是否区分确认事实和调查中信息。"
+    ],
+    "riskRules": [
+      "禁止夸大泄露规模。",
+      "禁止制造恐慌或无来源指责。"
+    ]
+  },
+  {
+    "id": "case-study",
+    "version": "1.0",
+    "title": "案例审核",
+    "scope": "review",
+    "match": {
+      "primaryDomains": ["application"],
+      "eventTypes": ["case_study"],
+      "riskDimensions": ["供应商案例偏差", "指标口径", "可迁移性"]
+    },
+    "priority": 60,
+    "instructions": [
+      "检查指标口径、案例来源和供应商参与程度。",
+      "检查是否说明案例可迁移限制。"
+    ],
+    "riskRules": [
+      "禁止把单一案例泛化为行业事实。",
+      "禁止省略人工复核条件。"
+    ]
+  },
+  {
+    "id": "generic-safe",
+    "version": "1.0",
+    "title": "通用安全审核",
+    "scope": "review",
+    "match": {
+      "fallback": true
+    },
+    "priority": 0,
+    "instructions": [
+      "检查来源、事实边界、限定语和标题党风险。",
+      "检查是否复用无关旧专题事实。"
+    ],
+    "riskRules": [
+      "禁止伪造来源。",
+      "禁止把搜索摘要当 verified claim。",
+      "禁止无来源数字。"
+    ]
+  }
+]

@@ -53,7 +53,7 @@ interface CoverPromptParts {
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 const requiredImageSize: CoverImageSize = "900x383";
-const defaultCoverText = "AI 编码代理\n卷向工作流";
+const defaultCoverText = "AI 资讯\n边界观察";
 const defaultApimartCoverStyle =
   "warm friendly 3D animated movie cover, story-driven, clean composition, clear subject, horizontal 900x383px, prominent Chinese headline inside safe margins";
 
@@ -131,27 +131,27 @@ function createPromptParts(input: {
   const articleTitle =
     input.articleMeta.title ||
     extractMarkdownTitle(input.articleMarkdown) ||
-    "AI 编码代理真正卷到的，不是价格，而是工作流";
+    "这条 AI 资讯，真正要看的是边界";
   const coverText = defaultCoverText;
   const coreViewpoint = sanitizeCoverContext(
     input.articleMeta.articleThesis ||
       input.factPack.recommendedFraming ||
       input.selectedTopic.selected.selection.articleThesis ||
-      "AI coding agent 的竞争重点正在从模型能力转向工作流控制权。"
+      "这条 AI 资讯的重点在事实边界、读者影响和后续观察。"
   );
   const safeFraming = sanitizeCoverContext(input.factPack.recommendedFraming);
   const safeCoreConflict = sanitizeCoverContext(
     input.selectedTopic.selected.selection.coreConflict
   );
   const visualConcept =
-    "A clear central glowing workflow hub, surrounded by abstract code panels and connected tool nodes. The image should feel story-driven, polished, warm, friendly, and professional. Clean composition, clear subject, horizontal 900x383px layout, prominent Chinese headline inside safe margins, 2K quality, crisp details, soft cinematic lighting.";
+    "A clear central editorial analysis desk with abstract source cards, evidence markers, and connected decision paths. The image should feel story-driven, polished, warm, friendly, and professional. Clean composition, clear subject, horizontal 900x383px layout, prominent Chinese headline inside safe margins, 2K quality, crisp details, soft cinematic lighting.";
   const chineseDesignDescription = [
-    "封面围绕文章主题：AI coding agent 的竞争重点正在从价格和模型能力，转向开发者工作流入口。",
+    "封面围绕文章主题：从 AI 资讯线索中分辨事实边界、读者影响和后续观察。",
     `安全风格方向：${input.coverStyle}`,
-    "画面采用 3D 动画电影质感和科技商业杂志封面感，以发光的工作流中枢节点作为视觉中心。",
-    "中心主体是一张 3D 代码工作台，抽象代码窗口、节点连线和工具链路径从四周汇入工作流入口。",
+    "画面采用 3D 动画电影质感和科技商业杂志封面感，以发光的编辑分析台作为视觉中心。",
+    "中心主体是一组抽象来源卡片、证据标记和决策路径，表达从资讯线索到事实核验的过程。",
     "中文大标题是最重要的视觉元素，居中或偏左居中，粗体、清晰、现代科技感，适合手机端缩略图阅读。",
-    "画面只做抽象对比：一侧是闭源订阅入口，一侧是开源工具链路径，不使用真实品牌标识或人物肖像。",
+    "画面只做抽象表达，不使用真实品牌标识、产品 Logo 或人物肖像。",
     `核心观点：${coreViewpoint}`,
     `文章安全表达边界：${safeFraming}`,
     `选题核心冲突：${safeCoreConflict}`
@@ -231,9 +231,9 @@ function sanitizeCoverContext(value: string): string {
     .replace(/免费平替/g, "低成本替换口号")
     .replace(/完全替代/g, "绝对替换")
     .replace(/免费替代高价工具/g, "单点价格对比")
-    .replace(/开源免费替代/g, "开源工具链路径")
+    .replace(/开源免费替代/g, "开放方案路径")
     .replace(/免费替代/g, "低成本替换")
-    .replace(/高价编码代理/g, "产品化编码代理");
+    .replace(/高价[^。,\n]{0,12}(工具|产品|方案)/g, "高价产品方案");
 }
 
 function createVisualRequirements(): CoverVisualRequirements {
@@ -257,10 +257,22 @@ function promptRequestsRealBrandMarks(prompt: string): boolean {
   );
 }
 
+function affirmativePromptText(prompt: string): string {
+  return prompt
+    .split(/\r?\n/)
+    .filter(
+      (line) =>
+        !/^\s*(?:no\b|avoid\b|negative prompt\b|do not\b|without\b|禁止|不允许|不要|避免|不得)/i.test(
+          line
+        ) &&
+        !/(?:不使用|不包含|不能出现|不要出现|避免出现|禁止出现)/.test(line)
+    )
+    .join("\n");
+}
+
 function promptIncludesOfficialMarkPhrases(prompt: string): boolean {
-  return /Claude\s+Logo|Goose\s+Logo|Claude\s*官方\s*Logo|Goose\s*官方\s*Logo/i.test(
-    prompt
-  );
+  const affirmativeText = affirmativePromptText(prompt);
+  return /(官方\s*)?(Logo|logo|品牌标识|产品标识|商标)/i.test(affirmativeText);
 }
 
 function promptIncludesSpecificPrice(prompt: string): boolean {
@@ -415,7 +427,7 @@ function createCoverPromptMarkdown(input: {
     "",
     "## 视觉中心说明",
     "",
-    "发光的工作流中枢节点是中心主体，抽象代码窗口和工具链路径围绕它连接，形成从工具到工作流入口的视觉路径。",
+    "发光的编辑分析台是中心主体，抽象来源卡片、证据标记和决策路径围绕它连接，形成从资讯到判断的视觉路径。",
     "",
     "## 尺寸说明",
     "",
@@ -428,7 +440,7 @@ function createCoverPromptMarkdown(input: {
     "## 禁止元素",
     "",
     "- 真实品牌标识或官方产品标识",
-    "- Claude / Goose 官方标识",
+    "- 真实品牌、产品或平台官方标识",
     "- 具体价格数字或价格标签",
     "- 零成本替换口号",
     "- 绝对替代表述",

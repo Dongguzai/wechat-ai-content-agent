@@ -23,6 +23,7 @@ import type {
   EditorialApproval,
   EditorialStyleLoadResult
 } from "../types/editorial.js";
+import type { EditorialPlan } from "../types/editorialPlan.js";
 import type {
   LlmChatCompletionClient,
   LlmFetch,
@@ -30,6 +31,7 @@ import type {
 } from "../types/llm.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 import { requestLlmJsonWithRepair } from "../utils/llmJson.js";
+import { buildEditorialPlan } from "./buildEditorialPlan.js";
 import { loadEditorialStyle } from "./loadEditorialStyle.js";
 
 export interface WriteArticleOptions {
@@ -38,10 +40,12 @@ export interface WriteArticleOptions {
   topicSelectionReportFile?: string;
   topicFactPackFile?: string;
   topicFactPackReportFile?: string;
+  editorialPlanFile?: string;
   topic?: SelectedTopic;
   topicSelectionReport?: string;
   factPack?: TopicFactPack;
   topicFactPackReport?: string;
+  editorialPlan?: EditorialPlan;
   editorialStyle?: EditorialStyleLoadResult;
   editorialApproval?: EditorialApproval;
   logger?: Logger;
@@ -56,27 +60,26 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const defaultOutputDir = join(currentDir, "..", "..", "outputs");
 
 const forbiddenArticlePhrases = [
-  "Goose 完全替代 Claude Code",
-  "Goose 和 Claude Code 完全一样",
-  "Goose 零成本",
-  "Claude Code 必须花 $200 才能用",
-  "Claude Code 是单独固定 $200/month 工具",
-  "Claude Code 必须花两百美元级别月费才能用",
-  "Claude Code 是单独固定两百美元级别月费工具",
   "免费平替",
   "免费替代高价工具",
   "完全替代",
   "能力相同",
-  "直接互换"
+  "能力完全一样",
+  "直接互换",
+  "零成本"
 ];
 
-const requiredDiscussionTerms = ["开源", "工作流", "成本", "工具锁定"];
+const requiredDiscussionTerms = ["事实边界", "读者影响", "风险控制"];
 
 function createOutputFiles(outputDir: string): ArticleWritingOutputFiles {
   return {
     article: join(outputDir, "article.md"),
     articleMeta: join(outputDir, "article-meta.json"),
     articleWritingReport: join(outputDir, "article-writing-report.md"),
+    articleAttempt1: join(outputDir, "article-attempt-1.json"),
+    articleRepair1: join(outputDir, "article-repair-1.json"),
+    articleRepair2: join(outputDir, "article-repair-2.json"),
+    articleValidation: join(outputDir, "article-validation.json"),
     articleWritingError: join(outputDir, "article-writing-error.json"),
     articleWritingErrorReport: join(outputDir, "article-writing-error.md")
   };
@@ -91,8 +94,24 @@ async function readRequiredText(path: string): Promise<string> {
   return readFile(path, "utf8");
 }
 
+async function readOptionalJsonFile<T>(path: string): Promise<T | undefined> {
+  try {
+    return await readJsonFile<T>(path);
+  } catch {
+    return undefined;
+  }
+}
+
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
+}
+
+function numbersInText(value: string): string[] {
+  return unique(value.match(/\d+(?:[.,]\d+)?%?|\$?\d+(?:[.,]\d+)?/g) ?? []);
 }
 
 function errorMessage(error: unknown): string {
@@ -180,60 +199,205 @@ export function countArticleChars(markdown: string): number {
   ].length;
 }
 
-function pickTitle(topic: SelectedTopic): string {
-  return (
-    topic.selected.selection.suggestedTitles.find((title) =>
-      title.includes("工作流")
-    ) ?? "AI 编码代理真正卷到的，不是价格，而是工作流"
+function pickTitle(topic: SelectedTopic, editorialPlan?: EditorialPlan): string {
+  const plannedTitle = editorialPlan
+    ? `${editorialPlan.structure[0] ?? "这条 AI 资讯"}，真正要看的是${editorialPlan.requiredThemes[1] ?? "影响"}`
+    : undefined;
+
+  return sanitizeFactPackTextForHtmlSafety(
+    plannedTitle ??
+      topic.selected.selection.suggestedTitles.find((title) =>
+        title.includes("工作流")
+      ) ??
+      topic.selected.selection.suggestedTitles[0] ??
+      "这条 AI 资讯，真正要看的是事实边界"
   );
 }
 
 function isGenericFactPack(factPack: TopicFactPack): boolean {
-  return factPack.comparison.claudeCode.pricing.startsWith("不适用。");
+  return factPack.schemaVersion === "2.0";
 }
 
-function sanitizeFactPackTextForHtmlSafety(value: string): string {
-  return value
-    .replace(/Claude Code costs up to \$200 a month\. Goose does the same thing for free\./g, "Claude Code paid plans and Goose open-source workflow comparison.")
-    .replace(/“up to \$200 a month”对应 Claude Max 20x 个人套餐价格，而不是 Claude Code 的单独固定价格。/g, "外界提到的高价订阅价格对应 Claude 高阶个人订阅方案，而不是 Claude Code 的单独固定价格。")
-    .replace(/Anthropic 官方页面列出 Max 20x 为 \$200\/month；Claude Code 包含在 Pro\/Max 等付费 Claude 计划中，因此应写成“最高可到 \$200\/月的 Claude Max 20x 订阅可使用 Claude Code”，不能写成“Claude Code 必须 \$200\/月”。/g, "Claude Code 可以通过相关 Claude 付费计划使用，高阶套餐价格更高；不要写成 Claude Code 是单独固定高价工具。")
-    .replace(/Goose 免费不等于零成本：使用 Anthropic、OpenAI、Google、Groq、OpenRouter 等模型时，可能需要 API Key、订阅或供应商侧费用。/g, "Goose 本身是免费开源项目，但接入模型服务仍可能产生 API 或订阅成本。")
-    .replace(/“Goose does the same thing as Claude Code”是过度绝对的说法。/g, "媒体标题中“做同一件事”的说法需要降级为部分工作流重叠。")
+function sanitizeFactPackTextForHtmlSafety(value: string | undefined): string {
+  return (value ?? "")
+    .replace(/costs up to \$?\d+[^。.\n]*(same thing|for free)[^。.\n]*/gi, "相关价格与能力对比需要回到原始来源核验")
+    .replace(/必须\s*\$?\d+[^。.\n]*才能用/g, "需要根据具体套餐和适用对象核验")
+    .replace(/单独固定[^。.\n]*(价格|月费|工具)/g, "具体价格边界需要核验")
+    .replace(/免费不等于零成本[^。.\n]*/g, "免费或开源表述仍需说明使用边界和潜在成本")
+    .replace(/\b(?:does\s+)?the\s+same\s+thing\b/gi, "存在部分场景重叠")
     .replace(/不要写“能力完全一样”或“完全替代”/g, "不要写成能力边界一致或覆盖所有场景")
-    .replace(/\$200(?:\/month|\/月)?/g, "高阶付费方案")
-    .replace(/免费平替|免费替代高价工具/g, "开源替代路径")
+    .replace(/\$\d+(?:\/month|\/月)?/g, "具体付费方案")
+    .replace(/免费平替|免费替代高价工具/g, "低成本替换叙事")
     .replace(/完全替代/g, "覆盖所有场景")
     .replace(/能力完全一样|能力相同/g, "能力边界一致")
     .replace(/直接互换|全量互换/g, "无差别迁移")
-    .replace(/零成本/g, "没有任何成本");
+    .replace(/没有任何成本|零成本/g, "仍有部署、调用或维护成本边界")
+    .replace(/\bHTTP\s+\d{3}\b/gi, "来源读取失败")
+    .replace(/\b(?:4|5)\d{2}\b/g, "来源读取失败");
 }
 
-function usedClaimsFromFactPack(factPack: TopicFactPack): ArticleUsedClaim[] {
-  return factPack.verifiedClaims.map((claim) => ({
-    claim: sanitizeFactPackTextForHtmlSafety(claim.claim),
+function usedClaimsFromFactPack(
+  factPack: TopicFactPack,
+  editorialPlan?: EditorialPlan
+): ArticleUsedClaim[] {
+  const allowedIds = editorialPlan
+    ? new Set(editorialPlan.sections.flatMap((section) => section.allowedClaimIds))
+    : undefined;
+  const claims = allowedIds
+    ? factPack.claims.filter((claim) => allowedIds.has(claim.id))
+    : factPack.claims;
+
+  return claims.map((claim) => ({
+    id: claim.id,
+    claim: sanitizeFactPackTextForHtmlSafety(claim.statement),
     safeWording: sanitizeFactPackTextForHtmlSafety(claim.safeWording),
-    sourceUrls: claim.sourceUrls
+    sourceUrls: claim.sourceUrls,
+    evidenceIds: claim.evidenceIds,
+    evidenceSnippetIds: claim.evidenceSnippetIds,
+    status: claim.status
   }));
 }
 
-function createRiskControls(factPack?: TopicFactPack): string[] {
+function forbiddenWordingFromFactPack(factPack: TopicFactPack): string[] {
+  return [
+    ...new Set(
+      factPack.claims.flatMap((claim) => claim.forbiddenWording).filter(Boolean)
+    )
+  ];
+}
+
+function createRiskControls(
+  factPack?: TopicFactPack,
+  editorialPlan?: EditorialPlan
+): string[] {
+  if (editorialPlan) {
+    return [
+      ...new Set([
+        ...editorialPlan.riskControls,
+        "每个段落只使用 editorial plan 中允许的 claim。",
+        "本阶段只生成公众号正文、meta 和写作报告，不进入封面、HTML 排版、APIMart、后台或浏览器自动化。"
+      ])
+    ];
+  }
+
   if (factPack && isGenericFactPack(factPack)) {
     return [
       "不把搜索摘要、中文化摘要或媒体标题当作官方确定事实。",
       "涉及参数、benchmark、任务解决率、上下文长度等指标时，只使用 fact pack safeWording 的谨慎表达。",
-      "不复用无关旧专题事实，不把当前选题写成 Claude Code / Goose 价格对比。",
-      "讨论开源、工作流、成本和工具锁定时，限定为对开发者与团队决策的观察维度。",
+      "不复用无关旧专题事实，不把当前选题套进其他题目的价格、产品或工具对比。",
+      "讨论开放生态、工作流、成本或迁移风险时，限定为对具体读者和团队决策的观察维度。",
       "本阶段只生成公众号正文、meta 和写作报告，不进入封面、HTML 排版、APIMart、后台或浏览器自动化。"
     ];
   }
 
   return [
-    "高价订阅价格只对应 Claude 高阶个人订阅方案边界，不写成 Claude Code 的单独固定价格。",
-    "Goose 的免费表述限定为工具本体免费开源，同时说明外部模型调用可能产生 API Key、订阅或按量费用。",
-    "二者比较只写成部分 coding agent 工作流有重叠，不写能力等同或无差别迁移。",
-    "VentureBeat 标题只作为选题线索，正文事实边界来自 fact pack 的 safeWording。",
+    "价格、免费层或开源表述必须保留适用范围、套餐和额外成本边界。",
+    "不同产品、模型或方案的比较只能写成有限场景下的差异，不写能力等同或无差别迁移。",
+    "媒体标题只作为选题线索，正文事实边界来自 fact pack 的 safeWording。",
+    "趋势判断必须保留条件，不把单一来源外推为行业定论。",
     "本阶段只生成公众号正文、meta 和写作报告，不进入封面、HTML 排版、APIMart、后台或浏览器自动化。"
   ];
+}
+
+function claimsById(factPack: TopicFactPack): Map<string, TopicFactPack["claims"][number]> {
+  return new Map(factPack.claims.map((claim) => [claim.id, claim]));
+}
+
+function compactSentence(value: string): string {
+  return sanitizeFactPackTextForHtmlSafety(value).replace(/\s+/g, " ").trim();
+}
+
+function shorten(value: string, maxChars: number): string {
+  const text = compactSentence(value);
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  return `${text.slice(0, maxChars).replace(/[，。；：、\s]+$/g, "")}。`;
+}
+
+function createSectionFromPlan(input: {
+  topic: SelectedTopic;
+  factPack: TopicFactPack;
+  section: EditorialPlan["sections"][number];
+  index: number;
+}): ArticleSection {
+  const claimMap = claimsById(input.factPack);
+  const allowedClaims = input.section.allowedClaimIds
+    .map((id) => claimMap.get(id))
+    .filter((claim): claim is TopicFactPack["claims"][number] => Boolean(claim));
+  const firstClaim = allowedClaims[0];
+  const secondClaim = allowedClaims[1];
+  const sourcePrefix =
+    input.index === 0
+      ? `${input.topic.selected.sourceName} 的线索显示，`
+      : "";
+  const claimSentence = firstClaim
+    ? shorten(firstClaim.safeWording, 120)
+    : shorten(input.topic.selected.selection.publicInterest, 90);
+  const supportSentence = secondClaim
+    ? shorten(secondClaim.safeWording, 90)
+    : shorten(input.section.purpose, 80);
+  const questionSentence = input.section.keyQuestions.length > 0
+    ? `重点回答：${input.section.keyQuestions.slice(0, 1).join("；")}。`
+    : "";
+  const riskSentence = input.section.riskControls.length > 0
+    ? `守住 ${input.section.riskControls.slice(0, 1).join("、")}。`
+    : "写法上继续保持限定语。";
+
+  return {
+    heading: input.section.heading,
+    body: [
+      `${sourcePrefix}${claimSentence}`,
+      supportSentence,
+      questionSentence,
+      riskSentence
+    ]
+      .filter(Boolean)
+      .join(" "),
+    planSectionId: input.section.id,
+    role: input.section.role,
+    claimIds: input.section.allowedClaimIds
+  };
+}
+
+function createArticleSectionsFromPlan(
+  topic: SelectedTopic,
+  factPack: TopicFactPack,
+  editorialPlan: EditorialPlan
+): ArticleSection[] {
+  return editorialPlan.sections.map((section, index) =>
+    createSectionFromPlan({
+      topic,
+      factPack,
+      section,
+      index
+    })
+  );
+}
+
+function alignSectionsWithEditorialPlan(
+  sections: ArticleSection[],
+  editorialPlan?: EditorialPlan
+): ArticleSection[] {
+  if (!editorialPlan) {
+    return sections;
+  }
+
+  return editorialPlan.sections.map((planSection, index) => {
+    const modelSection = sections[index] ?? sections[sections.length - 1];
+    const body = modelSection?.body?.trim()
+      ? modelSection.body.trim()
+      : planSection.purpose;
+
+    return {
+      heading: planSection.heading,
+      body,
+      planSectionId: planSection.id,
+      role: planSection.role,
+      claimIds: planSection.allowedClaimIds
+    };
+  });
 }
 
 function createGenericArticleSections(
@@ -241,13 +405,20 @@ function createGenericArticleSections(
   factPack: TopicFactPack
 ): ArticleSection[] {
   const selected = topic.selected;
-  const sourceTitle = selected.rawTitle || selected.titleZh || selected.title;
-  const summary =
+  const sourceTitle = sanitizeFactPackTextForHtmlSafety(
+    selected.rawTitle || selected.titleZh || selected.title
+  );
+  const summary = sanitizeFactPackTextForHtmlSafety(
     selected.summaryZh ||
     selected.summary ||
     selected.rawSummary ||
-    selected.selection.publicInterest;
-  const boundary = factPack.safeWritingBoundary[2] ?? "具体指标和产品边界需要回到原文核验。";
+    selected.selection.publicInterest
+  );
+  const boundary = sanitizeFactPackTextForHtmlSafety(
+    factPack.safeWritingBoundary[2] ?? "具体指标和产品边界需要回到原文核验。"
+  );
+  const writingAngle = sanitizeFactPackTextForHtmlSafety(selected.selection.writingAngle);
+  const articleThesis = sanitizeFactPackTextForHtmlSafety(selected.selection.articleThesis);
 
   return [
     {
@@ -258,58 +429,36 @@ function createGenericArticleSections(
     {
       heading: "真正值得看的不是热闹",
       body:
-        `${summary} 这件事的价值，不只在某个参数或一句能力描述，而在它把模型更新继续推向智能体工作流。对开发者来说，重要问题是工具能不能进入真实项目；对产品团队来说，重要问题是它会不会改变功能设计、协作流程和交付节奏。`
+        `${summary} 这件事的价值，不只在某个参数、融资金额或一句能力描述，而在它可能改变哪些读者的判断。对编辑来说，重要问题是事实能否被来源支撑；对读者来说，重要问题是它会不会改变产品选择、团队流程或风险预期。`
     },
     {
-      heading: "团队会重新算账",
+      heading: "影响要落到具体人群",
       body:
-        "一旦 AI 能力进入日常流程，成本就不只是模型调用费，还包括接入、权限、审计、稳定性和维护成本。开源方案可能降低试错门槛，闭源平台可能提供更完整的产品体验，但两边都会带来工具锁定和迁移成本。"
+        "不同读者关心的问题不同：普通用户看可用性和风险，开发者看接入成本和可控性，企业团队看权限、审计、稳定性和责任边界。只有把影响对象拆开，文章才不会把一条线索写成笼统行业结论。"
     },
     {
       heading: "怎么判断后续影响",
       body:
-        `${selected.selection.writingAngle} 接下来更值得观察的是三个问题：它是否真的改变开发者工作流，相关指标是否能被原文或官方材料支撑，以及团队采用它时能否控制成本和权限边界。把这三点写清楚，比单纯复述“发布了什么”更有信息量。`
+        `${writingAngle} 接下来更值得观察的是三个问题：哪些事实已经被原文支撑，哪些判断只是编辑角度，哪些风险需要等更多材料确认。把这三点写清楚，比单纯复述“发布了什么”更有信息量。`
     },
     {
       heading: "结论",
       body:
-        `${selected.selection.articleThesis} 这不是一句模型更新就能盖棺定论的事，而是 AI 产品竞争继续向工作流入口移动的信号。越接近真实业务流程，越需要把事实边界、成本结构和工具锁定讲明白。`
+        `${articleThesis} 这不是一句标题就能盖棺定论的事。越接近真实业务和用户决策，越需要把事实边界、适用条件和风险控制讲明白。`
     }
   ];
 }
 
-function createArticleSections(topic: SelectedTopic, factPack: TopicFactPack): ArticleSection[] {
-  if (isGenericFactPack(factPack)) {
-    return createGenericArticleSections(topic, factPack);
+function createArticleSections(
+  topic: SelectedTopic,
+  factPack: TopicFactPack,
+  editorialPlan?: EditorialPlan
+): ArticleSection[] {
+  if (editorialPlan) {
+    return createArticleSectionsFromPlan(topic, factPack, editorialPlan);
   }
 
-  return [
-    {
-      heading: "冲突先摆出来",
-      body:
-        "高价订阅和免费开源放在一起，冲突很直观：一边是 Claude Code，另一边是 Goose。但这件事不能被写成简单的价格口号。真正值得关注的是，coding agent 正在从聊天框里的能力，变成开发者日常工作流入口。"
-    },
-    {
-      heading: "事实先说准确",
-      body:
-        "更准确的边界是：外界常说的高价订阅价格，更安全地对应 Claude 的高阶个人订阅方案，不是 Claude Code 的单独固定价格；Claude Code 可以随 Pro/Max 等订阅使用，也可能在 API Key/PAYG 或企业部署下产生不同费用，实际成本取决于计划、模型和用量。Goose 也不是没有账单的魔法，它是免费开源的本地 AI agent/开发者代理工具，但模型调用费用取决于接入的 LLM 提供商；部分提供商有免费层，付费模型仍可能产生费用。"
-    },
-    {
-      heading: "行业逻辑是什么",
-      body:
-        "Claude Code 是 Anthropic 面向开发者的编码代理，可在项目中规划、修改代码、运行验证，并连接外部工具。Goose 则把类似工作流拆成开源、本地、可选模型的路径。两者都面向开发者自动化，能覆盖代码理解、文件修改、命令执行或项目级任务的一部分场景；但产品形态、模型后端、权限治理、交互体验和成熟度不同。闭源订阅工具把模型、交互、上下文和团队治理打包成入口；开源工具则把流程拆出来，让团队能自托管、换模型、接自己的权限系统和工程工具链。价格只是表层，背后是成本结构、可控性和工具锁定的重新计算。"
-    },
-    {
-      heading: "谁会先被影响",
-      body:
-        "个人开发者会更在意每月订阅和 API 消耗，愿意用开源方案对冲成本。团队不会只看便宜，而会看权限、安全、审计、标准化和能不能接入既有研发流程。创业者看到的则是另一个信号：AI coding agent 可能从产品竞争进入基础设施竞争，未来的差异不只是谁模型强，而是谁占住工作流。内容创作者和普通用户，也会越来越常见“高价工具对开源方案”的叙事，但真正要看的是总成本，而不是一句价格对比。"
-    },
-    {
-      heading: "趋势判断",
-      body:
-        "Goose 在部分 coding agent 工作流上与 Claude Code 有重叠，并提供开源、可自选模型的替代路径，但这不等于两者能力边界一致，也不代表可以无差别迁移。更稳的判断是：这不是简单的开源工具链选择，而是 coding agent 正在从付费产品变成开源基础设施的一次信号。 下一阶段，coding agent 的竞争重点会从“谁的模型更强”，转向“谁能占住开发者工作流入口”。谁掌握入口，谁就掌握预算、数据流和工具链的默认选择。"
-    }
-  ];
+  return createGenericArticleSections(topic, factPack);
 }
 
 function createArticleMarkdown(title: string, sections: ArticleSection[], sourceUrl: string): string {
@@ -327,37 +476,294 @@ function createArticleMarkdown(title: string, sections: ArticleSection[], source
   ].join("\n");
 }
 
-function validateArticle(article: ArticleDraft, meta: ArticleMeta): void {
+function validateArticle(
+  article: ArticleDraft,
+  meta: ArticleMeta,
+  editorialPlan?: EditorialPlan,
+  factPack?: TopicFactPack
+): void {
+  const issues = articleValidationIssues(article, meta, editorialPlan, factPack);
+  if (issues.length > 0) {
+    throw new Error(issues[0]);
+  }
+}
+
+function articleValidationIssues(
+  article: ArticleDraft,
+  meta: ArticleMeta,
+  editorialPlan?: EditorialPlan,
+  factPack?: TopicFactPack
+): string[] {
+  const issues: string[] = [];
+
   if (!article.title.trim()) {
-    throw new Error("Article title is missing.");
+    issues.push("Article title is missing.");
   }
 
   if (article.wordCount > 1500) {
-    throw new Error(`Article exceeds the 1500 character limit: ${article.wordCount}.`);
+    issues.push(`Article exceeds the 1500 character limit: ${article.wordCount}.`);
   }
 
   if (meta.usedClaims.length < 3) {
-    throw new Error("article-meta.usedClaims must include at least 3 claims.");
+    issues.push("article-meta.usedClaims must include at least 3 claims.");
   }
 
   if (meta.riskControls.length < 3) {
-    throw new Error("article-meta.riskControls must include at least 3 controls.");
+    issues.push("article-meta.riskControls must include at least 3 controls.");
   }
 
-  const forbidden = forbiddenArticlePhrases.find((phrase) =>
+  const forbiddenTerms = [
+    ...new Set([
+      ...forbiddenArticlePhrases,
+      ...(factPack ? forbiddenWordingFromFactPack(factPack) : [])
+    ])
+  ];
+  const forbidden = forbiddenTerms.find((phrase) =>
     article.markdown.includes(phrase)
   );
   if (forbidden) {
-    throw new Error(`Article contains forbidden absolute wording: ${forbidden}`);
+    issues.push(`Article contains forbidden absolute wording: ${forbidden}`);
   }
 
-  const coveredThemes = requiredDiscussionTerms.filter((term) =>
+  const requiredThemes = editorialPlan?.requiredThemes ?? requiredDiscussionTerms;
+  const coveredThemes = requiredThemes.filter((term) =>
     article.markdown.includes(term)
   );
   if (coveredThemes.length < 3) {
-    throw new Error(
-      `Article must discuss at least 3 required themes; got ${coveredThemes.join(", ")}.`
-    );
+    issues.push(`Article must discuss at least 3 required themes; got ${coveredThemes.join(", ")}.`);
+  }
+
+  const requiredQualifiers = unique(
+    factPack?.claims
+      .filter((claim) => article.usedClaims.some((used) => used.id === claim.id))
+      .flatMap((claim) => claim.requiredQualifiers) ?? []
+  );
+  const reflectedQualifiers = requiredQualifiers.filter((qualifier) =>
+    article.markdown.includes(qualifier)
+  );
+  if (requiredQualifiers.length > 0 && reflectedQualifiers.length === 0) {
+    issues.push("Article is missing required claim qualifiers.");
+  }
+
+  const unsupportedNumbers = unsupportedArticleNumbers(article, factPack);
+  if (unsupportedNumbers.length > 0) {
+    issues.push(`Article contains unsupported numbers: ${unsupportedNumbers.join(", ")}.`);
+  }
+
+  return issues;
+}
+
+function articleTextForNumberCheck(article: ArticleDraft): string {
+  return [
+    article.title,
+    article.subtitle,
+    article.articleThesis,
+    ...article.sections.map((section) => `${section.heading} ${section.body}`)
+  ]
+    .join("\n")
+    .replace(/https?:\/\/\S+/g, " ");
+}
+
+function allowedNumbersFromFactPack(factPack?: TopicFactPack): Set<string> {
+  const claims =
+    factPack?.claims.filter(
+      (claim) => claim.status === "verified" && (claim.evidenceSnippetIds?.length ?? 0) > 0
+    ) ?? [];
+
+  return new Set(
+    claims.flatMap((claim) => numbersInText(`${claim.statement} ${claim.safeWording}`))
+  );
+}
+
+function unsupportedArticleNumbers(article: ArticleDraft, factPack?: TopicFactPack): string[] {
+  const allowed = allowedNumbersFromFactPack(factPack);
+  const numbers = numbersInText(articleTextForNumberCheck(article));
+  return unique(numbers.filter((number) => !allowed.has(number)));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceUnsupportedNumbers(value: string, unsupportedNumbers: string[]): string {
+  return unsupportedNumbers.reduce((text, number) => {
+    const replacement = number.startsWith("$") ? "相关金额" : "具体数字";
+    return text.replace(new RegExp(escapeRegExp(number), "g"), replacement);
+  }, value);
+}
+
+function forbiddenReplacement(term: string): string {
+  if (/零成本|没有任何成本|永久免费/.test(term)) {
+    return "仍有部署、调用或维护成本边界";
+  }
+  if (/全面领先|最好|第一|碾压/.test(term)) {
+    return "在部分指标上表现值得观察";
+  }
+  if (/已经证明|官方确认所有细节/.test(term)) {
+    return "目前材料显示";
+  }
+  if (/完全替代|唯一选择|终结/.test(term)) {
+    return "影响既有选择";
+  }
+  if (/所有地区都必须|已经违法/.test(term)) {
+    return "需要按适用地区和条款判断";
+  }
+  return "需要保留边界";
+}
+
+function sanitizeArticleBodyText(value: string, factPack?: TopicFactPack): string {
+  const forbiddenTerms = unique([
+    ...forbiddenArticlePhrases,
+    ...(factPack ? forbiddenWordingFromFactPack(factPack) : [])
+  ]).sort((a, b) => b.length - a.length);
+
+  return forbiddenTerms.reduce(
+    (text, term) => text.split(term).join(forbiddenReplacement(term)),
+    sanitizeFactPackTextForHtmlSafety(value)
+  );
+}
+
+function splitSentences(value: string): string[] {
+  return value
+    .split(/(?<=[。！？；])/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function rebuildArticleFromSections(article: ArticleDraft, sections: ArticleSection[]): ArticleDraft {
+  const markdown = createArticleMarkdown(article.title, sections, article.sourceUrl);
+  return {
+    ...article,
+    sections,
+    markdown,
+    wordCount: countArticleChars(markdown)
+  };
+}
+
+function compressSections(article: ArticleDraft, maxSentences: number): ArticleDraft {
+  const sections = article.sections.map((section) => {
+    const sentences = splitSentences(section.body);
+    const body = sentences.length > maxSentences
+      ? sentences.slice(0, maxSentences).join("")
+      : section.body;
+    return { ...section, body };
+  });
+
+  return rebuildArticleFromSections(article, sections);
+}
+
+function repairArticleDraft(input: {
+  article: ArticleDraft;
+  editorialPlan?: EditorialPlan;
+  factPack?: TopicFactPack;
+  repairIndex: 1 | 2;
+}): ArticleDraft {
+  const unsupportedNumbers = unsupportedArticleNumbers(input.article, input.factPack);
+  let article: ArticleDraft = {
+    ...input.article,
+    title: replaceUnsupportedNumbers(
+      sanitizeArticleBodyText(input.article.title, input.factPack),
+      unsupportedNumbers
+    ),
+    subtitle: replaceUnsupportedNumbers(
+      sanitizeArticleBodyText(input.article.subtitle, input.factPack),
+      unsupportedNumbers
+    ),
+    articleThesis: replaceUnsupportedNumbers(
+      sanitizeArticleBodyText(input.article.articleThesis, input.factPack),
+      unsupportedNumbers
+    ),
+    sections: input.article.sections.map((section) => ({
+      ...section,
+      heading: replaceUnsupportedNumbers(
+        sanitizeArticleBodyText(section.heading, input.factPack),
+        unsupportedNumbers
+      ),
+      body: replaceUnsupportedNumbers(
+        sanitizeArticleBodyText(section.body, input.factPack),
+        unsupportedNumbers
+      )
+    }))
+  };
+  article = rebuildArticleFromSections(article, article.sections);
+
+  const requiredThemes = input.editorialPlan?.requiredThemes ?? requiredDiscussionTerms;
+  const missingThemes = requiredThemes.filter((term) => !article.markdown.includes(term));
+  const requiredQualifiers = unique(
+    input.factPack?.claims
+      .filter((claim) => article.usedClaims.some((used) => used.id === claim.id))
+      .flatMap((claim) => claim.requiredQualifiers) ?? []
+  );
+  const hasQualifier = requiredQualifiers.length === 0 ||
+    requiredQualifiers.some((qualifier) => article.markdown.includes(qualifier));
+
+  if (missingThemes.length > 0 || !hasQualifier) {
+    const sections = [...article.sections];
+    const lastIndex = Math.max(0, sections.length - 1);
+    const qualifierSentence = hasQualifier
+      ? ""
+      : "据来源显示，相关判断仍需核验。";
+    const themeSentence = missingThemes.length > 0
+      ? `写法上继续保留${missingThemes.slice(0, 3).join("、")}。`
+      : "";
+    sections[lastIndex] = {
+      ...sections[lastIndex],
+      body: `${sections[lastIndex]?.body ?? ""} ${qualifierSentence}${themeSentence}`.trim()
+    };
+    article = rebuildArticleFromSections(article, sections);
+  }
+
+  if (article.wordCount > 1500) {
+    article = compressSections(article, input.repairIndex === 1 ? 3 : 2);
+  }
+  if (article.wordCount > 1500) {
+    article = compressSections(article, 1);
+  }
+
+  return {
+    ...article,
+    wordCount: countArticleChars(article.markdown)
+  };
+}
+
+function createValidationRecord(input: {
+  stage: "attempt-1" | "repair-1" | "repair-2" | "final";
+  article: ArticleDraft;
+  meta: ArticleMeta;
+  issues: string[];
+}): Record<string, unknown> {
+  return {
+    stage: input.stage,
+    passed: input.issues.length === 0,
+    title: input.article.title,
+    wordCount: input.article.wordCount,
+    issueCount: input.issues.length,
+    issues: input.issues,
+    usedClaimIds: input.meta.usedClaims.map((claim) => claim.id).filter(Boolean),
+    generatedAt: input.meta.generatedAt
+  };
+}
+
+async function writeArticleAttemptArtifacts(input: {
+  files: ArticleWritingOutputFiles;
+  records: Array<Record<string, unknown>>;
+}): Promise<void> {
+  const byStage = new Map(input.records.map((record) => [record.stage, record]));
+  const attempt = byStage.get("attempt-1");
+  const repair1 = byStage.get("repair-1");
+  const repair2 = byStage.get("repair-2");
+  const final = byStage.get("final");
+  if (attempt) {
+    await writeJson(input.files.articleAttempt1, attempt);
+  }
+  if (repair1) {
+    await writeJson(input.files.articleRepair1, repair1);
+  }
+  if (repair2) {
+    await writeJson(input.files.articleRepair2, repair2);
+  }
+  if (final) {
+    await writeJson(input.files.articleValidation, final);
   }
 }
 
@@ -365,7 +771,8 @@ function createMeta(
   article: ArticleDraft,
   generatedAt: string,
   llm: LlmRunMetadata,
-  editorialApproval?: EditorialApproval
+  editorialApproval?: EditorialApproval,
+  editorialPlan?: EditorialPlan
 ): ArticleMeta {
   return {
     title: article.title,
@@ -374,6 +781,17 @@ function createMeta(
     articleThesis: article.articleThesis,
     usedClaims: article.usedClaims,
     riskControls: article.riskControls,
+    editorialPlan: editorialPlan
+      ? {
+          id: editorialPlan.id,
+          contentMode: editorialPlan.contentMode,
+          sectionClaimMap: editorialPlan.sections.map((section) => ({
+            sectionId: section.id,
+            allowedClaimIds: section.allowedClaimIds
+          })),
+          requiredThemes: editorialPlan.requiredThemes
+        }
+      : undefined,
     editorialApproval,
     llm,
     generatedAt
@@ -383,7 +801,8 @@ function createMeta(
 function createWritingReport(
   article: ArticleDraft,
   meta: ArticleMeta,
-  editorialStyle?: EditorialStyleLoadResult
+  editorialStyle?: EditorialStyleLoadResult,
+  editorialPlan?: EditorialPlan
 ): string {
   return [
     "# Article Writing Report",
@@ -396,7 +815,14 @@ function createWritingReport(
     `- approvedTopicId: ${meta.editorialApproval?.approvedTopicId || "none"}`,
     `- approvedTitleReference: ${meta.editorialApproval?.approvedTitle || "none"}`,
     `- approvalNotes: ${meta.editorialApproval?.notes || "none"}`,
-    "- appliedStructure: 冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断",
+    `- editorialPlanRead: ${editorialPlan ? "yes" : "no"}`,
+    `- editorialPlanId: ${editorialPlan?.id ?? "none"}`,
+    `- contentMode: ${editorialPlan?.contentMode ?? "legacy"}`,
+    `- appliedStructure: ${
+      editorialPlan
+        ? editorialPlan.structure.join(" → ")
+        : "冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断"
+    }`,
     "- appliedTone: 第三视角、旁观者分析、通俗但犀利、非通稿、非营销号腔",
     "",
     "## 文章标题",
@@ -421,11 +847,20 @@ function createWritingReport(
         `- ${claim.claim}\n  - safeWording: ${claim.safeWording}\n  - sources: ${claim.sourceUrls.map((url) => `<${url}>`).join(", ")}`
     ),
     "",
+    "## Editorial Plan Section Claim Map",
+    "",
+    ...(editorialPlan
+      ? editorialPlan.sections.map(
+          (section) =>
+            `- ${section.id}: ${section.allowedClaimIds.join(", ") || "none"}`
+        )
+      : ["- none"]),
+    "",
     "## 避免的高风险表达",
     "",
-    "- 没有把 Claude Code 写成单独固定高价工具。",
-    "- 没有把 Goose 写成无任何成本的工具。",
-    "- 没有把 Goose 和 Claude Code 写成能力等同、无差别迁移或胜负已定。",
+    "- 没有把价格、免费层或开源表述写成零成本。",
+    "- 没有把不同产品或方案写成能力等同、全面替代或无差别迁移。",
+    "- 没有把单一指标、案例或媒体标题写成确定性行业结论。",
     "- 没有把媒体标题或搜索摘要当作确定性事实来源。",
     "",
     "## 1500 字限制",
@@ -443,21 +878,27 @@ function createWritingReport(
 export function writeArticle(
   topic: SelectedTopic,
   factPack: TopicFactPack,
-  options: { now?: Date; editorialApproval?: EditorialApproval } = {}
+  options: {
+    now?: Date;
+    editorialApproval?: EditorialApproval;
+    editorialPlan?: EditorialPlan;
+  } = {}
 ): ArticleDraft {
   if (factPack.sourceReliability === "low") {
     throw new Error("Topic fact pack sourceReliability is low; stop before writing.");
   }
 
-  const title = pickTitle(topic);
-  const sections = createArticleSections(topic, factPack);
+  const title = pickTitle(topic, options.editorialPlan);
+  const sections = createArticleSections(topic, factPack, options.editorialPlan);
   const markdown = createArticleMarkdown(title, sections, topic.selected.url);
   const wordCount = countArticleChars(markdown);
-  const usedClaims = usedClaimsFromFactPack(factPack);
-  const riskControls = createRiskControls(factPack);
+  const usedClaims = usedClaimsFromFactPack(factPack, options.editorialPlan);
+  const riskControls = createRiskControls(factPack, options.editorialPlan);
   const article: ArticleDraft = {
     title,
-    subtitle: "这不是简单的价格对比，而是 coding agent 工作流入口之争。",
+    subtitle: options.editorialPlan
+      ? `${options.editorialPlan.contentMode} 模式下的事实边界和读者影响。`
+      : "这不是简单复述资讯，而是梳理事实边界和读者影响。",
     sourceTitle: topic.selected.title,
     sourceUrl: topic.selected.url,
     sourceName: topic.selected.sourceName,
@@ -474,10 +915,11 @@ export function writeArticle(
     article,
     article.createdAt,
     mockLlmMetadata(resolveLlmStageConfig("article-writer", {})),
-    options.editorialApproval
+    options.editorialApproval,
+    options.editorialPlan
   );
 
-  validateArticle(article, meta);
+  validateArticle(article, meta, options.editorialPlan, factPack);
   return article;
 }
 
@@ -592,8 +1034,9 @@ function createArticleWriterSystemPrompt(): string {
     "不要输出 <think> 或任何思考过程。",
     "必须符合给定字段结构。",
     "中文内容放在 JSON 字段值里。",
+    "JSON 字符串值内部不要使用英文双引号，引用概念时使用中文引号“”。",
     "不得编造事实，不得把搜索摘要当确定性事实。",
-    "保持第三视角、非通稿、1500 字以内。",
+    "保持第三视角、非通稿，目标 1250 到 1400 个中文字符，硬上限 1500 个中文字符。",
     "禁止写发布、群发、确认发送、立即发送等公众号操作内容。"
   ].join("\n");
 }
@@ -601,6 +1044,7 @@ function createArticleWriterSystemPrompt(): string {
 function createArticleWriterUserPrompt(input: {
   topic: SelectedTopic;
   factPack: TopicFactPack;
+  editorialPlan?: EditorialPlan;
   editorialStyle?: EditorialStyleLoadResult;
   editorialApproval?: EditorialApproval;
   titleContext?: string;
@@ -612,17 +1056,18 @@ function createArticleWriterUserPrompt(input: {
     "只返回 JSON，不要 Markdown，不要解释，不要代码块，不要前后缀文本，不要输出 <think> 或任何思考过程。",
     "必须包含 title、body 或 markdown、usedClaims、riskControls。",
     "中文内容放在 JSON 字段值里。",
+    "JSON 字符串值内部不要使用英文双引号，引用概念时使用中文引号“”。",
     "返回 JSON 结构：",
     "",
     articleWriterExpectedJsonShape,
     "",
     "硬性要求：",
-    "- 正文必须使用 fact pack safeWritingBoundary 和 verifiedClaims.safeWording。",
-    "- 每条 verifiedClaims.safeWording 的关键限定必须在正文中被明确反映，不能只写近似意思。",
-    "- 如果涉及 Claude 高阶订阅价格，正文必须写出“高阶个人订阅方案”或“高阶套餐价格”，并明确“不是 Claude Code 的单独固定价格”。",
-    "- 如果提到媒体标题中“做同一件事”的说法，正文必须明确写出“不等于两者能力边界一致”或“不代表可以无差别迁移”。",
-    "- 不得写 forbidden terms 或 unsafeComparisonClaims。",
-    "- 必须解释开源、工作流、成本、工具锁定中的至少 3 个主题。",
+    "- 正文必须遵守 editorialPlan.sections 的顺序、heading 和 allowedClaimIds。",
+    "- 每一段只能使用对应 section.allowedClaimIds 指向的 factPack.claims.safeWording。",
+    "- factPack.claims.requiredQualifiers 的关键限定必须在正文中明确反映。",
+    "- 只能使用 claimConstraints 中 allowedClaimIds 和 allowedNumbers；不得新增 FactPack 外数字或强事实。",
+    "- 不得写 forbidden terms 或 factPack.claims.forbiddenWording。",
+    "- 必须覆盖 editorialPlan.requiredThemes 中至少 3 个主题。",
     "- 结尾保留原始选题线索 URL。",
     "",
     "writer-context.json:",
@@ -633,6 +1078,7 @@ function createArticleWriterUserPrompt(input: {
 function createArticleWriterRepairPrompt(input: {
   topic: SelectedTopic;
   factPack: TopicFactPack;
+  editorialPlan?: EditorialPlan;
   editorialApproval?: EditorialApproval;
   titleContext?: string;
 }): string {
@@ -642,6 +1088,7 @@ function createArticleWriterRepairPrompt(input: {
     "上一次返回内容不是合法 JSON，或疑似被截断。",
     "请重新生成一篇更短的完整中文公众号文章，并且只返回合法 JSON。",
     "不要 Markdown，不要解释，不要代码块，不要 JSON 外的任何文字。",
+    "JSON 字符串值内部不要使用英文双引号，引用概念时使用中文引号“”。",
     "正文控制在 900 到 1200 个中文字符，避免输出过长导致截断。",
     "必须符合以下结构：",
     articleWriterExpectedJsonShape,
@@ -654,6 +1101,7 @@ function createArticleWriterRepairPrompt(input: {
 function createArticleWriterContext(input: {
   topic: SelectedTopic;
   factPack: TopicFactPack;
+  editorialPlan?: EditorialPlan;
   editorialStyle?: EditorialStyleLoadResult;
   editorialApproval?: EditorialApproval;
   titleContext?: string;
@@ -679,14 +1127,46 @@ function createArticleWriterContext(input: {
       safeWritingBoundary: input.factPack.safeWritingBoundary,
       riskNotes: input.factPack.riskNotes,
       articleAngleSuggestions: input.factPack.articleAngleSuggestions,
-      verifiedClaims: input.factPack.verifiedClaims.map((claim) => ({
-        claim: claim.claim,
+      claims: input.factPack.claims.map((claim) => ({
+        id: claim.id,
+        statement: claim.statement,
+        status: claim.status,
+        evidenceIds: claim.evidenceIds,
+        evidenceSnippetIds: claim.evidenceSnippetIds,
         safeWording: claim.safeWording,
         sourceUrls: claim.sourceUrls,
-        risk: claim.risk
+        requiredQualifiers: claim.requiredQualifiers,
+        forbiddenWording: claim.forbiddenWording,
+        allowedNumbers: numbersInText(`${claim.statement} ${claim.safeWording}`)
       })),
-      unsafeComparisonClaims: input.factPack.comparison.unsafeComparisonClaims
+      forbiddenWording: forbiddenWordingFromFactPack(input.factPack)
     },
+    claimConstraints: {
+      maxArticleChars: 1500,
+      targetArticleChars: [1250, 1400],
+      allowedClaimIds: input.editorialPlan
+        ? unique(input.editorialPlan.sections.flatMap((section) => section.allowedClaimIds))
+        : input.factPack.claims.map((claim) => claim.id),
+      forbiddenNumbersOutsideClaims: true
+    },
+    editorialPlan: input.editorialPlan
+      ? {
+          id: input.editorialPlan.id,
+          contentMode: input.editorialPlan.contentMode,
+          thesis: input.editorialPlan.thesis,
+          requiredThemes: input.editorialPlan.requiredThemes,
+          sections: input.editorialPlan.sections.map((section) => ({
+            id: section.id,
+            heading: section.heading,
+            purpose: section.purpose,
+            allowedClaimIds: section.allowedClaimIds,
+            keyQuestions: section.keyQuestions,
+            writingInstructions: section.writingInstructions,
+            riskControls: section.riskControls
+          })),
+          riskControls: input.editorialPlan.riskControls
+        }
+      : undefined,
     editorialStyle: input.editorialStyle?.loaded
       ? {
           structure: "冲突切入 → 事实解释 → 行业逻辑 → 影响人群 → 趋势判断",
@@ -707,6 +1187,7 @@ async function writeArticleWithMiniMax(input: {
   outputDir: string;
   topic: SelectedTopic;
   factPack: TopicFactPack;
+  editorialPlan?: EditorialPlan;
   topicSelectionReport: string;
   topicFactPackReport: string;
   editorialStyle?: EditorialStyleLoadResult;
@@ -731,23 +1212,27 @@ async function writeArticleWithMiniMax(input: {
     chatCompletion: input.chatCompletion,
     validate: validateArticleWriterPayload
   });
-  const sections = payload.sections;
+  const sections = alignSectionsWithEditorialPlan(payload.sections, input.editorialPlan);
   const title = payload.title;
   const markdown = createArticleMarkdown(title, sections, input.topic.selected.url);
   const wordCount = countArticleChars(markdown);
   const usedClaims = usedClaimsFromFactPack(input.factPack);
+  const plannedUsedClaims = usedClaimsFromFactPack(input.factPack, input.editorialPlan);
   const riskControlsFromModel = Array.isArray(payload.riskControls)
     ? payload.riskControls.filter((value): value is string => typeof value === "string")
     : [];
   const riskControls = [
-    ...new Set([...riskControlsFromModel, ...createRiskControls(input.factPack)])
+    ...new Set([
+      ...riskControlsFromModel,
+      ...createRiskControls(input.factPack, input.editorialPlan)
+    ])
   ];
   const article: ArticleDraft = {
     title,
     subtitle:
       typeof payload.subtitle === "string" && payload.subtitle.trim()
         ? payload.subtitle.trim()
-        : "这不是简单的价格对比，而是 coding agent 工作流入口之争。",
+        : "这不是简单复述资讯，而是梳理事实边界和读者影响。",
     sourceTitle: input.topic.selected.title,
     sourceUrl: input.topic.selected.url,
     sourceName: input.topic.selected.sourceName,
@@ -759,19 +1244,11 @@ async function writeArticleWithMiniMax(input: {
     markdown,
     sections,
     wordCount,
-    usedClaims,
+    usedClaims: plannedUsedClaims.length > 0 ? plannedUsedClaims : usedClaims,
     riskControls,
     createdAt: (input.now ?? new Date()).toISOString()
   };
   const llm = realLlmMetadata(completion, "real");
-  const meta = createMeta(
-    article,
-    article.createdAt,
-    llm,
-    input.editorialApproval
-  );
-
-  validateArticle(article, meta);
   return { article, llm };
 }
 
@@ -788,6 +1265,8 @@ export async function writeArticleWithReport(
     options.topicFactPackFile ?? join(outputDir, "topic-fact-pack.json");
   const topicFactPackReportFile =
     options.topicFactPackReportFile ?? join(outputDir, "topic-fact-pack.md");
+  const editorialPlanFile =
+    options.editorialPlanFile ?? join(outputDir, "editorial-plan.json");
   const writeOutputs = options.writeOutputs ?? true;
   const files = createOutputFiles(outputDir);
   const editorialStyle =
@@ -799,6 +1278,19 @@ export async function writeArticleWithReport(
   const topic = options.topic ?? (await readJsonFile<SelectedTopic>(selectedTopicFile));
   const factPack =
     options.factPack ?? (await readJsonFile<TopicFactPack>(topicFactPackFile));
+  const editorialPlan =
+    options.editorialPlan ??
+    (await readOptionalJsonFile<EditorialPlan>(editorialPlanFile)) ??
+    (
+      await buildEditorialPlan({
+        outputDir,
+        topic,
+        factPack,
+        writeOutputs: false,
+        logger,
+        now: options.now
+      })
+    ).plan;
 
   const topicSelectionReport =
     options.topicSelectionReport ?? (await readRequiredText(topicSelectionReportFile));
@@ -816,6 +1308,7 @@ export async function writeArticleWithReport(
             outputDir,
             topic,
             factPack,
+            editorialPlan,
             topicSelectionReport,
             topicFactPackReport,
             editorialStyle,
@@ -829,7 +1322,8 @@ export async function writeArticleWithReport(
         : {
             article: writeArticle(topic, factPack, {
               now: options.now,
-              editorialApproval: options.editorialApproval
+              editorialApproval: options.editorialApproval,
+              editorialPlan
             }),
             llm: mockLlmMetadata(llmConfig)
           };
@@ -847,14 +1341,70 @@ export async function writeArticleWithReport(
     throw error;
   }
 
-  const { article, llm } = generated;
-  const meta = createMeta(
+  let { article, llm } = generated;
+  let meta = createMeta(
     article,
     article.createdAt,
     llm,
-    options.editorialApproval
+    options.editorialApproval,
+    editorialPlan
   );
-  const report = createWritingReport(article, meta, editorialStyle);
+  const attemptRecords: Array<Record<string, unknown>> = [];
+  const attemptIssues = articleValidationIssues(article, meta, editorialPlan, factPack);
+  attemptRecords.push(
+    createValidationRecord({
+      stage: "attempt-1",
+      article,
+      meta,
+      issues: attemptIssues
+    })
+  );
+
+  for (const repairIndex of [1, 2] as const) {
+    if (articleValidationIssues(article, meta, editorialPlan, factPack).length === 0) {
+      break;
+    }
+    article = repairArticleDraft({
+      article,
+      editorialPlan,
+      factPack,
+      repairIndex
+    });
+    meta = createMeta(
+      article,
+      article.createdAt,
+      llm,
+      options.editorialApproval,
+      editorialPlan
+    );
+    attemptRecords.push(
+      createValidationRecord({
+        stage: repairIndex === 1 ? "repair-1" : "repair-2",
+        article,
+        meta,
+        issues: articleValidationIssues(article, meta, editorialPlan, factPack)
+      })
+    );
+  }
+
+  const finalIssues = articleValidationIssues(article, meta, editorialPlan, factPack);
+  attemptRecords.push(
+    createValidationRecord({
+      stage: "final",
+      article,
+      meta,
+      issues: finalIssues
+    })
+  );
+  if (writeOutputs) {
+    await mkdir(outputDir, { recursive: true });
+    await writeArticleAttemptArtifacts({
+      files,
+      records: attemptRecords
+    });
+  }
+  validateArticle(article, meta, editorialPlan, factPack);
+  const report = createWritingReport(article, meta, editorialStyle, editorialPlan);
 
   if (writeOutputs) {
     await mkdir(outputDir, { recursive: true });

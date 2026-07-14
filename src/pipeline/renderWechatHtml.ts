@@ -74,23 +74,23 @@ const restrictedReplacements: Array<{
   },
   {
     code: "absolute-substitute-claim",
-    pattern: /Goose\s*完全替代\s*Claude\s*Code/gi,
-    replacement: "Goose 在部分工作流上与 Claude Code 有重叠"
+    pattern: /[\w\u4e00-\u9fff-]{2,24}\s*完全替代\s*[\w\u4e00-\u9fff-]{2,24}/gi,
+    replacement: "不同方案只在部分场景有重叠"
   },
   {
     code: "absolute-sameness-claim",
-    pattern: /Goose\s*和\s*Claude\s*Code\s*完全一样/gi,
-    replacement: "Goose 和 Claude Code 不能视为能力边界一致"
+    pattern: /[\w\u4e00-\u9fff-]{2,24}\s*(和|与)\s*[\w\u4e00-\u9fff-]{2,24}\s*完全一样/gi,
+    replacement: "不同方案不能视为能力边界一致"
   },
   {
     code: "zero-cost-claim",
-    pattern: /Goose\s*零成本/g,
-    replacement: "Goose 本体开源但模型调用仍可能产生成本"
+    pattern: /[\w\u4e00-\u9fff-]{2,24}\s*零成本/g,
+    replacement: "相关方案仍需说明潜在成本"
   },
   {
     code: "forced-price-claim",
-    pattern: /Claude\s*Code\s*必须花\s*\$200\s*才能用/gi,
-    replacement: "Claude Code 成本取决于计划、模型和用量"
+    pattern: /[\w\u4e00-\u9fff-]{2,24}\s*必须花\s*\$?\d+[^，。,.]{0,12}\s*才能用/gi,
+    replacement: "具体成本取决于套餐、对象和用量"
   },
   {
     code: "free-substitute-slogan",
@@ -134,12 +134,12 @@ const forbiddenHtmlPatterns = [
   /发布/,
   /确认发送/,
   /立即发送/,
-  /Goose\s*完全替代\s*Claude\s*Code/i,
-  /Goose\s*和\s*Claude\s*Code\s*完全一样/i,
-  /Goose\s*零成本/,
-  /Claude\s*Code\s*必须花\s*\$200\s*才能用/i,
+  /[\w\u4e00-\u9fff-]{2,24}\s*完全替代\s*[\w\u4e00-\u9fff-]{2,24}/i,
+  /[\w\u4e00-\u9fff-]{2,24}\s*(和|与)\s*[\w\u4e00-\u9fff-]{2,24}\s*完全一样/i,
+  /[\w\u4e00-\u9fff-]{2,24}\s*零成本/,
+  /[\w\u4e00-\u9fff-]{2,24}\s*必须花\s*\$?\d+[^，。,.]{0,12}\s*才能用/i,
   /免费平替/,
-  /\$200/i,
+  /\$\d+/i,
   /免费替代高价工具/,
   /能力完全一样/,
   /完全免费且没有任何成本/

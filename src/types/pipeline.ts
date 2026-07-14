@@ -1,4 +1,8 @@
 import type { TopicFactPack } from "./factPack.js";
+import type { TopicProfile } from "./topicProfile.js";
+import type { ResearchPlan } from "./researchPlan.js";
+import type { SourceEvidence } from "./sourceEvidence.js";
+import type { EditorialPlan } from "./editorialPlan.js";
 import type {
   ArticleDraft,
   ArticleMeta,
@@ -42,6 +46,14 @@ export interface PipelineOutputFiles {
   topicSelectionReport: string;
   editorialBrief: string;
   editorialBriefJson: string;
+  topicProfileJson: string;
+  topicProfileReport: string;
+  researchPlanJson: string;
+  researchPlanReport: string;
+  sourceEvidenceJson: string;
+  sourceEvidenceReport: string;
+  editorialPlanJson: string;
+  editorialPlanReport: string;
   topicFactPackJson: string;
   topicFactPackReport: string;
   article: string;
@@ -76,6 +88,10 @@ export interface DailyPipelineArtifacts {
   editorialBrief?: EditorialBrief;
   editorialApproval?: EditorialApprovalLoadResult;
   sourceHealth?: SourceHealthResult;
+  topicProfile?: TopicProfile;
+  researchPlan?: ResearchPlan;
+  sourceEvidence?: SourceEvidence;
+  editorialPlan?: EditorialPlan;
   topicFactPack?: TopicFactPack;
   article?: ArticleDraft;
   articleMeta?: ArticleMeta;

@@ -192,31 +192,22 @@ async function writeDraftFixture(outputDir: string): Promise<void> {
     allowedNextStage: true
   });
   await writeJson(join(outputDir, "topic-fact-pack.json"), {
+    schemaVersion: "2.0",
+    topicId: "fixture-daily-auto-dry-run",
     topicTitle: "AI 编码代理真正卷到的，不是价格，而是工作流",
     generatedAt: "2026-05-29T00:00:00.000Z",
+    entities: [],
     sourceReliability: "medium",
+    sourceReliabilityReason: "测试夹具使用最小事实包结构。",
+    claims: [],
+    unsupportedClaims: [],
+    conflictingClaims: [],
     verifiedClaims: [],
-    comparison: {
-      claudeCode: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls: []
-      },
-      goose: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls: []
-      },
-      similarities: [],
-      differences: [],
-      unsafeComparisonClaims: []
-    },
     safeWritingBoundary: [],
     riskNotes: [],
     recommendedFraming: "",
-    articleAngleSuggestions: []
+    articleAngleSuggestions: [],
+    sourceEvidenceIds: []
   });
 }
 
@@ -306,6 +297,18 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
     safeWording: `Safe wording ${index + 1}`,
     risk: "low"
   }));
+  const dynamicClaims = factClaims.map((claim, index) => ({
+    id: `fixture-claim-${index + 1}`,
+    statement: claim.claim,
+    status: "verified",
+    evidenceIds: [`fixture-evidence-${index + 1}`],
+    sourceUrls: claim.sourceUrls,
+    confidence: 0.9,
+    safeWording: claim.safeWording,
+    requiredQualifiers: ["据来源显示"],
+    forbiddenWording: [],
+    riskDimensions: ["source quality"]
+  }));
 
   await mkdir(coverDir, { recursive: true });
   await writeFile(
@@ -392,31 +395,22 @@ async function writeProductionDraftFixture(outputDir: string): Promise<void> {
   await writeJson(join(outputDir, "selected-topic.json"), selectedTopic);
   await writeFile(join(outputDir, "collection-report.md"), "# Collection\n\n- real only\n", "utf8");
   await writeJson(join(outputDir, "topic-fact-pack.json"), {
+    schemaVersion: "2.0",
+    topicId: "fixture-daily-auto-real-data",
     topicTitle: "OpenAI ships a real AI agent workflow update",
     generatedAt: "2026-05-29T00:00:00.000Z",
+    entities: [],
     sourceReliability: "medium",
+    sourceReliabilityReason: "测试夹具使用真实来源 URL。",
+    claims: dynamicClaims,
+    unsupportedClaims: [],
+    conflictingClaims: [],
     verifiedClaims: factClaims,
-    comparison: {
-      claudeCode: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls
-      },
-      goose: {
-        pricing: "",
-        positioning: "",
-        capabilities: [],
-        sourceUrls
-      },
-      similarities: [],
-      differences: [],
-      unsafeComparisonClaims: []
-    },
     safeWritingBoundary: [],
     riskNotes: [],
     recommendedFraming: "Use verified sources only.",
-    articleAngleSuggestions: []
+    articleAngleSuggestions: [],
+    sourceEvidenceIds: dynamicClaims.flatMap((claim) => claim.evidenceIds)
   });
   await writeFile(coverPath, "png\n", "utf8");
   await writeJson(join(outputDir, "cover.json"), {

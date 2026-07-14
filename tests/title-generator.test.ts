@@ -175,6 +175,8 @@ test("generateTitlesWithReport creates 5 safe candidates and writes final title 
       assert.equal(typeof candidate.wechatFitScore, "number");
       assert.equal(typeof candidate.thesisMatchScore, "number");
       assert.equal(typeof candidate.finalScore, "number");
+      assert.ok(candidate.sourceClaimIds.length > 0);
+      assert.ok(Array.isArray(candidate.matchedThemes));
       assert.deepEqual(candidate.violations, []);
 
       for (const term of FORBIDDEN_TITLE_TERMS) {
@@ -196,6 +198,36 @@ test("generateTitlesWithReport creates 5 safe candidates and writes final title 
     assert.equal(article.split(/\r?\n/, 1)[0].trim(), result.selection.selectedTitle);
     assert.match(report, /最终标题/);
     assert.match(report, /选择理由/);
+    assert.match(report, /sourceClaimIds/);
+    assert.match(report, /matchedThemes/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("generateTitlesWithReport blocks unsupported numbers in approved title references", async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), "title-generator-number-"));
+
+  try {
+    await createArticleFixture(outputDir);
+    const result = await generateTitlesWithReport({
+      outputDir,
+      editorialApproval: {
+        approvedByUser: true,
+        approvedTopicId: "fixture-claude-code-goose",
+        approvedTitle: "AI 定价 999 美元，谁最受影响",
+        notes: "数字标题需要验证。"
+      },
+      logger: silentLogger,
+      now: new Date("2026-05-29T00:00:00.000Z")
+    });
+    const unsafeCandidate = result.candidates.find(
+      (candidate) => candidate.title === "AI 定价 999 美元，谁最受影响"
+    );
+
+    assert.ok(unsafeCandidate);
+    assert.ok(unsafeCandidate.violations.includes("标题数字缺少 claim 支撑"));
+    assert.notEqual(result.selection.selectedTitle, unsafeCandidate.title);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

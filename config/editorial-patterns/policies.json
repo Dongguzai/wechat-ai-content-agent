@@ -1,0 +1,208 @@
+[
+  {
+    "id": "product-launch",
+    "version": "1.0",
+    "title": "产品发布编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["product", "model", "tooling", "creator"],
+      "eventTypes": ["launch", "update"]
+    },
+    "priority": 60,
+    "instructions": [
+      "结构优先写用户问题、产品变化、实际能力、使用限制和目标用户影响。",
+      "避免只复述发布稿。",
+      "把可用性和边界放在正文前半段。"
+    ],
+    "riskRules": [
+      "不得暗示所有用户已经可用。",
+      "不得用演示样例替代实际产品能力。"
+    ]
+  },
+  {
+    "id": "model-benchmark",
+    "version": "1.0",
+    "title": "Benchmark 编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["model", "research"],
+      "eventTypes": ["benchmark"],
+      "riskDimensions": ["指标定义", "测试条件", "厂商自测", "第三方复现"]
+    },
+    "priority": 80,
+    "instructions": [
+      "结构优先写测试内容、指标条件、结果、不能说明什么和行业意义。",
+      "把测试限制写清楚。",
+      "比较结论必须绑定具体指标。"
+    ],
+    "riskRules": [
+      "不得把单项分数写成全面胜负。",
+      "不得省略测试条件。"
+    ]
+  },
+  {
+    "id": "pricing",
+    "version": "1.0",
+    "title": "定价编辑模式",
+    "scope": "editorial",
+    "match": {
+      "eventTypes": ["pricing"],
+      "riskDimensions": ["币种", "生效日期", "订阅与 API 差异", "免费层边界"]
+    },
+    "priority": 75,
+    "instructions": [
+      "结构优先写价格变化、计费边界、不同用户成本、商业原因和用户选择。",
+      "把币种、周期和额外用量写清楚。",
+      "解释免费层和零成本的差异。"
+    ],
+    "riskRules": [
+      "不得把订阅价套到 API 价。",
+      "不得用免费制造误导性标题。"
+    ]
+  },
+  {
+    "id": "funding",
+    "version": "1.0",
+    "title": "融资编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["business"],
+      "eventTypes": ["funding"],
+      "riskDimensions": ["融资金额", "轮次", "投资方", "估值确认状态"]
+    },
+    "priority": 70,
+    "instructions": [
+      "结构优先写融资事实、资金用途、市场位置、风险和趋势判断。",
+      "把估值、收入和客户信息按确认状态分层。",
+      "避免把融资新闻写成胜利通稿。"
+    ],
+    "riskRules": [
+      "不得把融资等同于 PMF 已成。",
+      "不得放大未确认估值。"
+    ]
+  },
+  {
+    "id": "acquisition",
+    "version": "1.0",
+    "title": "并购编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["business"],
+      "eventTypes": ["acquisition"],
+      "riskDimensions": ["交易价格", "监管审批", "整合计划"]
+    },
+    "priority": 70,
+    "instructions": [
+      "结构优先写交易事实、为什么收购、审批和整合风险、行业影响。",
+      "把已完成和待审批状态分开。",
+      "解释对产品线或竞争格局的可能影响。"
+    ],
+    "riskRules": [
+      "不得把待审批写成已完成。",
+      "不得无来源补全交易条款。"
+    ]
+  },
+  {
+    "id": "regulation",
+    "version": "1.0",
+    "title": "政策编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["policy"],
+      "eventTypes": ["regulation"],
+      "riskDimensions": ["司法辖区", "生效时间", "适用对象", "实际义务"]
+    },
+    "priority": 85,
+    "instructions": [
+      "结构优先写政策是什么、适用谁、何时生效、实际义务和企业影响。",
+      "用通俗语言解释义务，不做法律意见。",
+      "明确地域和阶段。"
+    ],
+    "riskRules": [
+      "不得跨地区泛化。",
+      "不得把指南写成法律结论。"
+    ]
+  },
+  {
+    "id": "research-release",
+    "version": "1.0",
+    "title": "论文编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["research"],
+      "eventTypes": ["research_release"],
+      "riskDimensions": ["实验设置", "样本规模", "泛化限制"]
+    },
+    "priority": 65,
+    "instructions": [
+      "结构优先写研究问题、方法、结果、局限和潜在影响。",
+      "减少术语堆叠，把方法翻译成读者能理解的问题。",
+      "局限必须和结果一起出现。"
+    ],
+    "riskRules": [
+      "不得把论文实验写成产品能力。",
+      "不得省略局限。"
+    ]
+  },
+  {
+    "id": "security-incident",
+    "version": "1.0",
+    "title": "安全事故编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["security"],
+      "eventTypes": ["incident"],
+      "riskDimensions": ["影响范围", "披露时间线", "用户数据类型", "修复状态"]
+    },
+    "priority": 90,
+    "instructions": [
+      "结构优先写发生了什么、影响范围、修复状态、用户该做什么和行业教训。",
+      "先写已确认事实，再写仍在调查的信息。",
+      "避免恐慌式表达。"
+    ],
+    "riskRules": [
+      "不得夸大受影响数据。",
+      "不得用事故做无来源攻击。"
+    ]
+  },
+  {
+    "id": "case-study",
+    "version": "1.0",
+    "title": "案例编辑模式",
+    "scope": "editorial",
+    "match": {
+      "primaryDomains": ["application"],
+      "eventTypes": ["case_study"],
+      "riskDimensions": ["供应商案例偏差", "指标口径", "可迁移性"]
+    },
+    "priority": 60,
+    "instructions": [
+      "结构优先写场景、做法、结果、限制和能不能复制。",
+      "解释案例里的人工复核、部署条件和组织约束。",
+      "把供应商叙事降级为案例材料。"
+    ],
+    "riskRules": [
+      "不得把案例数字泛化到所有企业。",
+      "不得忽略供应商案例偏差。"
+    ]
+  },
+  {
+    "id": "generic-safe",
+    "version": "1.0",
+    "title": "通用安全编辑模式",
+    "scope": "editorial",
+    "match": {
+      "fallback": true
+    },
+    "priority": 0,
+    "instructions": [
+      "结构优先写来源线索、事实边界、为什么重要、谁会受影响和下一步观察。",
+      "避免复用旧专题结构。",
+      "不确定信息使用限定语。"
+    ],
+    "riskRules": [
+      "不得把单条资讯写成行业定论。",
+      "不得复用无关选题事实。"
+    ]
+  }
+]

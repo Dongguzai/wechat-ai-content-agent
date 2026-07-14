@@ -13,6 +13,9 @@ export interface SelectedTopic {
 export interface ArticleSection {
   heading: string;
   body: string;
+  planSectionId?: string;
+  role?: string;
+  claimIds?: string[];
 }
 
 export interface ArticleDraft {
@@ -32,9 +35,13 @@ export interface ArticleDraft {
 }
 
 export interface ArticleUsedClaim {
+  id?: string;
   claim: string;
   safeWording: string;
   sourceUrls: string[];
+  evidenceIds?: string[];
+  evidenceSnippetIds?: string[];
+  status?: string;
 }
 
 export interface ArticleMeta {
@@ -44,6 +51,15 @@ export interface ArticleMeta {
   articleThesis: string;
   usedClaims: ArticleUsedClaim[];
   riskControls: string[];
+  editorialPlan?: {
+    id: string;
+    contentMode: string;
+    sectionClaimMap: Array<{
+      sectionId: string;
+      allowedClaimIds: string[];
+    }>;
+    requiredThemes: string[];
+  };
   editorialApproval?: EditorialApproval;
   llm?: LlmRunMetadata;
   generatedAt: string;
@@ -53,6 +69,10 @@ export interface ArticleWritingOutputFiles {
   article: string;
   articleMeta: string;
   articleWritingReport: string;
+  articleAttempt1: string;
+  articleRepair1: string;
+  articleRepair2: string;
+  articleValidation: string;
   articleWritingError: string;
   articleWritingErrorReport: string;
 }
@@ -74,6 +94,11 @@ export type ArticleReviewIssueType =
   | "structure";
 
 export type ArticleReviewSeverity = "low" | "medium" | "high";
+export type ArticleReviewIssueSource =
+  | "local_rule"
+  | "review_policy"
+  | "fact_pack"
+  | "auxiliary_llm";
 
 export interface ArticleReviewIssue {
   type: ArticleReviewIssueType;
@@ -81,6 +106,10 @@ export interface ArticleReviewIssue {
   message: string;
   evidence: string;
   suggestion: string;
+  ruleId: string;
+  policyId?: string;
+  source: ArticleReviewIssueSource;
+  blocking: boolean;
 }
 
 export interface ArticleFactBoundaryCheck {
@@ -106,6 +135,13 @@ export interface ArticleReviewResult {
   optionalSuggestions: string[];
   factBoundaryCheck: ArticleFactBoundaryCheck;
   qualityCheck: ArticleQualityCheck;
+  reviewPolicies?: Array<{
+    id: string;
+    version: string;
+    title: string;
+    sourcePath: string;
+    matchReasons: string[];
+  }>;
   llm?: LlmRunMetadata;
   finalVerdict: string;
   generatedAt: string;

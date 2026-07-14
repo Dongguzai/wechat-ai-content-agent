@@ -28,10 +28,18 @@ export interface DashboardStatus {
   briefSource: "editorial-brief" | "pipeline-outputs" | "missing";
   needsHumanPublish: true;
   steps: DashboardStep[];
+  dynamicArtifacts: DynamicArtifactStatus[];
   selectedTopicTitle?: string;
   finalTitle?: string;
   draftMode?: string;
   safeNotice: string;
+}
+
+export interface DynamicArtifactStatus {
+  key: string;
+  label: string;
+  state: DashboardStep["state"];
+  detail: string;
 }
 
 export interface BriefData {
@@ -67,6 +75,10 @@ export interface ArticleData {
   markdown?: string;
   meta?: JsonObject;
   review?: JsonObject;
+  topicProfile?: JsonObject;
+  researchPlan?: JsonObject;
+  sourceEvidence?: JsonObject;
+  editorialPlan?: JsonObject;
   llmError?: JsonObject;
   wordCount: number;
 }
@@ -179,6 +191,39 @@ function articleFailureDetail(
   );
 }
 
+function dynamicArtifactState(input: {
+  key: string;
+  label: string;
+  value?: JsonObject;
+  detail: string;
+  missingDetail: string;
+  failed?: boolean;
+}): DynamicArtifactStatus {
+  return {
+    key: input.key,
+    label: input.label,
+    state: input.failed ? "failed" : input.value ? "passed" : "missing",
+    detail: input.failed
+      ? input.detail
+      : input.value
+        ? input.detail
+        : input.missingDetail
+  };
+}
+
+function reviewPolicyDetail(articleReview?: JsonObject): string {
+  const policies = Array.isArray(articleReview?.reviewPolicies)
+    ? articleReview.reviewPolicies
+    : [];
+  if (policies.length === 0) {
+    return "尚未记录 ReviewPolicy；文章审核可能尚未运行或仍是旧产物。";
+  }
+
+  return policies
+    .map((policy) => `${String(policy.id ?? "unknown")}@${String(policy.version ?? "-")}`)
+    .join(" / ");
+}
+
 export async function getDashboardStatus(
   options: DashboardFsOptions = {}
 ): Promise<DashboardStatus> {
@@ -189,6 +234,10 @@ export async function getDashboardStatus(
     shortlistedExists,
     selectedTopic,
     approval,
+    topicProfile,
+    researchPlan,
+    sourceEvidence,
+    editorialPlan,
     articleMeta,
     articleReview,
     coverReview,
@@ -208,6 +257,10 @@ export async function getDashboardStatus(
     safeFileExists("outputs/shortlisted-news.json", options),
     readJsonFile<JsonObject>("outputs/selected-topic.json", options),
     readJsonFile<JsonObject>("inputs/editorial-approval.json", options),
+    readJsonFile<JsonObject>("outputs/topic-profile.json", options),
+    readJsonFile<JsonObject>("outputs/research-plan.json", options),
+    readJsonFile<JsonObject>("outputs/source-evidence.json", options),
+    readJsonFile<JsonObject>("outputs/editorial-plan.json", options),
     readJsonFile<JsonObject>("outputs/article-meta.json", options),
     readJsonFile<JsonObject>("outputs/article-review.json", options),
     readJsonFile<JsonObject>("outputs/cover-review.json", options),
@@ -252,11 +305,57 @@ export async function getDashboardStatus(
       apiDraft?.media_id ||
       apiDraft?.mediaId
   );
+  const dynamicArtifacts: DynamicArtifactStatus[] = [
+    dynamicArtifactState({
+      key: "topic-profile",
+      label: "选题画像",
+      value: topicProfile,
+      detail: topicProfile
+        ? `${String(topicProfile.primaryDomain ?? "-")} / ${Array.isArray(topicProfile.eventTypes) ? topicProfile.eventTypes.join(", ") : "-"}`
+        : "",
+      missingDetail: "尚未生成 topic-profile.json。"
+    }),
+    dynamicArtifactState({
+      key: "research-plan",
+      label: "调研计划",
+      value: researchPlan,
+      detail: researchPlan
+        ? `${Array.isArray(researchPlan.tasks) ? researchPlan.tasks.length : 0} 个任务；policy=${Array.isArray(researchPlan.policyRefs) ? researchPlan.policyRefs.length : 0}`
+        : "",
+      missingDetail: "尚未生成 research-plan.json。"
+    }),
+    dynamicArtifactState({
+      key: "source-evidence",
+      label: "来源证据",
+      value: sourceEvidence,
+      detail: sourceEvidence
+        ? `${Array.isArray(sourceEvidence.items) ? sourceEvidence.items.length : 0} 个来源；mode=${String(sourceEvidence.collectionMode ?? "-")}`
+        : "",
+      missingDetail: "尚未生成 source-evidence.json。"
+    }),
+    dynamicArtifactState({
+      key: "editorial-plan",
+      label: "编辑计划",
+      value: editorialPlan,
+      detail: editorialPlan
+        ? `${Array.isArray(editorialPlan.sections) ? editorialPlan.sections.length : 0} 个段落；mode=${String(editorialPlan.contentMode ?? "-")}`
+        : "",
+      missingDetail: "尚未生成 editorial-plan.json。"
+    }),
+    dynamicArtifactState({
+      key: "review-policy",
+      label: "审核策略",
+      value: articleReview?.reviewPolicies ? articleReview : undefined,
+      detail: reviewPolicyDetail(articleReview),
+      missingDetail: "文章审核尚未记录 ReviewPolicy。"
+    })
+  ];
 
   return {
     generatedAt: new Date().toISOString(),
     briefSource,
     needsHumanPublish: true,
+    dynamicArtifacts,
     selectedTopicTitle: selectedTopic?.selected?.title,
     finalTitle: articleMeta?.title ?? titleCandidates?.selectedTitle,
     draftMode: draft?.mode ?? apiDraft?.mode,
@@ -281,6 +380,12 @@ export async function getDashboardStatus(
           ? `已确认：${approval.approvedTitle || approval.approvedTopicId || "未命名选题"}`
           : "等待在 /approval 确认。"
       },
+      ...dynamicArtifacts.map((artifact) => ({
+        key: artifact.key,
+        label: artifact.label,
+        state: artifact.state,
+        detail: artifact.detail
+      })),
       {
         key: "article",
         label: "文章生成",
@@ -401,6 +506,10 @@ export async function getArticleData(options: DashboardFsOptions = {}): Promise<
     markdown,
     meta,
     review,
+    topicProfile,
+    researchPlan,
+    sourceEvidence,
+    editorialPlan,
     metaWithMtime,
     llmJsonErrorWithMtime,
     articleWritingErrorWithMtime
@@ -408,6 +517,10 @@ export async function getArticleData(options: DashboardFsOptions = {}): Promise<
     readTextFile("outputs/article.md", options),
     readJsonFile<JsonObject>("outputs/article-meta.json", options),
     readJsonFile<JsonObject>("outputs/article-review.json", options),
+    readJsonFile<JsonObject>("outputs/topic-profile.json", options),
+    readJsonFile<JsonObject>("outputs/research-plan.json", options),
+    readJsonFile<JsonObject>("outputs/source-evidence.json", options),
+    readJsonFile<JsonObject>("outputs/editorial-plan.json", options),
     readJsonWithMtime<JsonObject>("outputs/article-meta.json", options),
     readJsonWithMtime<JsonObject>("outputs/llm-json-error.json", options),
     readJsonWithMtime<JsonObject>("outputs/article-writing-error.json", options)
@@ -433,6 +546,10 @@ export async function getArticleData(options: DashboardFsOptions = {}): Promise<
     markdown,
     meta,
     review,
+    topicProfile,
+    researchPlan,
+    sourceEvidence,
+    editorialPlan,
     llmError: articleWriterFailed ? latestArticleFailure?.value : undefined,
     wordCount: Number(meta?.wordCount ?? countReadableUnits(markdown ?? ""))
   };

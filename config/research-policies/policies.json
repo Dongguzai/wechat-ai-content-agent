@@ -1,0 +1,208 @@
+[
+  {
+    "id": "product-launch",
+    "version": "1.0",
+    "title": "产品发布调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["product", "model", "tooling", "creator"],
+      "eventTypes": ["launch", "update"]
+    },
+    "priority": 60,
+    "instructions": [
+      "核验是否正式发布、发布时间、可用地区和开放对象。",
+      "区分公告、预览、灰度开放和已经可用。",
+      "记录功能边界、分批开放范围和限制条件。"
+    ],
+    "riskRules": [
+      "不得把预览或 waitlist 写成全面可用。",
+      "不得把产品演示当成稳定能力。"
+    ]
+  },
+  {
+    "id": "model-benchmark",
+    "version": "1.0",
+    "title": "模型与 benchmark 调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["model", "research"],
+      "eventTypes": ["benchmark"],
+      "riskDimensions": ["指标定义", "测试条件", "厂商自测", "第三方复现"]
+    },
+    "priority": 80,
+    "instructions": [
+      "记录 benchmark 名称、指标定义、测试条件和对比基线。",
+      "区分官方自测、第三方评测和论文实验。",
+      "寻找是否存在第三方复现或公开评测脚本。"
+    ],
+    "riskRules": [
+      "不得把厂商自测写成独立第三方结论。",
+      "不得把单项指标外推为全面领先。"
+    ]
+  },
+  {
+    "id": "pricing",
+    "version": "1.0",
+    "title": "定价调研",
+    "scope": "research",
+    "match": {
+      "eventTypes": ["pricing"],
+      "riskDimensions": ["币种", "生效日期", "订阅与 API 差异", "免费层边界"]
+    },
+    "priority": 75,
+    "instructions": [
+      "核验套餐、币种、月付或年付、生效日期和额外用量。",
+      "区分 API 计费、订阅席位、企业计划和免费层。",
+      "记录免费、试用、开源和零成本之间的差异。"
+    ],
+    "riskRules": [
+      "不得把免费层写成永久零成本。",
+      "不得混淆 API 价格和订阅价格。"
+    ]
+  },
+  {
+    "id": "funding",
+    "version": "1.0",
+    "title": "融资调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["business"],
+      "eventTypes": ["funding"],
+      "riskDimensions": ["融资金额", "轮次", "投资方", "估值确认状态"]
+    },
+    "priority": 70,
+    "instructions": [
+      "核验融资金额、轮次、投资方和资金用途。",
+      "区分公司公告、投资方确认和媒体援引。",
+      "估值未获官方确认时必须标记为传闻或未确认。"
+    ],
+    "riskRules": [
+      "不得把未确认估值写成官方事实。",
+      "不得把融资完成推导为商业模式已验证。"
+    ]
+  },
+  {
+    "id": "acquisition",
+    "version": "1.0",
+    "title": "并购调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["business"],
+      "eventTypes": ["acquisition"],
+      "riskDimensions": ["交易价格", "监管审批", "整合计划"]
+    },
+    "priority": 70,
+    "instructions": [
+      "核验交易双方、交易价格、审批状态和整合时间表。",
+      "区分已签署、已完成、待监管批准和市场传闻。",
+      "记录交易对竞争格局和产品路线的可能影响。"
+    ],
+    "riskRules": [
+      "不得把待审批交易写成已经完成。",
+      "不得在缺少来源时补全交易价格。"
+    ]
+  },
+  {
+    "id": "regulation",
+    "version": "1.0",
+    "title": "政策法规调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["policy"],
+      "eventTypes": ["regulation"],
+      "riskDimensions": ["司法辖区", "生效时间", "适用对象", "实际义务"]
+    },
+    "priority": 85,
+    "instructions": [
+      "读取政策原文或官方摘要，记录司法辖区、生效时间和适用对象。",
+      "区分草案、指南、正式法规和执法行动。",
+      "拆解实际义务，不把政策口号写成具体合规要求。"
+    ],
+    "riskRules": [
+      "不得把草案写成已生效法规。",
+      "不得跨司法辖区泛化义务。"
+    ]
+  },
+  {
+    "id": "research-release",
+    "version": "1.0",
+    "title": "研究发布调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["research"],
+      "eventTypes": ["research_release"],
+      "riskDimensions": ["实验设置", "样本规模", "泛化限制"]
+    },
+    "priority": 65,
+    "instructions": [
+      "核验论文原文、实验设置、样本规模、数据集和代码可用性。",
+      "记录作者声明的局限和未解决问题。",
+      "区分预印本、同行评审论文和实验性项目。"
+    ],
+    "riskRules": [
+      "不得把实验结果写成已产品化能力。",
+      "不得忽略论文局限。"
+    ]
+  },
+  {
+    "id": "security-incident",
+    "version": "1.0",
+    "title": "安全事故调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["security"],
+      "eventTypes": ["incident"],
+      "riskDimensions": ["影响范围", "披露时间线", "用户数据类型", "修复状态"]
+    },
+    "priority": 90,
+    "instructions": [
+      "优先读取官方事故报告、状态页和安全公告。",
+      "记录影响范围、数据类型、披露时间线、修复状态和用户补救动作。",
+      "区分已确认泄露、短暂暴露、配置错误和调查中状态。"
+    ],
+    "riskRules": [
+      "不得夸大泄露范围。",
+      "不得在官方未确认时断言正文或敏感数据已泄露。"
+    ]
+  },
+  {
+    "id": "case-study",
+    "version": "1.0",
+    "title": "案例调研",
+    "scope": "research",
+    "match": {
+      "primaryDomains": ["application"],
+      "eventTypes": ["case_study"],
+      "riskDimensions": ["供应商案例偏差", "指标口径", "可迁移性"]
+    },
+    "priority": 60,
+    "instructions": [
+      "记录案例来源、供应商参与程度、指标口径和是否有第三方材料。",
+      "核验节省时间、降本、准确率等数字的测量方式。",
+      "评估案例是否可迁移到其他行业或团队。"
+    ],
+    "riskRules": [
+      "不得把供应商案例写成普遍行业事实。",
+      "不得省略人工复核和部署条件。"
+    ]
+  },
+  {
+    "id": "generic-safe",
+    "version": "1.0",
+    "title": "通用安全调研",
+    "scope": "research",
+    "match": {
+      "fallback": true
+    },
+    "priority": 0,
+    "instructions": [
+      "先确认原始来源和发布日期。",
+      "区分事实、媒体概括、搜索线索和编辑判断。",
+      "列出无法核验的信息，不自动补全。"
+    ],
+    "riskRules": [
+      "不得伪造来源。",
+      "不得把搜索摘要当作已核验事实。"
+    ]
+  }
+]

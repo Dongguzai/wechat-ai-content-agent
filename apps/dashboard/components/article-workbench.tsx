@@ -542,6 +542,11 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
             <h3 className="text-sm font-bold text-ink">轻量状态</h3>
             <dl className="mt-3 space-y-3 text-sm">
               <StatusLine label="文章审核" value={article.review?.passed === true ? "通过" : article.review ? "未通过" : "未生成"} />
+              <StatusLine label="选题画像" value={dynamicProfileLabel(article.topicProfile)} />
+              <StatusLine label="调研任务" value={countLabel(article.researchPlan?.tasks, "个")} />
+              <StatusLine label="来源证据" value={countLabel(article.sourceEvidence?.items, "条")} />
+              <StatusLine label="编辑段落" value={countLabel(article.editorialPlan?.sections, "段")} />
+              <StatusLine label="审核策略" value={reviewPolicyLabel(article.review)} />
               <StatusLine
                 label="封面审核"
                 value={
@@ -558,7 +563,19 @@ export function ArticleWorkbench({ article, titleData, cover }: ArticleWorkbench
             <details className="mt-4">
               <summary className="cursor-pointer text-xs font-semibold text-stone-600">查看详情</summary>
               <pre className="mt-3 max-h-80 overflow-auto bg-stone-950 p-3 text-xs leading-5 text-stone-100">
-                {JSON.stringify({ articleMeta: article.meta, articleReview: article.review, cover: coverJson }, null, 2)}
+                {JSON.stringify(
+                  {
+                    topicProfile: article.topicProfile,
+                    researchPlan: article.researchPlan,
+                    sourceEvidence: article.sourceEvidence,
+                    editorialPlan: article.editorialPlan,
+                    articleMeta: article.meta,
+                    articleReview: article.review,
+                    cover: coverJson
+                  },
+                  null,
+                  2
+                )}
               </pre>
             </details>
           </section>
@@ -742,6 +759,26 @@ function StatusLine({ label, value }: { label: string; value: string }) {
       <dd className="font-semibold text-ink">{value}</dd>
     </div>
   );
+}
+
+function dynamicProfileLabel(profile: JsonObject | undefined): string {
+  if (!profile) {
+    return "未生成";
+  }
+  const eventTypes = Array.isArray(profile.eventTypes) ? profile.eventTypes.join("/") : "-";
+  return `${String(profile.primaryDomain ?? "-")} / ${eventTypes}`;
+}
+
+function countLabel(value: unknown, unit: string): string {
+  return Array.isArray(value) ? `${value.length}${unit}` : "未生成";
+}
+
+function reviewPolicyLabel(review: JsonObject | undefined): string {
+  const policies = Array.isArray(review?.reviewPolicies) ? review.reviewPolicies : [];
+  if (!policies.length) {
+    return review ? "未记录" : "未生成";
+  }
+  return policies.map((policy) => String(policy.id ?? "unknown")).join(" / ");
 }
 
 async function postJson(url: string, body?: unknown): Promise<JsonObject> {
