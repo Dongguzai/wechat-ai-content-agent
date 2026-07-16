@@ -7,6 +7,7 @@ import type {
   CloudRunType,
   CloudShortlistedItemRecord,
   CloudTopicSelectionRecord,
+  ArticleGenerationStepRecord,
   ArticleGenerationStage,
   ArticleGenerationTaskRecord,
   TodayBriefPayload
@@ -48,9 +49,58 @@ export interface EditorialBriefDbAdapter {
     createdAt: string;
   }): Promise<ArticleGenerationTaskRecord>;
   getArticleGenerationTask(taskId: string): Promise<ArticleGenerationTaskRecord | undefined>;
+  getTopicSelectionById(topicSelectionId: string): Promise<CloudTopicSelectionRecord | undefined>;
   getActiveArticleGenerationTaskByTopicSelection(
     topicSelectionId: string
   ): Promise<ArticleGenerationTaskRecord | undefined>;
+  claimNextArticleGenerationTask(input: {
+    workerId: string;
+    claimedAt: string;
+  }): Promise<ArticleGenerationTaskRecord | undefined>;
+  getArticleGenerationSteps(taskId: string): Promise<ArticleGenerationStepRecord[]>;
+  startArticleGenerationStep(input: {
+    id: string;
+    taskId: string;
+    stage: ArticleGenerationStage;
+    attempt: number;
+    message: string;
+    inputJson?: unknown;
+    startedAt: string;
+  }): Promise<ArticleGenerationStepRecord>;
+  completeArticleGenerationStep(input: {
+    taskId: string;
+    stage: ArticleGenerationStage;
+    attempt: number;
+    message: string;
+    outputJson?: unknown;
+    finishedAt: string;
+  }): Promise<ArticleGenerationStepRecord | undefined>;
+  failArticleGenerationStep(input: {
+    taskId: string;
+    stage: ArticleGenerationStage;
+    attempt: number;
+    status?: "failed" | "cancelled";
+    message: string;
+    errorMessage?: string;
+    finishedAt: string;
+  }): Promise<ArticleGenerationStepRecord | undefined>;
+  completeTopicAnalysisAndRequeue(input: {
+    taskId: string;
+    workerId: string;
+    completedAt: string;
+    message: string;
+  }): Promise<ArticleGenerationTaskRecord | undefined>;
+  failArticleGenerationTask(input: {
+    taskId: string;
+    workerId: string;
+    failedAt: string;
+    message: string;
+    errorMessage: string;
+  }): Promise<ArticleGenerationTaskRecord | undefined>;
+  recoverStaleArticleGenerationTasks(input: {
+    staleBefore: string;
+    recoveredAt: string;
+  }): Promise<{ requeued: number; failed: number }>;
   cancelArticleGenerationTask(input: {
     taskId: string;
     cancelledAt: string;
@@ -239,8 +289,32 @@ function toArticleGenerationTask(row: Record<string, unknown>): ArticleGeneratio
     currentStage: String(row.current_stage) as ArticleGenerationTaskRecord["currentStage"],
     progress: Number(row.progress),
     message: String(row.message),
+    attempt: Number(row.attempt ?? 0),
+    maxAttempts: Number(row.max_attempts ?? 2),
+    lockedBy: row.locked_by ? String(row.locked_by) : undefined,
+    lockedAt: optionalIso(row.locked_at),
+    startedAt: optionalIso(row.started_at),
+    finishedAt: optionalIso(row.finished_at),
     errorMessage: row.error_message ? String(row.error_message) : undefined,
     cancelledAt: optionalIso(row.cancelled_at),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function toArticleGenerationStep(row: Record<string, unknown>): ArticleGenerationStepRecord {
+  return {
+    id: String(row.id),
+    taskId: String(row.task_id),
+    stage: String(row.stage) as ArticleGenerationStepRecord["stage"],
+    status: String(row.status) as ArticleGenerationStepRecord["status"],
+    attempt: Number(row.attempt),
+    message: String(row.message),
+    inputJson: row.input_json ?? undefined,
+    outputJson: row.output_json ?? undefined,
+    errorMessage: row.error_message ? String(row.error_message) : undefined,
+    startedAt: optionalIso(row.started_at),
+    finishedAt: optionalIso(row.finished_at),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
   };
@@ -371,10 +445,40 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
           ),
           progress integer not null default 0 check (progress >= 0 and progress <= 100),
           message text not null,
+          attempt integer not null default 0,
+          max_attempts integer not null default 2,
+          locked_by text,
+          locked_at timestamptz,
+          started_at timestamptz,
+          finished_at timestamptz,
           error_message text,
           cancelled_at timestamptz,
           created_at timestamptz not null default now(),
           updated_at timestamptz not null default now()
+        )
+      `;
+      await sql`alter table article_generation_tasks add column if not exists attempt integer not null default 0`;
+      await sql`alter table article_generation_tasks add column if not exists max_attempts integer not null default 2`;
+      await sql`alter table article_generation_tasks add column if not exists locked_by text`;
+      await sql`alter table article_generation_tasks add column if not exists locked_at timestamptz`;
+      await sql`alter table article_generation_tasks add column if not exists started_at timestamptz`;
+      await sql`alter table article_generation_tasks add column if not exists finished_at timestamptz`;
+      await sql`
+        create table if not exists article_generation_steps (
+          id text primary key,
+          task_id text not null references article_generation_tasks(id) on delete cascade,
+          stage text not null,
+          status text not null check (status in ('queued', 'running', 'success', 'failed', 'cancelled', 'skipped')),
+          attempt integer not null default 1,
+          message text not null,
+          input_json jsonb,
+          output_json jsonb,
+          error_message text,
+          started_at timestamptz,
+          finished_at timestamptz,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now(),
+          unique (task_id, stage, attempt)
         )
       `;
       await sql`create index if not exists news_items_run_id_idx on news_items(run_id)`;
@@ -384,6 +488,9 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
       await sql`create index if not exists article_generation_tasks_topic_selection_id_idx on article_generation_tasks(topic_selection_id)`;
       await sql`create index if not exists article_generation_tasks_run_id_idx on article_generation_tasks(run_id)`;
       await sql`create index if not exists article_generation_tasks_status_updated_at_idx on article_generation_tasks(status, updated_at)`;
+      await sql`create index if not exists article_generation_tasks_claim_idx on article_generation_tasks(status, current_stage, created_at)`;
+      await sql`create index if not exists article_generation_tasks_locked_idx on article_generation_tasks(status, locked_at)`;
+      await sql`create index if not exists article_generation_steps_task_created_idx on article_generation_steps(task_id, created_at)`;
       await sql`
         create unique index if not exists article_generation_tasks_active_topic_idx
         on article_generation_tasks(run_id, selected_topic_id)
@@ -569,6 +676,15 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
       return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
     },
 
+    async getTopicSelectionById(topicSelectionId) {
+      const rows = await sql`
+        select * from topic_selections
+        where id = ${topicSelectionId}
+        limit 1
+      `;
+      return rows[0] ? toTopicSelection(rows[0]) : undefined;
+    },
+
     async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId) {
       const rows = await sql`
         select * from article_generation_tasks
@@ -580,25 +696,178 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
       return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
     },
 
-    async cancelArticleGenerationTask(input) {
-      const existingRows = await sql`
-        select * from article_generation_tasks
-        where id = ${input.taskId}
-        limit 1
+    async claimNextArticleGenerationTask(input) {
+      const rows = await sql`
+        with next_task as (
+          select id
+          from article_generation_tasks
+          where status = 'queued'
+            and current_stage = 'waiting_for_worker'
+          order by created_at asc
+          for update skip locked
+          limit 1
+        )
+        update article_generation_tasks
+        set status = 'running',
+            current_stage = 'topic_analysis',
+            progress = 5,
+            message = '正在分析选题',
+            attempt = attempt + 1,
+            locked_by = ${input.workerId},
+            locked_at = ${new Date(input.claimedAt)},
+            started_at = coalesce(started_at, ${new Date(input.claimedAt)}),
+            updated_at = ${new Date(input.claimedAt)}
+        from next_task
+        where article_generation_tasks.id = next_task.id
+        returning article_generation_tasks.*
       `;
-      const existing = existingRows[0] ? toArticleGenerationTask(existingRows[0]) : undefined;
-      if (!existing) {
-        return undefined;
-      }
-      if (existing.status === "cancelled") {
-        return existing;
-      }
-      if (existing.status === "success" || existing.status === "failed") {
-        throw new Error(
-          `Article generation task cannot be cancelled from status ${existing.status}.`
-        );
-      }
+      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
+    },
 
+    async getArticleGenerationSteps(taskId) {
+      const rows = await sql`
+        select * from article_generation_steps
+        where task_id = ${taskId}
+        order by created_at asc, stage asc, attempt asc
+      `;
+      return rows.map((row) => toArticleGenerationStep(row));
+    },
+
+    async startArticleGenerationStep(input) {
+      const rows = await sql`
+        insert into article_generation_steps (
+          id, task_id, stage, status, attempt, message, input_json, output_json,
+          error_message, started_at, finished_at, created_at, updated_at
+        )
+        values (
+          ${input.id}, ${input.taskId}, ${input.stage}, 'running', ${input.attempt},
+          ${input.message}, ${sql.json((input.inputJson ?? null) as never)}, null,
+          null, ${new Date(input.startedAt)}, null, ${new Date(input.startedAt)}, ${new Date(input.startedAt)}
+        )
+        on conflict (task_id, stage, attempt) do update set
+          status = 'running',
+          message = excluded.message,
+          input_json = excluded.input_json,
+          output_json = null,
+          error_message = null,
+          started_at = excluded.started_at,
+          finished_at = null,
+          updated_at = excluded.updated_at
+        returning *
+      `;
+      return toArticleGenerationStep(rows[0]);
+    },
+
+    async completeArticleGenerationStep(input) {
+      const rows = await sql`
+        update article_generation_steps
+        set status = 'success',
+            message = ${input.message},
+            output_json = ${sql.json((input.outputJson ?? null) as never)},
+            error_message = null,
+            finished_at = ${new Date(input.finishedAt)},
+            updated_at = ${new Date(input.finishedAt)}
+        where task_id = ${input.taskId}
+          and stage = ${input.stage}
+          and attempt = ${input.attempt}
+          and status = 'running'
+        returning *
+      `;
+      return rows[0] ? toArticleGenerationStep(rows[0]) : undefined;
+    },
+
+    async failArticleGenerationStep(input) {
+      const status = input.status ?? "failed";
+      const rows = await sql`
+        update article_generation_steps
+        set status = ${status},
+            message = ${input.message},
+            error_message = ${input.errorMessage ?? null},
+            finished_at = ${new Date(input.finishedAt)},
+            updated_at = ${new Date(input.finishedAt)}
+        where task_id = ${input.taskId}
+          and stage = ${input.stage}
+          and attempt = ${input.attempt}
+          and status = 'running'
+        returning *
+      `;
+      return rows[0] ? toArticleGenerationStep(rows[0]) : undefined;
+    },
+
+    async completeTopicAnalysisAndRequeue(input) {
+      const rows = await sql`
+        update article_generation_tasks
+        set status = 'queued',
+            current_stage = 'research',
+            progress = 15,
+            message = ${input.message},
+            error_message = null,
+            locked_by = null,
+            locked_at = null,
+            updated_at = ${new Date(input.completedAt)}
+        where id = ${input.taskId}
+          and status = 'running'
+          and current_stage = 'topic_analysis'
+          and locked_by = ${input.workerId}
+        returning *
+      `;
+      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
+    },
+
+    async failArticleGenerationTask(input) {
+      const rows = await sql`
+        update article_generation_tasks
+        set status = 'failed',
+            current_stage = 'topic_analysis',
+            message = ${input.message},
+            error_message = ${input.errorMessage},
+            finished_at = ${new Date(input.failedAt)},
+            locked_by = null,
+            locked_at = null,
+            updated_at = ${new Date(input.failedAt)}
+        where id = ${input.taskId}
+          and status = 'running'
+          and current_stage = 'topic_analysis'
+          and locked_by = ${input.workerId}
+        returning *
+      `;
+      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
+    },
+
+    async recoverStaleArticleGenerationTasks(input) {
+      const requeuedRows = await sql`
+        update article_generation_tasks
+        set status = 'queued',
+            current_stage = 'waiting_for_worker',
+            message = '上次执行中断，已重新排队',
+            locked_by = null,
+            locked_at = null,
+            updated_at = ${new Date(input.recoveredAt)}
+        where status = 'running'
+          and current_stage = 'topic_analysis'
+          and locked_at < ${new Date(input.staleBefore)}
+          and attempt < max_attempts
+        returning id
+      `;
+      const failedRows = await sql`
+        update article_generation_tasks
+        set status = 'failed',
+            message = 'Worker 多次中断，任务已停止',
+            error_message = '超过最大自动恢复次数',
+            finished_at = ${new Date(input.recoveredAt)},
+            locked_by = null,
+            locked_at = null,
+            updated_at = ${new Date(input.recoveredAt)}
+        where status = 'running'
+          and current_stage = 'topic_analysis'
+          and locked_at < ${new Date(input.staleBefore)}
+          and attempt >= max_attempts
+        returning id
+      `;
+      return { requeued: requeuedRows.length, failed: failedRows.length };
+    },
+
+    async cancelArticleGenerationTask(input) {
       const rows = await sql`
         update article_generation_tasks
         set status = 'cancelled',
@@ -606,9 +875,38 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
             cancelled_at = ${new Date(input.cancelledAt)},
             updated_at = ${new Date(input.cancelledAt)}
         where id = ${input.taskId}
+          and status in ('queued', 'running')
+          and (
+            (status = 'queued' and current_stage = 'waiting_for_worker')
+            or (status = 'running' and current_stage = 'topic_analysis')
+          )
         returning *
       `;
-      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
+      if (rows[0]) {
+        return toArticleGenerationTask(rows[0]);
+      }
+
+      const currentRows = await sql`
+        select * from article_generation_tasks
+        where id = ${input.taskId}
+        limit 1
+      `;
+      const current = currentRows[0] ? toArticleGenerationTask(currentRows[0]) : undefined;
+      if (!current) {
+        return undefined;
+      }
+      if (current.status === "cancelled") {
+        return current;
+      }
+      if (current.status === "success" || current.status === "failed") {
+        throw new Error(
+          `Article generation task cannot be cancelled from status ${current.status}.`
+        );
+      }
+
+      throw new Error(
+        `Article generation task could not be cancelled from status ${current.status} and stage ${current.currentStage}.`
+      );
     },
 
     async markRunSuccess(runId, finishedAt) {

@@ -64,8 +64,35 @@ function createLazyDbAdapter(env: NodeJS.ProcessEnv): EditorialBriefDbAdapter {
     async getArticleGenerationTask(taskId) {
       return await getDb().getArticleGenerationTask(taskId);
     },
+    async getTopicSelectionById(topicSelectionId) {
+      return await getDb().getTopicSelectionById(topicSelectionId);
+    },
     async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId) {
       return await getDb().getActiveArticleGenerationTaskByTopicSelection(topicSelectionId);
+    },
+    async claimNextArticleGenerationTask(input) {
+      return await getDb().claimNextArticleGenerationTask(input);
+    },
+    async getArticleGenerationSteps(taskId) {
+      return await getDb().getArticleGenerationSteps(taskId);
+    },
+    async startArticleGenerationStep(input) {
+      return await getDb().startArticleGenerationStep(input);
+    },
+    async completeArticleGenerationStep(input) {
+      return await getDb().completeArticleGenerationStep(input);
+    },
+    async failArticleGenerationStep(input) {
+      return await getDb().failArticleGenerationStep(input);
+    },
+    async completeTopicAnalysisAndRequeue(input) {
+      return await getDb().completeTopicAnalysisAndRequeue(input);
+    },
+    async failArticleGenerationTask(input) {
+      return await getDb().failArticleGenerationTask(input);
+    },
+    async recoverStaleArticleGenerationTasks(input) {
+      return await getDb().recoverStaleArticleGenerationTasks(input);
     },
     async cancelArticleGenerationTask(input) {
       return await getDb().cancelArticleGenerationTask(input);

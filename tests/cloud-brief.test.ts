@@ -24,6 +24,7 @@ import {
 } from "../src/pipeline/generateCloudEditorialBrief";
 import {
   EDITORIAL_BRIEF_RUN_TYPE,
+  type ArticleGenerationStepRecord,
   type ArticleGenerationTaskRecord,
   type CloudBriefGenerationStep,
   type CloudEditorialBriefRecord,
@@ -53,6 +54,8 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
   briefs: CloudEditorialBriefRecord[] = [];
   topicSelections: CloudTopicSelectionRecord[] = [];
   articleGenerationTasks: ArticleGenerationTaskRecord[] = [];
+  articleGenerationSteps: ArticleGenerationStepRecord[] = [];
+  beforeConditionalCancel?: (task: ArticleGenerationTaskRecord) => void | Promise<void>;
   ensured = false;
 
   constructor(seedRuns: CloudRunRecord[] = []) {
@@ -160,6 +163,8 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
 
     const task: ArticleGenerationTaskRecord = {
       ...input,
+      attempt: 0,
+      maxAttempts: 2,
       updatedAt: input.createdAt
     };
     this.articleGenerationTasks.push(task);
@@ -170,6 +175,10 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
     return this.articleGenerationTasks.find((task) => task.id === taskId);
   }
 
+  async getTopicSelectionById(topicSelectionId: string) {
+    return this.topicSelections.find((selection) => selection.id === topicSelectionId);
+  }
+
   async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId: string) {
     return this.articleGenerationTasks.find(
       (task) =>
@@ -178,22 +187,195 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
     );
   }
 
+  async claimNextArticleGenerationTask(input: { workerId: string; claimedAt: string }) {
+    const task = this.articleGenerationTasks.find(
+      (item) => item.status === "queued" && item.currentStage === "waiting_for_worker"
+    );
+    if (!task) return undefined;
+    task.status = "running";
+    task.currentStage = "topic_analysis";
+    task.progress = 5;
+    task.message = "正在分析选题";
+    task.attempt += 1;
+    task.lockedBy = input.workerId;
+    task.lockedAt = input.claimedAt;
+    task.startedAt ??= input.claimedAt;
+    task.updatedAt = input.claimedAt;
+    return task;
+  }
+
+  async getArticleGenerationSteps(taskId: string) {
+    return this.articleGenerationSteps.filter((step) => step.taskId === taskId);
+  }
+
+  async startArticleGenerationStep(input: {
+    id: string;
+    taskId: string;
+    stage: ArticleGenerationStepRecord["stage"];
+    attempt: number;
+    message: string;
+    inputJson?: unknown;
+    startedAt: string;
+  }) {
+    const step: ArticleGenerationStepRecord = {
+      ...input,
+      status: "running",
+      createdAt: input.startedAt,
+      updatedAt: input.startedAt
+    };
+    this.articleGenerationSteps.push(step);
+    return step;
+  }
+
+  async completeArticleGenerationStep(input: {
+    taskId: string;
+    stage: ArticleGenerationStepRecord["stage"];
+    attempt: number;
+    message: string;
+    outputJson?: unknown;
+    finishedAt: string;
+  }) {
+    const step = this.articleGenerationSteps.find(
+      (item) => item.taskId === input.taskId && item.stage === input.stage && item.attempt === input.attempt
+    );
+    if (!step || step.status !== "running") return undefined;
+    step.status = "success";
+    step.message = input.message;
+    step.outputJson = input.outputJson;
+    step.finishedAt = input.finishedAt;
+    step.updatedAt = input.finishedAt;
+    return step;
+  }
+
+  async failArticleGenerationStep(input: {
+    taskId: string;
+    stage: ArticleGenerationStepRecord["stage"];
+    attempt: number;
+    status?: "failed" | "cancelled";
+    message: string;
+    errorMessage?: string;
+    finishedAt: string;
+  }) {
+    const step = this.articleGenerationSteps.find(
+      (item) => item.taskId === input.taskId && item.stage === input.stage && item.attempt === input.attempt
+    );
+    if (!step || step.status !== "running") return undefined;
+    step.status = input.status ?? "failed";
+    step.message = input.message;
+    step.errorMessage = input.errorMessage;
+    step.finishedAt = input.finishedAt;
+    step.updatedAt = input.finishedAt;
+    return step;
+  }
+
+  async completeTopicAnalysisAndRequeue(input: {
+    taskId: string;
+    workerId: string;
+    completedAt: string;
+    message: string;
+  }) {
+    const task = this.articleGenerationTasks.find(
+      (item) =>
+        item.id === input.taskId &&
+        item.status === "running" &&
+        item.currentStage === "topic_analysis" &&
+        item.lockedBy === input.workerId
+    );
+    if (!task) return undefined;
+    task.status = "queued";
+    task.currentStage = "research";
+    task.progress = 15;
+    task.message = input.message;
+    task.errorMessage = undefined;
+    task.lockedBy = undefined;
+    task.lockedAt = undefined;
+    task.updatedAt = input.completedAt;
+    return task;
+  }
+
+  async failArticleGenerationTask(input: {
+    taskId: string;
+    workerId: string;
+    failedAt: string;
+    message: string;
+    errorMessage: string;
+  }) {
+    const task = this.articleGenerationTasks.find(
+      (item) =>
+        item.id === input.taskId &&
+        item.status === "running" &&
+        item.currentStage === "topic_analysis" &&
+        item.lockedBy === input.workerId
+    );
+    if (!task) return undefined;
+    task.status = "failed";
+    task.message = input.message;
+    task.errorMessage = input.errorMessage;
+    task.finishedAt = input.failedAt;
+    task.lockedBy = undefined;
+    task.lockedAt = undefined;
+    task.updatedAt = input.failedAt;
+    return task;
+  }
+
+  async recoverStaleArticleGenerationTasks(input: { staleBefore: string; recoveredAt: string }) {
+    let requeued = 0;
+    let failed = 0;
+    for (const task of this.articleGenerationTasks) {
+      if (task.status !== "running" || task.currentStage !== "topic_analysis" || !task.lockedAt) continue;
+      if (task.lockedAt >= input.staleBefore) continue;
+      if (task.attempt < task.maxAttempts) {
+        task.status = "queued";
+        task.currentStage = "waiting_for_worker";
+        task.message = "上次执行中断，已重新排队";
+        task.lockedBy = undefined;
+        task.lockedAt = undefined;
+        task.updatedAt = input.recoveredAt;
+        requeued += 1;
+      } else {
+        task.status = "failed";
+        task.message = "Worker 多次中断，任务已停止";
+        task.errorMessage = "超过最大自动恢复次数";
+        task.finishedAt = input.recoveredAt;
+        task.lockedBy = undefined;
+        task.lockedAt = undefined;
+        task.updatedAt = input.recoveredAt;
+        failed += 1;
+      }
+    }
+    return { requeued, failed };
+  }
+
   async cancelArticleGenerationTask(input: {
     taskId: string;
     cancelledAt: string;
     message: string;
   }) {
     const task = this.articleGenerationTasks.find((item) => item.id === input.taskId);
-    if (!task) return undefined;
-    if (task.status === "cancelled") return task;
-    if (task.status === "success" || task.status === "failed") {
-      throw new Error(`Article generation task cannot be cancelled from status ${task.status}.`);
+    if (task) {
+      await this.beforeConditionalCancel?.(task);
     }
-    task.status = "cancelled";
-    task.message = input.message;
-    task.cancelledAt = input.cancelledAt;
-    task.updatedAt = input.cancelledAt;
-    return task;
+    if (
+      task &&
+      ((task.status === "queued" && task.currentStage === "waiting_for_worker") ||
+        (task.status === "running" && task.currentStage === "topic_analysis"))
+    ) {
+      task.status = "cancelled";
+      task.message = input.message;
+      task.cancelledAt = input.cancelledAt;
+      task.updatedAt = input.cancelledAt;
+      return task;
+    }
+
+    const current = this.articleGenerationTasks.find((item) => item.id === input.taskId);
+    if (!current) return undefined;
+    if (current.status === "cancelled") return current;
+    if (current.status === "success" || current.status === "failed") {
+      throw new Error(`Article generation task cannot be cancelled from status ${current.status}.`);
+    }
+    throw new Error(
+      `Article generation task could not be cancelled from status ${current.status} and stage ${current.currentStage}.`
+    );
   }
 
   async markRunSuccess(runId: string, finishedAt: string) {

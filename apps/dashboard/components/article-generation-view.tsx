@@ -14,13 +14,18 @@ import {
   RefreshCw,
   XCircle
 } from "lucide-react";
-import type { ArticleGenerationTaskRecord } from "../../../src/types/cloud";
+import type {
+  ArticleGenerationStage,
+  ArticleGenerationStepRecord,
+  ArticleGenerationTaskRecord
+} from "../../../src/types/cloud";
 
 type LoadState = "loading" | "ready" | "missing" | "error";
 
 interface StatusResponse {
   ok: boolean;
   task?: ArticleGenerationTaskRecord;
+  steps?: SafeArticleGenerationStep[];
   error?: string;
 }
 
@@ -56,10 +61,28 @@ const terminalStatuses = new Set<ArticleGenerationTaskRecord["status"]>([
   "cancelled"
 ]);
 
+type SafeArticleGenerationStep = Omit<ArticleGenerationStepRecord, "inputJson" | "outputJson">;
+type VisibleStageKey = "selection_confirmed" | Exclude<ArticleGenerationStage, "waiting_for_worker" | "completed">;
+type VisibleStageState = "success" | "running" | "waiting_next" | "failed" | "cancelled" | "pending";
+
+const visibleStages: Array<{ key: VisibleStageKey; label: string }> = [
+  { key: "selection_confirmed", label: "选题确认" },
+  { key: "topic_analysis", label: "选题分析" },
+  { key: "research", label: "调研验证" },
+  { key: "fact_pack", label: "FactPack" },
+  { key: "outline", label: "文章结构" },
+  { key: "writing", label: "正文生成" },
+  { key: "title", label: "标题优化" },
+  { key: "review", label: "内容审核" }
+];
+
+const visibleStageOrder = visibleStages.map((stage) => stage.key);
+
 export function ArticleGenerationView({ taskId }: { taskId: string }) {
   const router = useRouter();
   const [state, setState] = useState<LoadState>("loading");
   const [task, setTask] = useState<ArticleGenerationTaskRecord | null>(null);
+  const [steps, setSteps] = useState<SafeArticleGenerationStep[]>([]);
   const [error, setError] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
   const [successRedirectCountdown, setSuccessRedirectCountdown] = useState(3);
@@ -91,6 +114,7 @@ export function ArticleGenerationView({ taskId }: { taskId: string }) {
       }
 
       setTask(result.task);
+      setSteps(result.steps ?? []);
       setState("ready");
     } catch (nextError) {
       setState("error");
@@ -164,6 +188,9 @@ export function ArticleGenerationView({ taskId }: { taskId: string }) {
       }
 
       setTask(result.task);
+      if (result.task.status === "cancelled") {
+        setSteps((current) => current);
+      }
       setState("ready");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "任务取消失败。");
@@ -251,9 +278,15 @@ export function ArticleGenerationView({ taskId }: { taskId: string }) {
       {task?.status === "queued" ? (
         <StatePanel
           icon={<Clock3 className="size-4" aria-hidden="true" />}
-          title="文章生成任务已经创建。AI Agent 将自动执行内容生产流程。你可以关闭页面，稍后回来查看。"
+          title={
+            task.currentStage === "research"
+              ? "等待下一阶段"
+              : "文章生成任务已经创建。AI Agent 将自动执行内容生产流程。你可以关闭页面，稍后回来查看。"
+          }
         />
       ) : null}
+
+      {task ? <StageProgress task={task} steps={steps} /> : null}
 
       {task?.status === "success" ? (
         <StatePanel
@@ -358,6 +391,97 @@ function presentationFor(status: ArticleGenerationTaskRecord["status"]) {
     status: statusLabels[status],
     tone: "waiting"
   };
+}
+
+function StageProgress({
+  task,
+  steps
+}: {
+  task: ArticleGenerationTaskRecord;
+  steps: SafeArticleGenerationStep[];
+}) {
+  const stepByStage = new Map(steps.map((step) => [step.stage, step]));
+  const failedStep = steps.find((step) => step.status === "failed");
+
+  return (
+    <section className="border border-line bg-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-bold text-ink">阶段进度</h3>
+        {failedStep ? (
+          <span className="text-xs font-semibold text-red-700">失败阶段：{stageLabels[failedStep.stage]}</span>
+        ) : null}
+      </div>
+      <ol className="mt-4 grid gap-2 md:grid-cols-2">
+        {visibleStages.map((stage) => {
+          const step = stage.key === "selection_confirmed" ? undefined : stepByStage.get(stage.key);
+          const state = stageState(task, stage.key, step);
+          return (
+            <li key={stage.key} className="flex items-center gap-3 border border-line bg-paper px-3 py-3">
+              <span className={`flex size-7 shrink-0 items-center justify-center rounded-md ${stageIconClass(state)}`}>
+                {stageIcon(state)}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink">{stage.label}</p>
+                <p className="mt-0.5 text-xs font-medium text-stone-500">{stageStateLabel(state)}</p>
+                {state === "failed" && step?.errorMessage ? (
+                  <p className="mt-1 break-words text-xs font-medium text-red-700">{step.errorMessage}</p>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
+function stageState(
+  task: ArticleGenerationTaskRecord,
+  stage: VisibleStageKey,
+  step: SafeArticleGenerationStep | undefined
+): VisibleStageState {
+  if (stage === "selection_confirmed") {
+    return task.status === "cancelled" ? "cancelled" : "success";
+  }
+  if (step?.status === "success") return "success";
+  if (step?.status === "failed") return "failed";
+  if (step?.status === "cancelled") return "cancelled";
+  if (task.status === "failed" && task.currentStage === stage) return "failed";
+  if (task.status === "cancelled" && task.currentStage === stage) return "cancelled";
+  if (task.currentStage === stage && task.status === "running") return "running";
+  if (task.currentStage === stage && task.status === "queued" && stage !== "topic_analysis") return "waiting_next";
+
+  const currentIndex = visibleStageOrder.indexOf(task.currentStage as VisibleStageKey);
+  const stageIndex = visibleStageOrder.indexOf(stage);
+  if (currentIndex > stageIndex && stageIndex > -1) return "success";
+
+  return "pending";
+}
+
+function stageStateLabel(state: VisibleStageState): string {
+  if (state === "success") return "已完成";
+  if (state === "running") return "进行中";
+  if (state === "waiting_next") return "等待下一阶段";
+  if (state === "failed") return "失败";
+  if (state === "cancelled") return "已取消";
+  return "尚未开始";
+}
+
+function stageIcon(state: VisibleStageState): ReactNode {
+  if (state === "success") return <CheckCircle2 className="size-4" aria-hidden="true" />;
+  if (state === "running") return <Loader2 className="size-4 animate-spin" aria-hidden="true" />;
+  if (state === "failed") return <AlertTriangle className="size-4" aria-hidden="true" />;
+  if (state === "cancelled") return <Ban className="size-4" aria-hidden="true" />;
+  return <Clock3 className="size-4" aria-hidden="true" />;
+}
+
+function stageIconClass(state: VisibleStageState): string {
+  if (state === "success") return "bg-emerald-600 text-white";
+  if (state === "running") return "bg-ink text-white";
+  if (state === "waiting_next") return "bg-amber-100 text-amber-800";
+  if (state === "failed") return "bg-red-100 text-red-700";
+  if (state === "cancelled") return "bg-stone-200 text-stone-600";
+  return "bg-stone-200 text-stone-500";
 }
 
 function toneClass(tone: string): string {

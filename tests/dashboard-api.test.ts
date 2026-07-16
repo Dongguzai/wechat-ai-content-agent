@@ -6,10 +6,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { EditorialBriefDbAdapter } from "../src/adapters/neon";
 import type {
+  ArticleGenerationStepRecord,
   ArticleGenerationTaskRecord,
   CloudTopicSelectionRecord,
   CloudRunType
 } from "../src/types/cloud";
+import { analyzeTopicSelection } from "../src/agents/article-generation/topic-analysis";
+import { runArticleGenerationWorker } from "../src/workers/article-generation-worker";
+import { handleCronArticleWorker } from "../apps/dashboard/lib/article-generation-worker";
 import { executeDashboardAction } from "../apps/dashboard/lib/actions";
 import {
   handleArticleGenerationCancel,
@@ -52,6 +56,8 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
   ensured = false;
   selections: CloudTopicSelectionRecord[] = [];
   articleGenerationTasks: ArticleGenerationTaskRecord[] = [];
+  articleGenerationSteps: ArticleGenerationStepRecord[] = [];
+  beforeConditionalCancel?: (task: ArticleGenerationTaskRecord) => void | Promise<void>;
 
   async ensureSchema() {
     this.ensured = true;
@@ -100,6 +106,8 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
 
     const task: ArticleGenerationTaskRecord = {
       ...input,
+      attempt: 0,
+      maxAttempts: 2,
       updatedAt: input.createdAt
     };
     this.articleGenerationTasks.push(task);
@@ -110,6 +118,10 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
     return this.articleGenerationTasks.find((task) => task.id === taskId);
   }
 
+  async getTopicSelectionById(topicSelectionId: string) {
+    return this.selections.find((selection) => selection.id === topicSelectionId);
+  }
+
   async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId: string) {
     return this.articleGenerationTasks.find(
       (task) =>
@@ -118,22 +130,220 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
     );
   }
 
+  async claimNextArticleGenerationTask(input: { workerId: string; claimedAt: string }) {
+    const task = this.articleGenerationTasks.find(
+      (item) => item.status === "queued" && item.currentStage === "waiting_for_worker"
+    );
+    if (!task) return undefined;
+    task.status = "running";
+    task.currentStage = "topic_analysis";
+    task.progress = 5;
+    task.message = "正在分析选题";
+    task.attempt += 1;
+    task.lockedBy = input.workerId;
+    task.lockedAt = input.claimedAt;
+    task.startedAt ??= input.claimedAt;
+    task.updatedAt = input.claimedAt;
+    return { ...task };
+  }
+
+  async getArticleGenerationSteps(taskId: string) {
+    return this.articleGenerationSteps
+      .filter((step) => step.taskId === taskId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  async startArticleGenerationStep(input: {
+    id: string;
+    taskId: string;
+    stage: ArticleGenerationStepRecord["stage"];
+    attempt: number;
+    message: string;
+    inputJson?: unknown;
+    startedAt: string;
+  }) {
+    const existing = this.articleGenerationSteps.find(
+      (step) => step.taskId === input.taskId && step.stage === input.stage && step.attempt === input.attempt
+    );
+    const step: ArticleGenerationStepRecord = {
+      id: existing?.id ?? input.id,
+      taskId: input.taskId,
+      stage: input.stage,
+      status: "running",
+      attempt: input.attempt,
+      message: input.message,
+      inputJson: input.inputJson,
+      startedAt: input.startedAt,
+      createdAt: existing?.createdAt ?? input.startedAt,
+      updatedAt: input.startedAt
+    };
+    if (existing) {
+      Object.assign(existing, step);
+      return existing;
+    }
+    this.articleGenerationSteps.push(step);
+    return step;
+  }
+
+  async completeArticleGenerationStep(input: {
+    taskId: string;
+    stage: ArticleGenerationStepRecord["stage"];
+    attempt: number;
+    message: string;
+    outputJson?: unknown;
+    finishedAt: string;
+  }) {
+    const step = this.articleGenerationSteps.find(
+      (item) =>
+        item.taskId === input.taskId &&
+        item.stage === input.stage &&
+        item.attempt === input.attempt &&
+        item.status === "running"
+    );
+    if (!step) return undefined;
+    step.status = "success";
+    step.message = input.message;
+    step.outputJson = input.outputJson;
+    step.errorMessage = undefined;
+    step.finishedAt = input.finishedAt;
+    step.updatedAt = input.finishedAt;
+    return step;
+  }
+
+  async failArticleGenerationStep(input: {
+    taskId: string;
+    stage: ArticleGenerationStepRecord["stage"];
+    attempt: number;
+    status?: "failed" | "cancelled";
+    message: string;
+    errorMessage?: string;
+    finishedAt: string;
+  }) {
+    const step = this.articleGenerationSteps.find(
+      (item) =>
+        item.taskId === input.taskId &&
+        item.stage === input.stage &&
+        item.attempt === input.attempt &&
+        item.status === "running"
+    );
+    if (!step) return undefined;
+    step.status = input.status ?? "failed";
+    step.message = input.message;
+    step.errorMessage = input.errorMessage;
+    step.finishedAt = input.finishedAt;
+    step.updatedAt = input.finishedAt;
+    return step;
+  }
+
+  async completeTopicAnalysisAndRequeue(input: {
+    taskId: string;
+    workerId: string;
+    completedAt: string;
+    message: string;
+  }) {
+    const task = this.articleGenerationTasks.find(
+      (item) =>
+        item.id === input.taskId &&
+        item.status === "running" &&
+        item.currentStage === "topic_analysis" &&
+        item.lockedBy === input.workerId
+    );
+    if (!task) return undefined;
+    task.status = "queued";
+    task.currentStage = "research";
+    task.progress = 15;
+    task.message = input.message;
+    task.errorMessage = undefined;
+    task.lockedBy = undefined;
+    task.lockedAt = undefined;
+    task.updatedAt = input.completedAt;
+    return task;
+  }
+
+  async failArticleGenerationTask(input: {
+    taskId: string;
+    workerId: string;
+    failedAt: string;
+    message: string;
+    errorMessage: string;
+  }) {
+    const task = this.articleGenerationTasks.find(
+      (item) =>
+        item.id === input.taskId &&
+        item.status === "running" &&
+        item.currentStage === "topic_analysis" &&
+        item.lockedBy === input.workerId
+    );
+    if (!task) return undefined;
+    task.status = "failed";
+    task.currentStage = "topic_analysis";
+    task.message = input.message;
+    task.errorMessage = input.errorMessage;
+    task.finishedAt = input.failedAt;
+    task.lockedBy = undefined;
+    task.lockedAt = undefined;
+    task.updatedAt = input.failedAt;
+    return task;
+  }
+
+  async recoverStaleArticleGenerationTasks(input: { staleBefore: string; recoveredAt: string }) {
+    let requeued = 0;
+    let failed = 0;
+    for (const task of this.articleGenerationTasks) {
+      if (task.status !== "running" || task.currentStage !== "topic_analysis" || !task.lockedAt) continue;
+      if (task.lockedAt >= input.staleBefore) continue;
+      if (task.attempt < task.maxAttempts) {
+        task.status = "queued";
+        task.currentStage = "waiting_for_worker";
+        task.message = "上次执行中断，已重新排队";
+        task.lockedBy = undefined;
+        task.lockedAt = undefined;
+        task.updatedAt = input.recoveredAt;
+        requeued += 1;
+      } else {
+        task.status = "failed";
+        task.message = "Worker 多次中断，任务已停止";
+        task.errorMessage = "超过最大自动恢复次数";
+        task.finishedAt = input.recoveredAt;
+        task.lockedBy = undefined;
+        task.lockedAt = undefined;
+        task.updatedAt = input.recoveredAt;
+        failed += 1;
+      }
+    }
+    return { requeued, failed };
+  }
+
   async cancelArticleGenerationTask(input: {
     taskId: string;
     cancelledAt: string;
     message: string;
   }) {
     const task = this.articleGenerationTasks.find((item) => item.id === input.taskId);
-    if (!task) return undefined;
-    if (task.status === "cancelled") return task;
-    if (task.status === "success" || task.status === "failed") {
-      throw new Error(`Article generation task cannot be cancelled from status ${task.status}.`);
+    if (task) {
+      await this.beforeConditionalCancel?.(task);
     }
-    task.status = "cancelled";
-    task.message = input.message;
-    task.cancelledAt = input.cancelledAt;
-    task.updatedAt = input.cancelledAt;
-    return task;
+    if (
+      task &&
+      ((task.status === "queued" && task.currentStage === "waiting_for_worker") ||
+        (task.status === "running" && task.currentStage === "topic_analysis"))
+    ) {
+      task.status = "cancelled";
+      task.message = input.message;
+      task.cancelledAt = input.cancelledAt;
+      task.updatedAt = input.cancelledAt;
+      return task;
+    }
+
+    const current = this.articleGenerationTasks.find((item) => item.id === input.taskId);
+    if (!current) return undefined;
+    if (current.status === "cancelled") return current;
+    if (current.status === "success" || current.status === "failed") {
+      throw new Error(`Article generation task cannot be cancelled from status ${current.status}.`);
+    }
+    throw new Error(
+      `Article generation task could not be cancelled from status ${current.status} and stage ${current.currentStage}.`
+    );
   }
 
   async getSuccessfulRun() {
@@ -169,6 +379,89 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
   async getTodayBrief(_runDate: string, _runType: CloudRunType) {
     return { run: null, brief: null, shortlistedItems: [], topicSelection: null };
   }
+}
+
+async function seedArticleGenerationTask(
+  db: SelectionOnlyDb,
+  overrides: {
+    taskId?: string;
+    topicSelectionId?: string;
+    selectedTopicId?: string;
+    approvedTitle?: string;
+    handoff?: Partial<CloudTopicSelectionRecord["handoffJson"]>;
+    currentStage?: ArticleGenerationTaskRecord["currentStage"];
+    status?: ArticleGenerationTaskRecord["status"];
+  } = {}
+) {
+  const selectedTopicId = overrides.selectedTopicId ?? "topic-worker";
+  const approvedTitle = overrides.approvedTitle ?? "云端入围资讯";
+  const topicSelection = await db.saveTopicSelection({
+    id: overrides.topicSelectionId ?? `selection-${selectedTopicId}`,
+    runId: "run-worker",
+    selectedShortlistedItemId: selectedTopicId,
+    approvedTitle,
+    approvalNotes: "",
+    approvalJson: {
+      approvedByUser: true,
+      approvedTopicId: selectedTopicId,
+      approvedTitle,
+      notes: ""
+    },
+    handoffJson: {
+      approval: {
+        approvedByUser: true,
+        approvedTopicId: selectedTopicId,
+        approvedTitle,
+        notes: ""
+      },
+      candidateNews: [],
+      shortlistedNews: [],
+      selectedTopic: {
+        selected: {
+          id: selectedTopicId,
+          title: "Cloud topic raw title",
+          titleZh: approvedTitle,
+          url: "https://example.com/cloud-topic",
+          sourceName: "Example Cloud",
+          category: "tooling",
+          tags: ["agent", "developer-workflow"],
+          summaryZh: "这是一条云端简报摘要。",
+          topicAngleZh: "从工作流入口变化切入。",
+          riskNotesZh: ["需要回到原文核验。"],
+          selection: {
+            coreConflict: "效率与治理之间的冲突。",
+            writingAngle: "从工作流入口变化切入。",
+            articleThesis: "AI 工具价值正在进入真实流程。",
+            sourceReliability: "high"
+          }
+        }
+      },
+      editorialBrief: {
+        recommendedTopic: {
+          coreConflict: "效率与治理之间的冲突。",
+          writingAngle: "从工作流入口变化切入。",
+          articleThesis: "AI 工具价值正在进入真实流程。",
+          sourceReliability: "high"
+        }
+      },
+      ...overrides.handoff
+    },
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  const task = await db.createArticleGenerationTask({
+    id: overrides.taskId ?? `task-${selectedTopicId}`,
+    topicSelectionId: topicSelection.id,
+    runId: topicSelection.runId,
+    selectedTopicId,
+    approvedTitle,
+    status: "queued",
+    currentStage: overrides.currentStage ?? "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  task.status = overrides.status ?? task.status;
+  return { task, topicSelection };
 }
 
 test("article generation task adapter creates, reads, reuses active, and cancels queued tasks", async () => {
@@ -276,6 +569,137 @@ test("article generation task adapter does not cancel success tasks and returns 
   );
 });
 
+test("article generation task adapter cancels running tasks and rejects failed tasks", async () => {
+  const db = new SelectionOnlyDb();
+  const runningTask = await db.createArticleGenerationTask({
+    id: "task-running-cancel",
+    topicSelectionId: "selection-running-cancel",
+    runId: "run-running-cancel",
+    selectedTopicId: "topic-running-cancel",
+    approvedTitle: "运行中选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  runningTask.status = "running";
+  runningTask.currentStage = "topic_analysis";
+  runningTask.progress = 5;
+
+  const cancelled = await db.cancelArticleGenerationTask({
+    taskId: "task-running-cancel",
+    cancelledAt: "2026-06-02T00:01:00.000Z",
+    message: "任务已取消"
+  });
+  assert.equal(cancelled?.status, "cancelled");
+  assert.equal(cancelled?.cancelledAt, "2026-06-02T00:01:00.000Z");
+
+  const failedTask = await db.createArticleGenerationTask({
+    id: "task-failed-cancel",
+    topicSelectionId: "selection-failed-cancel",
+    runId: "run-failed-cancel",
+    selectedTopicId: "topic-failed-cancel",
+    approvedTitle: "失败选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  failedTask.status = "failed";
+  failedTask.currentStage = "topic_analysis";
+
+  await assert.rejects(
+    () =>
+      db.cancelArticleGenerationTask({
+        taskId: "task-failed-cancel",
+        cancelledAt: "2026-06-02T00:01:00.000Z",
+        message: "任务已取消"
+      }),
+    /cannot be cancelled from status failed/
+  );
+});
+
+test("article generation cancel does not overwrite a task completed to queued research during cancellation", async () => {
+  const db = new SelectionOnlyDb();
+  const task = await db.createArticleGenerationTask({
+    id: "task-cancel-race-research",
+    topicSelectionId: "selection-cancel-race-research",
+    runId: "run-cancel-race-research",
+    selectedTopicId: "topic-cancel-race-research",
+    approvedTitle: "竞态选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  task.status = "running";
+  task.currentStage = "topic_analysis";
+  task.progress = 5;
+  db.beforeConditionalCancel = (current) => {
+    current.status = "queued";
+    current.currentStage = "research";
+    current.progress = 15;
+    current.message = "选题分析完成，等待调研阶段执行";
+    current.updatedAt = "2026-06-02T00:01:00.000Z";
+  };
+
+  await assert.rejects(
+    () =>
+      db.cancelArticleGenerationTask({
+        taskId: "task-cancel-race-research",
+        cancelledAt: "2026-06-02T00:01:01.000Z",
+        message: "任务已取消"
+      }),
+    /could not be cancelled from status queued and stage research/
+  );
+  assert.equal(task.status, "queued");
+  assert.equal(task.currentStage, "research");
+  assert.equal(task.progress, 15);
+  assert.equal(task.cancelledAt, undefined);
+  assert.equal(task.message, "选题分析完成，等待调研阶段执行");
+});
+
+test("article generation cancel does not overwrite success or failed terminal races", async () => {
+  for (const terminalStatus of ["success", "failed"] as const) {
+    const db = new SelectionOnlyDb();
+    const task = await db.createArticleGenerationTask({
+      id: `task-cancel-race-${terminalStatus}`,
+      topicSelectionId: `selection-cancel-race-${terminalStatus}`,
+      runId: `run-cancel-race-${terminalStatus}`,
+      selectedTopicId: `topic-cancel-race-${terminalStatus}`,
+      approvedTitle: "终态竞态选题",
+      status: "queued",
+      currentStage: "waiting_for_worker",
+      progress: 0,
+      message: "文章生成任务已创建，等待执行",
+      createdAt: "2026-06-02T00:00:00.000Z"
+    });
+    task.status = "running";
+    task.currentStage = "topic_analysis";
+    db.beforeConditionalCancel = (current) => {
+      current.status = terminalStatus;
+      current.currentStage = terminalStatus === "success" ? "completed" : "topic_analysis";
+      current.progress = terminalStatus === "success" ? 100 : 5;
+      current.updatedAt = "2026-06-02T00:01:00.000Z";
+    };
+
+    await assert.rejects(
+      () =>
+        db.cancelArticleGenerationTask({
+          taskId: `task-cancel-race-${terminalStatus}`,
+          cancelledAt: "2026-06-02T00:01:01.000Z",
+          message: "任务已取消"
+        }),
+      new RegExp(`cannot be cancelled from status ${terminalStatus}`)
+    );
+    assert.equal(task.status, terminalStatus);
+    assert.equal(task.cancelledAt, undefined);
+  }
+});
+
 test("article generation status API handles auth, validation, missing, and found tasks", async () => {
   const db = new SelectionOnlyDb();
   await db.createArticleGenerationTask({
@@ -318,6 +742,329 @@ test("article generation status API handles auth, validation, missing, and found
   assert.equal(payload.ok, true);
   assert.equal(payload.task.id, "task-status");
   assert.equal(payload.task.currentStage, "waiting_for_worker");
+  assert.deepEqual(payload.steps, []);
+});
+
+test("article generation status API returns safe step records", async () => {
+  const db = new SelectionOnlyDb();
+  await seedArticleGenerationTask(db, { taskId: "task-with-step" });
+  await db.startArticleGenerationStep({
+    id: "step-1",
+    taskId: "task-with-step",
+    stage: "topic_analysis",
+    attempt: 1,
+    message: "正在分析选题",
+    inputJson: { handoff: "hidden" },
+    startedAt: "2026-06-02T00:00:00.000Z"
+  });
+  await db.completeArticleGenerationStep({
+    taskId: "task-with-step",
+    stage: "topic_analysis",
+    attempt: 1,
+    message: "选题分析完成",
+    outputJson: { sourceUrl: "https://example.com/cloud-topic" },
+    finishedAt: "2026-06-02T00:00:01.000Z"
+  });
+
+  const response = await handleArticleGenerationStatus(
+    new Request("https://example.com/api/article-generation/status?id=task-with-step"),
+    { db, isAuthorized: async () => true }
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.steps.length, 1);
+  assert.equal(payload.steps[0].status, "success");
+  assert.equal(payload.steps[0].message, "选题分析完成");
+  assert.equal(payload.steps[0].inputJson, undefined);
+  assert.equal(payload.steps[0].outputJson, undefined);
+});
+
+test("article generation worker claims only waiting tasks and skips queued research tasks", async () => {
+  const db = new SelectionOnlyDb();
+  await seedArticleGenerationTask(db, { taskId: "task-research", currentStage: "research" });
+  await seedArticleGenerationTask(db, { taskId: "task-waiting", selectedTopicId: "topic-waiting" });
+
+  const [first, second] = await Promise.all([
+    db.claimNextArticleGenerationTask({
+      workerId: "worker-a",
+      claimedAt: "2026-06-02T00:01:00.000Z"
+    }),
+    db.claimNextArticleGenerationTask({
+      workerId: "worker-b",
+      claimedAt: "2026-06-02T00:01:00.000Z"
+    })
+  ]);
+
+  const claimed = [first, second].filter(Boolean);
+  assert.equal(claimed.length, 1);
+  assert.equal(claimed[0]?.id, "task-waiting");
+  assert.equal(claimed[0]?.status, "running");
+  assert.equal(claimed[0]?.currentStage, "topic_analysis");
+  assert.equal(claimed[0]?.attempt, 1);
+  assert.equal((await db.getArticleGenerationTask("task-research"))?.currentStage, "research");
+});
+
+test("article generation worker completes deterministic topic_analysis and requeues research", async () => {
+  const db = new SelectionOnlyDb();
+  await seedArticleGenerationTask(db, { taskId: "task-worker-success" });
+
+  const result = await runArticleGenerationWorker({
+    db,
+    workerId: "worker-success",
+    now: new Date("2026-06-02T00:01:00.000Z")
+  });
+  const task = await db.getArticleGenerationTask("task-worker-success");
+  const steps = await db.getArticleGenerationSteps("task-worker-success");
+
+  assert.equal(result.status, "stage_completed");
+  assert.equal(task?.status, "queued");
+  assert.equal(task?.currentStage, "research");
+  assert.equal(task?.progress, 15);
+  assert.equal(task?.message, "选题分析完成，等待调研阶段执行");
+  assert.equal(task?.lockedBy, undefined);
+  assert.equal(steps[0].status, "success");
+  assert.equal((steps[0].outputJson as any).sourceUrl, "https://example.com/cloud-topic");
+});
+
+test("topic analysis validates handoff without fetch, MiniMax, or local writes", async () => {
+  const db = new SelectionOnlyDb();
+  const { task, topicSelection } = await seedArticleGenerationTask(db);
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    throw new Error("fetch should not be called");
+  }) as typeof fetch;
+
+  try {
+    const result = analyzeTopicSelection({
+      task,
+      topicSelection,
+      analyzedAt: "2026-06-02T00:01:00.000Z"
+    });
+    assert.equal(result.selectedTopicId, "topic-worker");
+    assert.equal(result.sourceUrl, "https://example.com/cloud-topic");
+    assert.equal(result.editorialBrief?.writingAngle, "从工作流入口变化切入。");
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("topic analysis fails for unapproved, missing selectedTopic, ID mismatch, and missing URL", async () => {
+  const db = new SelectionOnlyDb();
+  const { task, topicSelection } = await seedArticleGenerationTask(db);
+
+  assert.throws(
+    () =>
+      analyzeTopicSelection({
+        task,
+        topicSelection: {
+          ...topicSelection,
+          handoffJson: {
+            ...topicSelection.handoffJson,
+            approval: { ...topicSelection.handoffJson.approval, approvedByUser: false }
+          }
+        }
+      }),
+    /未通过人工确认/
+  );
+  assert.throws(
+    () =>
+      analyzeTopicSelection({
+        task,
+        topicSelection: {
+          ...topicSelection,
+          handoffJson: { ...topicSelection.handoffJson, selectedTopic: undefined as any }
+        }
+      }),
+    /缺少 selectedTopic/
+  );
+  assert.throws(
+    () =>
+      analyzeTopicSelection({
+        task,
+        topicSelection: {
+          ...topicSelection,
+          handoffJson: {
+            ...topicSelection.handoffJson,
+            selectedTopic: { id: "other-topic", title: "标题", url: "https://example.com/other" }
+          }
+        }
+      }),
+    /ID 与任务选题 ID 不一致/
+  );
+  assert.throws(
+    () =>
+      analyzeTopicSelection({
+        task,
+        topicSelection: {
+          ...topicSelection,
+          handoffJson: {
+            ...topicSelection.handoffJson,
+            selectedTopic: { id: "topic-worker", title: "标题" }
+          }
+        }
+      }),
+    /缺少原文 URL/
+  );
+});
+
+test("article generation worker marks business validation failure without retrying", async () => {
+  const db = new SelectionOnlyDb();
+  await seedArticleGenerationTask(db, {
+    taskId: "task-worker-fail",
+    handoff: {
+      approval: {
+        approvedByUser: false,
+        approvedTopicId: "topic-worker",
+        approvedTitle: "云端入围资讯",
+        notes: ""
+      }
+    }
+  });
+
+  const result = await runArticleGenerationWorker({
+    db,
+    workerId: "worker-fail",
+    now: new Date("2026-06-02T00:01:00.000Z")
+  });
+  const task = await db.getArticleGenerationTask("task-worker-fail");
+  const steps = await db.getArticleGenerationSteps("task-worker-fail");
+
+  assert.equal(result.status, "task_failed");
+  assert.equal(task?.status, "failed");
+  assert.equal(task?.currentStage, "topic_analysis");
+  assert.match(task?.errorMessage ?? "", /未通过人工确认/);
+  assert.equal(steps[0].status, "failed");
+});
+
+test("article generation worker does not overwrite cancellation during execution", async () => {
+  const db = new SelectionOnlyDb();
+  await seedArticleGenerationTask(db, { taskId: "task-worker-cancel" });
+  const originalGet = db.getArticleGenerationTask.bind(db);
+  let reads = 0;
+  db.getArticleGenerationTask = async (taskId: string) => {
+    reads += 1;
+    const task = await originalGet(taskId);
+    if (reads === 2 && task?.status === "running") {
+      await db.cancelArticleGenerationTask({
+        taskId,
+        cancelledAt: "2026-06-02T00:01:01.000Z",
+        message: "任务已取消"
+      });
+    }
+    return await originalGet(taskId);
+  };
+
+  const result = await runArticleGenerationWorker({
+    db,
+    workerId: "worker-cancel",
+    now: new Date("2026-06-02T00:01:00.000Z")
+  });
+  const task = await originalGet("task-worker-cancel");
+  const steps = await db.getArticleGenerationSteps("task-worker-cancel");
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(task?.status, "cancelled");
+  assert.equal(task?.message, "任务已取消");
+  assert.equal(steps[0].status, "cancelled");
+});
+
+test("article generation worker recovers stale locks and fails over max attempts", async () => {
+  const db = new SelectionOnlyDb();
+  const { task: requeueTask } = await seedArticleGenerationTask(db, {
+    taskId: "task-stale-requeue",
+    selectedTopicId: "topic-stale-requeue"
+  });
+  requeueTask.status = "running";
+  requeueTask.currentStage = "topic_analysis";
+  requeueTask.attempt = 1;
+  requeueTask.maxAttempts = 2;
+  requeueTask.lockedBy = "old-worker";
+  requeueTask.lockedAt = "2026-06-02T00:00:00.000Z";
+
+  const { task: failTask } = await seedArticleGenerationTask(db, {
+    taskId: "task-stale-fail",
+    selectedTopicId: "topic-stale-fail"
+  });
+  failTask.status = "running";
+  failTask.currentStage = "topic_analysis";
+  failTask.attempt = 2;
+  failTask.maxAttempts = 2;
+  failTask.lockedBy = "old-worker";
+  failTask.lockedAt = "2026-06-02T00:00:00.000Z";
+
+  const recovered = await db.recoverStaleArticleGenerationTasks({
+    staleBefore: "2026-06-02T00:05:00.000Z",
+    recoveredAt: "2026-06-02T00:10:00.000Z"
+  });
+
+  assert.deepEqual(recovered, { requeued: 1, failed: 1 });
+  assert.equal(requeueTask.status, "queued");
+  assert.equal(requeueTask.currentStage, "waiting_for_worker");
+  assert.equal(failTask.status, "failed");
+  assert.equal(failTask.errorMessage, "超过最大自动恢复次数");
+});
+
+test("cron article worker validates secret, returns idle, and processes one task", async () => {
+  const unauthorizedNoSecret = await handleCronArticleWorker(
+    new Request("https://example.com/api/cron/article-worker"),
+    { env: {} }
+  );
+  assert.equal(unauthorizedNoSecret.status, 401);
+
+  const unauthorizedMissingHeader = await handleCronArticleWorker(
+    new Request("https://example.com/api/cron/article-worker"),
+    { env: { CRON_SECRET: "cron-secret" } }
+  );
+  assert.equal(unauthorizedMissingHeader.status, 401);
+
+  const unauthorizedWrongSecret = await handleCronArticleWorker(
+    new Request("https://example.com/api/cron/article-worker", {
+      headers: { Authorization: "Bearer wrong-secret" }
+    }),
+    { env: { CRON_SECRET: "cron-secret" } }
+  );
+  assert.equal(unauthorizedWrongSecret.status, 401);
+
+  const idleDb = new SelectionOnlyDb();
+  const idle = await handleCronArticleWorker(
+    new Request("https://example.com/api/cron/article-worker", {
+      headers: { Authorization: "Bearer cron-secret" }
+    }),
+    { db: idleDb, env: { CRON_SECRET: "cron-secret" } }
+  );
+  const idlePayload = await idle.json();
+  assert.equal(idle.status, 200);
+  assert.equal(idlePayload.status, "idle");
+
+  const db = new SelectionOnlyDb();
+  await seedArticleGenerationTask(db, { taskId: "task-cron-1" });
+  await seedArticleGenerationTask(db, { taskId: "task-cron-2", selectedTopicId: "topic-cron-2" });
+  const response = await handleCronArticleWorker(
+    new Request("https://example.com/api/cron/article-worker", {
+      headers: { Authorization: "Bearer cron-secret" }
+    }),
+    {
+      db,
+      env: {
+        CRON_SECRET: "cron-secret",
+        ARTICLE_WORKER_STALE_AFTER_SECONDS: "600"
+      },
+      workerId: "worker-cron",
+      now: new Date("2026-06-02T00:01:00.000Z")
+    }
+  );
+  const payload = await response.json();
+  const serialized = JSON.stringify(payload);
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.status, "stage_completed");
+  assert.equal(payload.taskId, "task-cron-1");
+  assert.equal(db.articleGenerationTasks.filter((task) => task.currentStage === "research").length, 1);
+  assert.doesNotMatch(serialized, /cron-secret|selectedTopic|handoff/);
 });
 
 test("article generation cancel API handles auth, validation, idempotent cancel, and terminal states", async () => {

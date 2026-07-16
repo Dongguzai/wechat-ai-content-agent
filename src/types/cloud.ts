@@ -8,6 +8,13 @@ export type ArticleGenerationTaskStatus =
   | "success"
   | "failed"
   | "cancelled";
+export type ArticleGenerationStepStatus =
+  | "queued"
+  | "running"
+  | "success"
+  | "failed"
+  | "cancelled"
+  | "skipped";
 export type ArticleGenerationStage =
   | "waiting_for_worker"
   | "topic_analysis"
@@ -150,8 +157,30 @@ export interface ArticleGenerationTaskRecord {
   currentStage: ArticleGenerationStage;
   progress: number;
   message: string;
+  attempt: number;
+  maxAttempts: number;
+  lockedBy?: string;
+  lockedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
   errorMessage?: string;
   cancelledAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ArticleGenerationStepRecord {
+  id: string;
+  taskId: string;
+  stage: ArticleGenerationStage;
+  status: ArticleGenerationStepStatus;
+  attempt: number;
+  message: string;
+  inputJson?: unknown;
+  outputJson?: unknown;
+  errorMessage?: string;
+  startedAt?: string;
+  finishedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

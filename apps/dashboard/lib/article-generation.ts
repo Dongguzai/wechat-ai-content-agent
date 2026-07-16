@@ -3,12 +3,15 @@ import { requireApiSession } from "@/lib/auth";
 import { createCloudBriefServices } from "@/lib/cloud-brief-server";
 import { redactJson } from "@/lib/redaction";
 import type { EditorialBriefDbAdapter } from "../../../src/adapters/neon";
+import type { ArticleGenerationStepRecord } from "../../../src/types/cloud";
 
 interface ArticleGenerationHandlerOptions {
   db?: EditorialBriefDbAdapter;
   isAuthorized?: () => Promise<boolean>;
   now?: Date;
 }
+
+type SafeArticleGenerationStep = Omit<ArticleGenerationStepRecord, "inputJson" | "outputJson">;
 
 async function authorize(options: ArticleGenerationHandlerOptions): Promise<NextResponse | undefined> {
   if (options.isAuthorized) {
@@ -40,12 +43,14 @@ export async function handleArticleGenerationStatus(
     return NextResponse.json({ ok: false, error: "id is required." }, { status: 400 });
   }
 
-  const task = await resolveDb(options).getArticleGenerationTask(taskId);
+  const db = resolveDb(options);
+  const task = await db.getArticleGenerationTask(taskId);
   if (!task) {
     return NextResponse.json({ ok: false, error: "Article generation task not found." }, { status: 404 });
   }
 
-  return NextResponse.json(redactJson({ ok: true, task }));
+  const steps = (await db.getArticleGenerationSteps(taskId)).map(toSafeStep);
+  return NextResponse.json(redactJson({ ok: true, task, steps }));
 }
 
 export async function handleArticleGenerationCancel(
@@ -91,4 +96,9 @@ export async function handleArticleGenerationCancel(
   }
 
   return NextResponse.json(redactJson({ ok: true, task: cancelled }));
+}
+
+function toSafeStep(step: ArticleGenerationStepRecord): SafeArticleGenerationStep {
+  const { inputJson: _inputJson, outputJson: _outputJson, ...safeStep } = step;
+  return safeStep;
 }
