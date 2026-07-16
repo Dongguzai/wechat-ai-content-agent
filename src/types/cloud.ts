@@ -2,6 +2,22 @@ export const EDITORIAL_BRIEF_RUN_TYPE = "editorial_brief";
 
 export type CloudRunType = typeof EDITORIAL_BRIEF_RUN_TYPE;
 export type CloudRunStatus = "running" | "success" | "failed";
+export type ArticleGenerationTaskStatus =
+  | "queued"
+  | "running"
+  | "success"
+  | "failed"
+  | "cancelled";
+export type ArticleGenerationStage =
+  | "waiting_for_worker"
+  | "topic_analysis"
+  | "research"
+  | "fact_pack"
+  | "outline"
+  | "writing"
+  | "title"
+  | "review"
+  | "completed";
 
 export const CLOUD_BRIEF_GENERATION_STEPS = [
   "auth",
@@ -120,6 +136,22 @@ export interface CloudTopicSelectionRecord {
   approvalNotes: string;
   approvalJson: unknown;
   handoffJson: CloudArticleHandoffPayload;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ArticleGenerationTaskRecord {
+  id: string;
+  topicSelectionId: string;
+  runId: string;
+  selectedTopicId: string;
+  approvedTitle: string;
+  status: ArticleGenerationTaskStatus;
+  currentStage: ArticleGenerationStage;
+  progress: number;
+  message: string;
+  errorMessage?: string;
+  cancelledAt?: string;
   createdAt: string;
   updatedAt: string;
 }

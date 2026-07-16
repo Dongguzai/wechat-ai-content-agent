@@ -24,6 +24,7 @@ import {
 } from "../src/pipeline/generateCloudEditorialBrief";
 import {
   EDITORIAL_BRIEF_RUN_TYPE,
+  type ArticleGenerationTaskRecord,
   type CloudBriefGenerationStep,
   type CloudEditorialBriefRecord,
   type CloudNewsItemRecord,
@@ -51,6 +52,7 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
   shortlistedItems: CloudShortlistedItemRecord[] = [];
   briefs: CloudEditorialBriefRecord[] = [];
   topicSelections: CloudTopicSelectionRecord[] = [];
+  articleGenerationTasks: ArticleGenerationTaskRecord[] = [];
   ensured = false;
 
   constructor(seedRuns: CloudRunRecord[] = []) {
@@ -134,6 +136,64 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
       this.topicSelections[existingIndex] = record;
     }
     return record;
+  }
+
+  async createArticleGenerationTask(input: {
+    id: string;
+    topicSelectionId: string;
+    runId: string;
+    selectedTopicId: string;
+    approvedTitle: string;
+    status: "queued";
+    currentStage: ArticleGenerationTaskRecord["currentStage"];
+    progress: number;
+    message: string;
+    createdAt: string;
+  }) {
+    const existing = this.articleGenerationTasks.find(
+      (task) =>
+        task.runId === input.runId &&
+        task.selectedTopicId === input.selectedTopicId &&
+        ["queued", "running", "success"].includes(task.status)
+    );
+    if (existing) return existing;
+
+    const task: ArticleGenerationTaskRecord = {
+      ...input,
+      updatedAt: input.createdAt
+    };
+    this.articleGenerationTasks.push(task);
+    return task;
+  }
+
+  async getArticleGenerationTask(taskId: string) {
+    return this.articleGenerationTasks.find((task) => task.id === taskId);
+  }
+
+  async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId: string) {
+    return this.articleGenerationTasks.find(
+      (task) =>
+        task.topicSelectionId === topicSelectionId &&
+        ["queued", "running", "success"].includes(task.status)
+    );
+  }
+
+  async cancelArticleGenerationTask(input: {
+    taskId: string;
+    cancelledAt: string;
+    message: string;
+  }) {
+    const task = this.articleGenerationTasks.find((item) => item.id === input.taskId);
+    if (!task) return undefined;
+    if (task.status === "cancelled") return task;
+    if (task.status === "success" || task.status === "failed") {
+      throw new Error(`Article generation task cannot be cancelled from status ${task.status}.`);
+    }
+    task.status = "cancelled";
+    task.message = input.message;
+    task.cancelledAt = input.cancelledAt;
+    task.updatedAt = input.cancelledAt;
+    return task;
   }
 
   async markRunSuccess(runId: string, finishedAt: string) {

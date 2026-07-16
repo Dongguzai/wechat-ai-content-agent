@@ -58,6 +58,18 @@ function createLazyDbAdapter(env: NodeJS.ProcessEnv): EditorialBriefDbAdapter {
     async saveTopicSelection(selection) {
       return await getDb().saveTopicSelection(selection);
     },
+    async createArticleGenerationTask(input) {
+      return await getDb().createArticleGenerationTask(input);
+    },
+    async getArticleGenerationTask(taskId) {
+      return await getDb().getArticleGenerationTask(taskId);
+    },
+    async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId) {
+      return await getDb().getActiveArticleGenerationTaskByTopicSelection(topicSelectionId);
+    },
+    async cancelArticleGenerationTask(input) {
+      return await getDb().cancelArticleGenerationTask(input);
+    },
     async markRunSuccess(runId, finishedAt) {
       return await getDb().markRunSuccess(runId, finishedAt);
     },

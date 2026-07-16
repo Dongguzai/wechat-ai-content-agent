@@ -32,7 +32,9 @@ interface SelectTopicResponse {
   ok: boolean;
   path?: string;
   persistence?: "local-file" | "neon";
-  redirectTo?: "/article";
+  redirectTo?: string;
+  taskId?: string;
+  taskStatus?: "queued" | "running" | "success" | "failed" | "cancelled";
   error?: string;
 }
 
@@ -246,9 +248,16 @@ export function CloudBriefView() {
 
       setSelectedTopicId(item.id);
       writeBriefSelection(item.id, payload);
-      if (result.path === "neon:topic_selections") {
-        setSelectionMessage(`已选择「${title}」，选题确认已保存到云端。`);
-        router.push(result.redirectTo ?? "/article");
+
+      if (result.persistence === "neon") {
+        if (!result.taskId) {
+          setSelectionError("选题已保存，但文章任务创建失败，请重新读取页面后重试。");
+          setSelectionErrorTopicId(item.id);
+          return;
+        }
+
+        setSelectionMessage(`任务已创建，正在进入生成页面...`);
+        router.push(result.redirectTo ?? `/article-generation/${result.taskId}`);
         return;
       }
 
@@ -487,7 +496,7 @@ export function CloudBriefView() {
                   {isSelecting
                     ? selectionStage === "generating"
                       ? "生成文章..."
-                      : "选择中..."
+                      : "正在确认选题..."
                     : isSelected
                       ? "已选择"
                       : "选择此题"}
@@ -504,7 +513,7 @@ export function CloudBriefView() {
             </dl>
             {isSelecting ? (
               <p className="mt-3 text-xs font-semibold text-stone-600">
-                {selectionStage === "generating" ? "正在生成文章产物，请稍候。" : "正在保存选题确认。"}
+                {selectionStage === "generating" ? "正在生成文章产物，请稍候。" : "正在确认选题。"}
               </p>
             ) : null}
             {isSelected && !isSelecting && !hasSelectionError ? (

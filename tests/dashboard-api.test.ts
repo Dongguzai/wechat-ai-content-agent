@@ -6,10 +6,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { EditorialBriefDbAdapter } from "../src/adapters/neon";
 import type {
+  ArticleGenerationTaskRecord,
   CloudTopicSelectionRecord,
   CloudRunType
 } from "../src/types/cloud";
 import { executeDashboardAction } from "../apps/dashboard/lib/actions";
+import {
+  handleArticleGenerationCancel,
+  handleArticleGenerationStatus
+} from "../apps/dashboard/lib/article-generation";
 import { getArticleData, getBriefData, getDashboardStatus, getSettingsStatus, readFileForApi } from "../apps/dashboard/lib/dashboard-data";
 import {
   createCurrentFeedback,
@@ -46,6 +51,7 @@ async function writeJson(root: string, relativePath: string, value: unknown): Pr
 class SelectionOnlyDb implements EditorialBriefDbAdapter {
   ensured = false;
   selections: CloudTopicSelectionRecord[] = [];
+  articleGenerationTasks: ArticleGenerationTaskRecord[] = [];
 
   async ensureSchema() {
     this.ensured = true;
@@ -68,6 +74,66 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
     };
     this.selections.push(record);
     return record;
+  }
+
+  async createArticleGenerationTask(input: {
+    id: string;
+    topicSelectionId: string;
+    runId: string;
+    selectedTopicId: string;
+    approvedTitle: string;
+    status: "queued";
+    currentStage: ArticleGenerationTaskRecord["currentStage"];
+    progress: number;
+    message: string;
+    createdAt: string;
+  }) {
+    const existing = this.articleGenerationTasks.find(
+      (task) =>
+        task.runId === input.runId &&
+        task.selectedTopicId === input.selectedTopicId &&
+        ["queued", "running", "success"].includes(task.status)
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const task: ArticleGenerationTaskRecord = {
+      ...input,
+      updatedAt: input.createdAt
+    };
+    this.articleGenerationTasks.push(task);
+    return task;
+  }
+
+  async getArticleGenerationTask(taskId: string) {
+    return this.articleGenerationTasks.find((task) => task.id === taskId);
+  }
+
+  async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId: string) {
+    return this.articleGenerationTasks.find(
+      (task) =>
+        task.topicSelectionId === topicSelectionId &&
+        ["queued", "running", "success"].includes(task.status)
+    );
+  }
+
+  async cancelArticleGenerationTask(input: {
+    taskId: string;
+    cancelledAt: string;
+    message: string;
+  }) {
+    const task = this.articleGenerationTasks.find((item) => item.id === input.taskId);
+    if (!task) return undefined;
+    if (task.status === "cancelled") return task;
+    if (task.status === "success" || task.status === "failed") {
+      throw new Error(`Article generation task cannot be cancelled from status ${task.status}.`);
+    }
+    task.status = "cancelled";
+    task.message = input.message;
+    task.cancelledAt = input.cancelledAt;
+    task.updatedAt = input.cancelledAt;
+    return task;
   }
 
   async getSuccessfulRun() {
@@ -104,6 +170,273 @@ class SelectionOnlyDb implements EditorialBriefDbAdapter {
     return { run: null, brief: null, shortlistedItems: [], topicSelection: null };
   }
 }
+
+test("article generation task adapter creates, reads, reuses active, and cancels queued tasks", async () => {
+  const db = new SelectionOnlyDb();
+  const createdAt = "2026-06-02T00:00:00.000Z";
+  const first = await db.createArticleGenerationTask({
+    id: "task-1",
+    topicSelectionId: "selection-1",
+    runId: "run-1",
+    selectedTopicId: "topic-1",
+    approvedTitle: "选题 1",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt
+  });
+  const second = await db.createArticleGenerationTask({
+    id: "task-2",
+    topicSelectionId: "selection-1",
+    runId: "run-1",
+    selectedTopicId: "topic-1",
+    approvedTitle: "选题 1",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt
+  });
+
+  assert.equal(first.id, "task-1");
+  assert.equal(second.id, "task-1");
+  assert.equal(db.articleGenerationTasks.length, 1);
+  assert.equal((await db.getArticleGenerationTask("task-1"))?.approvedTitle, "选题 1");
+  assert.equal((await db.getActiveArticleGenerationTaskByTopicSelection("selection-1"))?.id, "task-1");
+
+  const cancelled = await db.cancelArticleGenerationTask({
+    taskId: "task-1",
+    cancelledAt: "2026-06-02T00:01:00.000Z",
+    message: "任务已取消"
+  });
+  assert.equal(cancelled?.status, "cancelled");
+  assert.equal(cancelled?.cancelledAt, "2026-06-02T00:01:00.000Z");
+  assert.equal(cancelled?.message, "任务已取消");
+
+  const cancelledAgain = await db.cancelArticleGenerationTask({
+    taskId: "task-1",
+    cancelledAt: "2026-06-02T00:02:00.000Z",
+    message: "任务已取消"
+  });
+  assert.equal(cancelledAgain?.status, "cancelled");
+  assert.equal(cancelledAgain?.cancelledAt, "2026-06-02T00:01:00.000Z");
+
+  const recreated = await db.createArticleGenerationTask({
+    id: "task-3",
+    topicSelectionId: "selection-1",
+    runId: "run-1",
+    selectedTopicId: "topic-1",
+    approvedTitle: "选题 1",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:03:00.000Z"
+  });
+  assert.equal(recreated.id, "task-3");
+  assert.equal(db.articleGenerationTasks.length, 2);
+});
+
+test("article generation task adapter does not cancel success tasks and returns undefined for missing tasks", async () => {
+  const db = new SelectionOnlyDb();
+  const task = await db.createArticleGenerationTask({
+    id: "task-success",
+    topicSelectionId: "selection-success",
+    runId: "run-success",
+    selectedTopicId: "topic-success",
+    approvedTitle: "成功选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  task.status = "success";
+  task.currentStage = "completed";
+  task.progress = 100;
+
+  await assert.rejects(
+    () =>
+      db.cancelArticleGenerationTask({
+        taskId: "task-success",
+        cancelledAt: "2026-06-02T00:01:00.000Z",
+        message: "任务已取消"
+      }),
+    /cannot be cancelled/
+  );
+  assert.equal(await db.getArticleGenerationTask("missing-task"), undefined);
+  assert.equal(
+    await db.cancelArticleGenerationTask({
+      taskId: "missing-task",
+      cancelledAt: "2026-06-02T00:01:00.000Z",
+      message: "任务已取消"
+    }),
+    undefined
+  );
+});
+
+test("article generation status API handles auth, validation, missing, and found tasks", async () => {
+  const db = new SelectionOnlyDb();
+  await db.createArticleGenerationTask({
+    id: "task-status",
+    topicSelectionId: "selection-status",
+    runId: "run-status",
+    selectedTopicId: "topic-status",
+    approvedTitle: "状态选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+
+  const unauthorized = await handleArticleGenerationStatus(
+    new Request("https://example.com/api/article-generation/status?id=task-status"),
+    { db, isAuthorized: async () => false }
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const missingId = await handleArticleGenerationStatus(
+    new Request("https://example.com/api/article-generation/status"),
+    { db, isAuthorized: async () => true }
+  );
+  assert.equal(missingId.status, 400);
+
+  const notFound = await handleArticleGenerationStatus(
+    new Request("https://example.com/api/article-generation/status?id=missing-task"),
+    { db, isAuthorized: async () => true }
+  );
+  assert.equal(notFound.status, 404);
+
+  const found = await handleArticleGenerationStatus(
+    new Request("https://example.com/api/article-generation/status?id=task-status"),
+    { db, isAuthorized: async () => true }
+  );
+  const payload = await found.json();
+  assert.equal(found.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.task.id, "task-status");
+  assert.equal(payload.task.currentStage, "waiting_for_worker");
+});
+
+test("article generation cancel API handles auth, validation, idempotent cancel, and terminal states", async () => {
+  const db = new SelectionOnlyDb();
+  await db.createArticleGenerationTask({
+    id: "task-cancel",
+    topicSelectionId: "selection-cancel",
+    runId: "run-cancel",
+    selectedTopicId: "topic-cancel",
+    approvedTitle: "取消选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  const successTask = await db.createArticleGenerationTask({
+    id: "task-success-cancel",
+    topicSelectionId: "selection-success-cancel",
+    runId: "run-success-cancel",
+    selectedTopicId: "topic-success-cancel",
+    approvedTitle: "成功选题",
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
+    createdAt: "2026-06-02T00:00:00.000Z"
+  });
+  successTask.status = "success";
+
+  const unauthorized = await handleArticleGenerationCancel(
+    new Request("https://example.com/api/article-generation/cancel", {
+      method: "POST",
+      body: JSON.stringify({ taskId: "task-cancel" })
+    }),
+    { db, isAuthorized: async () => false }
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const missingId = await handleArticleGenerationCancel(
+    new Request("https://example.com/api/article-generation/cancel", {
+      method: "POST",
+      body: JSON.stringify({})
+    }),
+    { db, isAuthorized: async () => true }
+  );
+  assert.equal(missingId.status, 400);
+
+  const cancelled = await handleArticleGenerationCancel(
+    new Request("https://example.com/api/article-generation/cancel", {
+      method: "POST",
+      body: JSON.stringify({ taskId: "task-cancel" })
+    }),
+    {
+      db,
+      isAuthorized: async () => true,
+      now: new Date("2026-06-02T00:01:00.000Z")
+    }
+  );
+  const cancelledPayload = await cancelled.json();
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelledPayload.task.status, "cancelled");
+  assert.equal(cancelledPayload.task.message, "任务已取消");
+
+  const cancelledAgain = await handleArticleGenerationCancel(
+    new Request("https://example.com/api/article-generation/cancel", {
+      method: "POST",
+      body: JSON.stringify({ taskId: "task-cancel" })
+    }),
+    {
+      db,
+      isAuthorized: async () => true,
+      now: new Date("2026-06-02T00:02:00.000Z")
+    }
+  );
+  const cancelledAgainPayload = await cancelledAgain.json();
+  assert.equal(cancelledAgain.status, 200);
+  assert.equal(cancelledAgainPayload.task.cancelledAt, "2026-06-02T00:01:00.000Z");
+
+  const successCancel = await handleArticleGenerationCancel(
+    new Request("https://example.com/api/article-generation/cancel", {
+      method: "POST",
+      body: JSON.stringify({ taskId: "task-success-cancel" })
+    }),
+    { db, isAuthorized: async () => true }
+  );
+  assert.equal(successCancel.status, 409);
+});
+
+test("cloud brief view routes Neon selections to the article generation page", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/components/cloud-brief-view.tsx"),
+    "utf8"
+  );
+
+  assert.match(source, /result\.persistence === "neon"/);
+  assert.match(source, /\/article-generation\/\$\{result\.taskId\}/);
+  assert.match(source, /选题已保存，但文章任务创建失败/);
+  assert.match(source, /body: JSON\.stringify\(\{ action: "continueArticle" \}\)/);
+  assert.ok(
+    source.indexOf('result.persistence === "neon"') <
+      source.indexOf('body: JSON.stringify({ action: "continueArticle" })')
+  );
+});
+
+test("article generation view displays queued and cancelled states with polling", async () => {
+  const source = await readFile(
+    join(process.cwd(), "apps/dashboard/components/article-generation-view.tsx"),
+    "utf8"
+  );
+
+  assert.match(source, /window\.setInterval/);
+  assert.match(source, /3000/);
+  assert.match(source, /文章生成任务已经创建/);
+  assert.match(source, /任务已取消/);
+  assert.match(source, /terminalStatuses/);
+  assert.match(source, /\/api\/article-generation\/status/);
+  assert.match(source, /\/api\/article-generation\/cancel/);
+});
 
 const tinyPngBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -543,13 +876,24 @@ test("cloud brief topic selection persists durable Neon handoff without local wr
       }
     );
 
-    assert.equal(result.redirectTo, "/article");
-    assert.equal(result.path, "neon:topic_selections");
+    assert.equal(result.path, "neon:article_generation_tasks");
     assert.equal(result.persistence, "neon");
+    assert.equal(typeof result.taskId, "string");
+    assert.ok(result.taskId);
+    assert.equal(result.taskStatus, "queued");
+    assert.equal(result.redirectTo, `/article-generation/${result.taskId}`);
     assert.equal(db.ensured, true);
     assert.equal(db.selections.length, 1);
+    assert.equal(db.articleGenerationTasks.length, 1);
     assert.equal(db.selections[0].runId, "run-cloud-1");
     assert.equal(db.selections[0].selectedShortlistedItemId, "cloud-topic-3");
+    assert.equal(db.articleGenerationTasks[0].topicSelectionId, db.selections[0].id);
+    assert.equal(db.articleGenerationTasks[0].runId, "run-cloud-1");
+    assert.equal(db.articleGenerationTasks[0].selectedTopicId, "cloud-topic-3");
+    assert.equal(db.articleGenerationTasks[0].status, "queued");
+    assert.equal(db.articleGenerationTasks[0].currentStage, "waiting_for_worker");
+    assert.equal(db.articleGenerationTasks[0].progress, 0);
+    assert.equal(db.articleGenerationTasks[0].message, "文章生成任务已创建，等待执行");
     assert.equal(db.selections[0].handoffJson.approval.approvedTopicId, "cloud-topic-3");
     assert.equal(
       (db.selections[0].handoffJson.selectedTopic as any).selected.selection.writingAngle,
@@ -557,6 +901,54 @@ test("cloud brief topic selection persists durable Neon handoff without local wr
     );
     await assert.rejects(() => access(join(root, "inputs/editorial-approval.json")));
     await assert.rejects(() => access(join(root, "outputs/selected-topic.json")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cloud brief topic selection reuses an active article generation task", async () => {
+  const root = await createTempRoot();
+  const db = new SelectionOnlyDb();
+  const input = {
+    source: "cloud-brief",
+    runId: "run-cloud-1",
+    topicId: "cloud-topic-3",
+    topic: {
+      id: "cloud-topic-3",
+      runId: "run-cloud-1",
+      title: "Cloud topic raw title",
+      titleZh: "云端入围资讯",
+      url: "https://example.com/cloud-topic-3"
+    },
+    shortlistedItems: [
+      {
+        id: "cloud-topic-3",
+        runId: "run-cloud-1",
+        rank: 1,
+        title: "Cloud topic raw title",
+        titleZh: "云端入围资讯",
+        url: "https://example.com/cloud-topic-3"
+      }
+    ]
+  };
+
+  try {
+    const first = await selectBriefTopic(input, {
+      rootDir: root,
+      db,
+      env: { VERCEL: "1" },
+      writeLocalHandoff: false
+    });
+    const second = await selectBriefTopic(input, {
+      rootDir: root,
+      db,
+      env: { VERCEL: "1" },
+      writeLocalHandoff: false
+    });
+
+    assert.equal(first.taskId, second.taskId);
+    assert.equal(db.articleGenerationTasks.length, 1);
+    assert.equal(second.redirectTo, `/article-generation/${first.taskId}`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

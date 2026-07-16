@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import sharp from "sharp";
 import type { EditorialBriefDbAdapter } from "../../../src/adapters/neon";
-import type { CloudArticleHandoffPayload, CloudTopicSelectionRecord } from "../../../src/types/cloud";
+import type {
+  ArticleGenerationTaskRecord,
+  CloudArticleHandoffPayload,
+  CloudTopicSelectionRecord
+} from "../../../src/types/cloud";
 import { generateApimartImage } from "../../../src/adapters/apimart";
 import { executeDashboardAction } from "./actions";
 import {
@@ -86,9 +90,12 @@ export async function selectBriefTopic(
 ): Promise<{
   path: string;
   approval: JsonObject;
-  redirectTo: "/article";
+  redirectTo: "/article" | `/article-generation/${string}`;
   persistence: "local-file" | "neon";
   topicSelection?: JsonObject;
+  articleGenerationTask?: JsonObject;
+  taskId?: string;
+  taskStatus?: ArticleGenerationTaskRecord["status"];
 }> {
   const topicId = stringField(input, "topicId").trim();
   if (!topicId) {
@@ -119,9 +126,31 @@ export async function selectBriefTopic(
 
   if (submittedTopic && isCloudBriefSelection(input)) {
     const handoff = createCloudArticleHandoff(input, submittedTopic, approval);
-    const topicSelection = options.db
-      ? await saveCloudTopicSelection(input, submittedTopic, approval, handoff, options)
-      : undefined;
+    if (options.db) {
+      const topicSelection = await saveCloudTopicSelection(
+        input,
+        submittedTopic,
+        approval,
+        handoff,
+        options
+      );
+      const articleGenerationTask = await createArticleGenerationTaskForSelection(
+        topicSelection,
+        approval,
+        options
+      );
+
+      return {
+        path: "neon:article_generation_tasks",
+        approval,
+        redirectTo: `/article-generation/${articleGenerationTask.id}`,
+        persistence: "neon",
+        topicSelection: redactJson(topicSelection) as JsonObject,
+        articleGenerationTask: redactJson(articleGenerationTask) as JsonObject,
+        taskId: articleGenerationTask.id,
+        taskStatus: articleGenerationTask.status
+      };
+    }
 
     if (shouldWriteLocalHandoff(options)) {
       const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
@@ -130,22 +159,11 @@ export async function selectBriefTopic(
         path: writtenPath,
         approval,
         redirectTo: "/article",
-        persistence: topicSelection ? "neon" : "local-file",
-        topicSelection: topicSelection ? (redactJson(topicSelection) as JsonObject) : undefined
+        persistence: "local-file"
       };
     }
 
-    if (!topicSelection) {
-      throw new Error("Cloud topic selection requires Neon persistence when local handoff is disabled.");
-    }
-
-    return {
-      path: "neon:topic_selections",
-      approval,
-      redirectTo: "/article",
-      persistence: "neon",
-      topicSelection: redactJson(topicSelection) as JsonObject
-    };
+    throw new Error("Cloud topic selection requires Neon persistence when local handoff is disabled.");
   }
 
   const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
@@ -1142,6 +1160,31 @@ async function saveCloudTopicSelection(
     approvalNotes: stringValue(approval.notes),
     approvalJson: approval,
     handoffJson: handoff,
+    createdAt: now
+  });
+}
+
+async function createArticleGenerationTaskForSelection(
+  topicSelection: CloudTopicSelectionRecord,
+  approval: JsonObject,
+  options: SelectBriefTopicOptions
+): Promise<ArticleGenerationTaskRecord> {
+  const db = options.db;
+  if (!db) {
+    throw new Error("Neon db adapter is required for article generation task creation.");
+  }
+
+  const now = new Date().toISOString();
+  return await db.createArticleGenerationTask({
+    id: randomUUID(),
+    topicSelectionId: topicSelection.id,
+    runId: topicSelection.runId,
+    selectedTopicId: topicSelection.selectedShortlistedItemId,
+    approvedTitle: stringValue(approval.approvedTitle),
+    status: "queued",
+    currentStage: "waiting_for_worker",
+    progress: 0,
+    message: "文章生成任务已创建，等待执行",
     createdAt: now
   });
 }

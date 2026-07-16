@@ -7,6 +7,8 @@ import type {
   CloudRunType,
   CloudShortlistedItemRecord,
   CloudTopicSelectionRecord,
+  ArticleGenerationStage,
+  ArticleGenerationTaskRecord,
   TodayBriefPayload
 } from "../types/cloud.js";
 
@@ -33,6 +35,27 @@ export interface EditorialBriefDbAdapter {
     handoffJson: unknown;
     createdAt: string;
   }): Promise<CloudTopicSelectionRecord>;
+  createArticleGenerationTask(input: {
+    id: string;
+    topicSelectionId: string;
+    runId: string;
+    selectedTopicId: string;
+    approvedTitle: string;
+    status: "queued";
+    currentStage: ArticleGenerationStage;
+    progress: number;
+    message: string;
+    createdAt: string;
+  }): Promise<ArticleGenerationTaskRecord>;
+  getArticleGenerationTask(taskId: string): Promise<ArticleGenerationTaskRecord | undefined>;
+  getActiveArticleGenerationTaskByTopicSelection(
+    topicSelectionId: string
+  ): Promise<ArticleGenerationTaskRecord | undefined>;
+  cancelArticleGenerationTask(input: {
+    taskId: string;
+    cancelledAt: string;
+    message: string;
+  }): Promise<ArticleGenerationTaskRecord | undefined>;
   markRunSuccess(runId: string, finishedAt: string): Promise<CloudRunRecord>;
   markRunFailed(runId: string, finishedAt: string, error: string): Promise<CloudRunRecord>;
   getTodayBrief(runDate: string, runType: CloudRunType): Promise<TodayBriefPayload>;
@@ -79,6 +102,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
 }
 
 function toTimestamp(value: string | undefined): Date | null {
@@ -196,6 +228,24 @@ function toTopicSelection(row: Record<string, unknown>): CloudTopicSelectionReco
   };
 }
 
+function toArticleGenerationTask(row: Record<string, unknown>): ArticleGenerationTaskRecord {
+  return {
+    id: String(row.id),
+    topicSelectionId: String(row.topic_selection_id),
+    runId: String(row.run_id),
+    selectedTopicId: String(row.selected_topic_id),
+    approvedTitle: String(row.approved_title),
+    status: row.status as ArticleGenerationTaskRecord["status"],
+    currentStage: String(row.current_stage) as ArticleGenerationTaskRecord["currentStage"],
+    progress: Number(row.progress),
+    message: String(row.message),
+    errorMessage: row.error_message ? String(row.error_message) : undefined,
+    cancelledAt: optionalIso(row.cancelled_at),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
 export function createNeonDbAdapter(env: NodeJS.ProcessEnv = process.env): EditorialBriefDbAdapter {
   const sql = postgres(readDatabaseUrl(env), {
     max: Number(env.DATABASE_MAX_CONNECTIONS ?? 1),
@@ -298,10 +348,47 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
           updated_at timestamptz not null default now()
         )
       `;
+      await sql`
+        create table if not exists article_generation_tasks (
+          id text primary key,
+          topic_selection_id text not null references topic_selections(id) on update cascade on delete cascade,
+          run_id text not null references runs(id) on delete cascade,
+          selected_topic_id text not null,
+          approved_title text not null,
+          status text not null check (status in ('queued', 'running', 'success', 'failed', 'cancelled')),
+          current_stage text not null check (
+            current_stage in (
+              'waiting_for_worker',
+              'topic_analysis',
+              'research',
+              'fact_pack',
+              'outline',
+              'writing',
+              'title',
+              'review',
+              'completed'
+            )
+          ),
+          progress integer not null default 0 check (progress >= 0 and progress <= 100),
+          message text not null,
+          error_message text,
+          cancelled_at timestamptz,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        )
+      `;
       await sql`create index if not exists news_items_run_id_idx on news_items(run_id)`;
       await sql`create index if not exists shortlisted_items_run_id_rank_idx on shortlisted_items(run_id, rank)`;
       await sql`create index if not exists editorial_briefs_run_id_idx on editorial_briefs(run_id)`;
       await sql`create unique index if not exists topic_selections_run_id_idx on topic_selections(run_id)`;
+      await sql`create index if not exists article_generation_tasks_topic_selection_id_idx on article_generation_tasks(topic_selection_id)`;
+      await sql`create index if not exists article_generation_tasks_run_id_idx on article_generation_tasks(run_id)`;
+      await sql`create index if not exists article_generation_tasks_status_updated_at_idx on article_generation_tasks(status, updated_at)`;
+      await sql`
+        create unique index if not exists article_generation_tasks_active_topic_idx
+        on article_generation_tasks(run_id, selected_topic_id)
+        where status in ('queued', 'running', 'success')
+      `;
     },
 
     async getSuccessfulRun(runDate, runType) {
@@ -422,6 +509,106 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
         returning *
       `;
       return toTopicSelection(rows[0]);
+    },
+
+    async createArticleGenerationTask(input) {
+      const existingRows = await sql`
+        select * from article_generation_tasks
+        where run_id = ${input.runId}
+          and selected_topic_id = ${input.selectedTopicId}
+          and status in ('queued', 'running', 'success')
+        order by created_at desc
+        limit 1
+      `;
+      if (existingRows[0]) {
+        return toArticleGenerationTask(existingRows[0]);
+      }
+
+      try {
+        const rows = await sql`
+          insert into article_generation_tasks (
+            id, topic_selection_id, run_id, selected_topic_id, approved_title,
+            status, current_stage, progress, message, error_message, cancelled_at,
+            created_at, updated_at
+          )
+          values (
+            ${input.id}, ${input.topicSelectionId}, ${input.runId},
+            ${input.selectedTopicId}, ${input.approvedTitle}, ${input.status},
+            ${input.currentStage}, ${input.progress}, ${input.message}, null, null,
+            ${new Date(input.createdAt)}, ${new Date(input.createdAt)}
+          )
+          returning *
+        `;
+        return toArticleGenerationTask(rows[0]);
+      } catch (error) {
+        if (!isUniqueViolation(error)) {
+          throw error;
+        }
+
+        const rows = await sql`
+          select * from article_generation_tasks
+          where run_id = ${input.runId}
+            and selected_topic_id = ${input.selectedTopicId}
+            and status in ('queued', 'running', 'success')
+          order by created_at desc
+          limit 1
+        `;
+        if (!rows[0]) {
+          throw error;
+        }
+        return toArticleGenerationTask(rows[0]);
+      }
+    },
+
+    async getArticleGenerationTask(taskId) {
+      const rows = await sql`
+        select * from article_generation_tasks
+        where id = ${taskId}
+        limit 1
+      `;
+      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
+    },
+
+    async getActiveArticleGenerationTaskByTopicSelection(topicSelectionId) {
+      const rows = await sql`
+        select * from article_generation_tasks
+        where topic_selection_id = ${topicSelectionId}
+          and status in ('queued', 'running', 'success')
+        order by updated_at desc
+        limit 1
+      `;
+      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
+    },
+
+    async cancelArticleGenerationTask(input) {
+      const existingRows = await sql`
+        select * from article_generation_tasks
+        where id = ${input.taskId}
+        limit 1
+      `;
+      const existing = existingRows[0] ? toArticleGenerationTask(existingRows[0]) : undefined;
+      if (!existing) {
+        return undefined;
+      }
+      if (existing.status === "cancelled") {
+        return existing;
+      }
+      if (existing.status === "success" || existing.status === "failed") {
+        throw new Error(
+          `Article generation task cannot be cancelled from status ${existing.status}.`
+        );
+      }
+
+      const rows = await sql`
+        update article_generation_tasks
+        set status = 'cancelled',
+            message = ${input.message},
+            cancelled_at = ${new Date(input.cancelledAt)},
+            updated_at = ${new Date(input.cancelledAt)}
+        where id = ${input.taskId}
+        returning *
+      `;
+      return rows[0] ? toArticleGenerationTask(rows[0]) : undefined;
     },
 
     async markRunSuccess(runId, finishedAt) {
