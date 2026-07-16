@@ -99,8 +99,34 @@ export interface CloudEditorialBriefRecord {
   createdAt: string;
 }
 
+export interface CloudArticleHandoffPayload {
+  approval: {
+    approvedByUser: boolean;
+    approvedTopicId: string;
+    approvedTitle: string;
+    notes: string;
+  };
+  candidateNews: unknown[];
+  shortlistedNews: unknown[];
+  selectedTopic: unknown;
+  editorialBrief: unknown;
+}
+
+export interface CloudTopicSelectionRecord {
+  id: string;
+  runId: string;
+  selectedShortlistedItemId: string;
+  approvedTitle: string;
+  approvalNotes: string;
+  approvalJson: unknown;
+  handoffJson: CloudArticleHandoffPayload;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TodayBriefPayload {
   run: CloudRunRecord | null;
   brief: CloudEditorialBriefRecord | null;
   shortlistedItems: CloudShortlistedItemRecord[];
+  topicSelection?: CloudTopicSelectionRecord | null;
 }

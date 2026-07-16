@@ -30,6 +30,8 @@ interface GenerateBriefResponse {
 
 interface SelectTopicResponse {
   ok: boolean;
+  path?: string;
+  persistence?: "local-file" | "neon";
   redirectTo?: "/article";
   error?: string;
 }
@@ -222,6 +224,7 @@ export function CloudBriefView() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           source: "cloud-brief",
+          runId: item.runId,
           topicId: item.id,
           topic: topicSnapshot(item),
           shortlistedItems: items.slice(0, 10).map(topicSnapshot)
@@ -243,6 +246,12 @@ export function CloudBriefView() {
 
       setSelectedTopicId(item.id);
       writeBriefSelection(item.id, payload);
+      if (result.path === "neon:topic_selections") {
+        setSelectionMessage(`已选择「${title}」，选题确认已保存到云端。`);
+        router.push(result.redirectTo ?? "/article");
+        return;
+      }
+
       setSelectionStage("generating");
       setSelectionMessage(`已选择「${title}」，正在生成文章。`);
 
@@ -518,6 +527,8 @@ export function CloudBriefView() {
 function topicSnapshot(item: ShortlistedItem) {
   return {
     id: item.id,
+    runId: item.runId,
+    newsItemId: item.newsItemId,
     rank: item.rank,
     title: item.title,
     rawTitle: item.rawTitle,
@@ -540,7 +551,8 @@ function topicSnapshot(item: ShortlistedItem) {
     riskNotes: item.riskNotes,
     riskNotesZh: item.riskNotesZh,
     sourceLanguage: item.sourceLanguage,
-    localized: item.localized
+    localized: item.localized,
+    createdAt: item.createdAt
   };
 }
 
@@ -653,6 +665,11 @@ function writeBriefCache(payload: TodayBriefPayload): void {
 }
 
 function readBriefSelection(payload: TodayBriefPayload): string {
+  const persistedSelection = payload.topicSelection?.selectedShortlistedItemId;
+  if (persistedSelection) {
+    return persistedSelection;
+  }
+
   if (typeof window === "undefined") {
     return "";
   }

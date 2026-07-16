@@ -29,7 +29,8 @@ import {
   type CloudNewsItemRecord,
   type CloudRunRecord,
   type CloudRunType,
-  type CloudShortlistedItemRecord
+  type CloudShortlistedItemRecord,
+  type CloudTopicSelectionRecord
 } from "../src/types/cloud";
 import type {
   NewsCategory,
@@ -49,6 +50,7 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
   newsItems: CloudNewsItemRecord[] = [];
   shortlistedItems: CloudShortlistedItemRecord[] = [];
   briefs: CloudEditorialBriefRecord[] = [];
+  topicSelections: CloudTopicSelectionRecord[] = [];
   ensured = false;
 
   constructor(seedRuns: CloudRunRecord[] = []) {
@@ -109,6 +111,31 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
     return brief;
   }
 
+  async saveTopicSelection(selection: {
+    id: string;
+    runId: string;
+    selectedShortlistedItemId: string;
+    approvedTitle: string;
+    approvalNotes: string;
+    approvalJson: unknown;
+    handoffJson: unknown;
+    createdAt: string;
+  }) {
+    const record: CloudTopicSelectionRecord = {
+      ...selection,
+      handoffJson: selection.handoffJson as CloudTopicSelectionRecord["handoffJson"],
+      createdAt: selection.createdAt,
+      updatedAt: selection.createdAt
+    };
+    const existingIndex = this.topicSelections.findIndex((item) => item.runId === selection.runId);
+    if (existingIndex === -1) {
+      this.topicSelections.push(record);
+    } else {
+      this.topicSelections[existingIndex] = record;
+    }
+    return record;
+  }
+
   async markRunSuccess(runId: string, finishedAt: string) {
     const run = this.mustFindRun(runId);
     run.status = "success";
@@ -134,7 +161,7 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
       ) ?? null;
 
     if (!run) {
-      return { run: null, brief: null, shortlistedItems: [] };
+      return { run: null, brief: null, shortlistedItems: [], topicSelection: null };
     }
 
     return {
@@ -142,7 +169,9 @@ class MemoryBriefDb implements EditorialBriefDbAdapter {
       brief: this.briefs.find((brief) => brief.runId === run.id) ?? null,
       shortlistedItems: this.shortlistedItems
         .filter((item) => item.runId === run.id)
-        .sort((left, right) => left.rank - right.rank)
+        .sort((left, right) => left.rank - right.rank),
+      topicSelection:
+        this.topicSelections.find((selection) => selection.runId === run.id) ?? null
     };
   }
 

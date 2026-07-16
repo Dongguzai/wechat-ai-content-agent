@@ -6,6 +6,7 @@ import type {
   CloudRunStatus,
   CloudRunType,
   CloudShortlistedItemRecord,
+  CloudTopicSelectionRecord,
   TodayBriefPayload
 } from "../types/cloud.js";
 
@@ -22,6 +23,16 @@ export interface EditorialBriefDbAdapter {
   insertNewsItems(items: CloudNewsItemRecord[]): Promise<CloudNewsItemRecord[]>;
   insertShortlistedItems(items: CloudShortlistedItemRecord[]): Promise<CloudShortlistedItemRecord[]>;
   insertEditorialBrief(brief: CloudEditorialBriefRecord): Promise<CloudEditorialBriefRecord>;
+  saveTopicSelection(selection: {
+    id: string;
+    runId: string;
+    selectedShortlistedItemId: string;
+    approvedTitle: string;
+    approvalNotes: string;
+    approvalJson: unknown;
+    handoffJson: unknown;
+    createdAt: string;
+  }): Promise<CloudTopicSelectionRecord>;
   markRunSuccess(runId: string, finishedAt: string): Promise<CloudRunRecord>;
   markRunFailed(runId: string, finishedAt: string, error: string): Promise<CloudRunRecord>;
   getTodayBrief(runDate: string, runType: CloudRunType): Promise<TodayBriefPayload>;
@@ -171,6 +182,20 @@ function toBrief(row: Record<string, unknown>): CloudEditorialBriefRecord {
   };
 }
 
+function toTopicSelection(row: Record<string, unknown>): CloudTopicSelectionRecord {
+  return {
+    id: String(row.id),
+    runId: String(row.run_id),
+    selectedShortlistedItemId: String(row.selected_shortlisted_item_id),
+    approvedTitle: String(row.approved_title),
+    approvalNotes: String(row.approval_notes ?? ""),
+    approvalJson: row.approval_json,
+    handoffJson: row.handoff_json as CloudTopicSelectionRecord["handoffJson"],
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
 export function createNeonDbAdapter(env: NodeJS.ProcessEnv = process.env): EditorialBriefDbAdapter {
   const sql = postgres(readDatabaseUrl(env), {
     max: Number(env.DATABASE_MAX_CONNECTIONS ?? 1),
@@ -260,9 +285,23 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
           created_at timestamptz not null default now()
         )
       `;
+      await sql`
+        create table if not exists topic_selections (
+          id text primary key,
+          run_id text not null references runs(id) on delete cascade,
+          selected_shortlisted_item_id text not null references shortlisted_items(id) on delete restrict,
+          approved_title text not null,
+          approval_notes text not null,
+          approval_json jsonb not null,
+          handoff_json jsonb not null,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        )
+      `;
       await sql`create index if not exists news_items_run_id_idx on news_items(run_id)`;
       await sql`create index if not exists shortlisted_items_run_id_rank_idx on shortlisted_items(run_id, rank)`;
       await sql`create index if not exists editorial_briefs_run_id_idx on editorial_briefs(run_id)`;
+      await sql`create unique index if not exists topic_selections_run_id_idx on topic_selections(run_id)`;
     },
 
     async getSuccessfulRun(runDate, runType) {
@@ -360,6 +399,31 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
       return toBrief(rows[0]);
     },
 
+    async saveTopicSelection(selection) {
+      const rows = await sql`
+        insert into topic_selections (
+          id, run_id, selected_shortlisted_item_id, approved_title, approval_notes,
+          approval_json, handoff_json, created_at, updated_at
+        )
+        values (
+          ${selection.id}, ${selection.runId}, ${selection.selectedShortlistedItemId},
+          ${selection.approvedTitle}, ${selection.approvalNotes},
+          ${sql.json(selection.approvalJson as never)}, ${sql.json(selection.handoffJson as never)},
+          ${new Date(selection.createdAt)}, ${new Date(selection.createdAt)}
+        )
+        on conflict (run_id) do update set
+          id = excluded.id,
+          selected_shortlisted_item_id = excluded.selected_shortlisted_item_id,
+          approved_title = excluded.approved_title,
+          approval_notes = excluded.approval_notes,
+          approval_json = excluded.approval_json,
+          handoff_json = excluded.handoff_json,
+          updated_at = excluded.updated_at
+        returning *
+      `;
+      return toTopicSelection(rows[0]);
+    },
+
     async markRunSuccess(runId, finishedAt) {
       const rows = await sql`
         update runs
@@ -399,7 +463,7 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
         return { run: null, brief: null, shortlistedItems: [] };
       }
 
-      const [briefRows, shortlistedRows] = await Promise.all([
+      const [briefRows, shortlistedRows, topicSelectionRows] = await Promise.all([
         sql`select * from editorial_briefs where run_id = ${run.id} order by created_at desc limit 1`,
         sql`
           select shortlisted_items.*, news_items.raw_json as news_raw_json
@@ -407,13 +471,20 @@ export function createPostgresEditorialBriefAdapter(sql: Sql): EditorialBriefDbA
           left join news_items on news_items.id = shortlisted_items.news_item_id
           where shortlisted_items.run_id = ${run.id}
           order by shortlisted_items.rank asc
+        `,
+        sql`
+          select * from topic_selections
+          where run_id = ${run.id}
+          order by updated_at desc
+          limit 1
         `
       ]);
 
       return {
         run,
         brief: briefRows[0] ? toBrief(briefRows[0]) : null,
-        shortlistedItems: shortlistedRows.map((row) => toShortlistedItem(row))
+        shortlistedItems: shortlistedRows.map((row) => toShortlistedItem(row)),
+        topicSelection: topicSelectionRows[0] ? toTopicSelection(topicSelectionRows[0]) : null
       };
     }
   };

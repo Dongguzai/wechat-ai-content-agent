@@ -55,6 +55,9 @@ function createLazyDbAdapter(env: NodeJS.ProcessEnv): EditorialBriefDbAdapter {
     async insertEditorialBrief(brief) {
       return await getDb().insertEditorialBrief(brief);
     },
+    async saveTopicSelection(selection) {
+      return await getDb().saveTopicSelection(selection);
+    },
     async markRunSuccess(runId, finishedAt) {
       return await getDb().markRunSuccess(runId, finishedAt);
     },

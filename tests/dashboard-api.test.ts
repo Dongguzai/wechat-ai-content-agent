@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { EditorialBriefDbAdapter } from "../src/adapters/neon";
+import type {
+  CloudTopicSelectionRecord,
+  CloudRunType
+} from "../src/types/cloud";
 import { executeDashboardAction } from "../apps/dashboard/lib/actions";
 import { getArticleData, getBriefData, getDashboardStatus, getSettingsStatus, readFileForApi } from "../apps/dashboard/lib/dashboard-data";
 import {
@@ -36,6 +41,68 @@ async function createTempRoot(): Promise<string> {
 
 async function writeJson(root: string, relativePath: string, value: unknown): Promise<void> {
   await writeFile(join(root, relativePath), JSON.stringify(value, null, 2), "utf8");
+}
+
+class SelectionOnlyDb implements EditorialBriefDbAdapter {
+  ensured = false;
+  selections: CloudTopicSelectionRecord[] = [];
+
+  async ensureSchema() {
+    this.ensured = true;
+  }
+
+  async saveTopicSelection(selection: {
+    id: string;
+    runId: string;
+    selectedShortlistedItemId: string;
+    approvedTitle: string;
+    approvalNotes: string;
+    approvalJson: unknown;
+    handoffJson: unknown;
+    createdAt: string;
+  }) {
+    const record: CloudTopicSelectionRecord = {
+      ...selection,
+      handoffJson: selection.handoffJson as CloudTopicSelectionRecord["handoffJson"],
+      updatedAt: selection.createdAt
+    };
+    this.selections.push(record);
+    return record;
+  }
+
+  async getSuccessfulRun() {
+    return undefined;
+  }
+
+  async startRun(): Promise<never> {
+    throw new Error("not implemented");
+  }
+
+  async clearRunArtifacts(): Promise<void> {}
+
+  async insertNewsItems(items: any[]) {
+    return items;
+  }
+
+  async insertShortlistedItems(items: any[]) {
+    return items;
+  }
+
+  async insertEditorialBrief(brief: any) {
+    return brief;
+  }
+
+  async markRunSuccess(): Promise<never> {
+    throw new Error("not implemented");
+  }
+
+  async markRunFailed(): Promise<never> {
+    throw new Error("not implemented");
+  }
+
+  async getTodayBrief(_runDate: string, _runType: CloudRunType) {
+    return { run: null, brief: null, shortlistedItems: [], topicSelection: null };
+  }
 }
 
 const tinyPngBase64 =
@@ -412,6 +479,84 @@ test("brief topic selection accepts a cloud brief topic snapshot", async () => {
     assert.equal(selectedTopic.selected.selection.writingAngle, "从工作流入口变化切入。");
     assert.equal(shortlisted[0].id, "cloud-topic-3");
     assert.equal(candidates[0].id, "cloud-topic-3");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cloud brief topic selection persists durable Neon handoff without local writes on Vercel", async () => {
+  const root = await createTempRoot();
+  const db = new SelectionOnlyDb();
+  try {
+    const result = await selectBriefTopic(
+      {
+        source: "cloud-brief",
+        runId: "run-cloud-1",
+        topicId: "cloud-topic-3",
+        topic: {
+          id: "cloud-topic-3",
+          runId: "run-cloud-1",
+          newsItemId: "news-3",
+          title: "Cloud topic raw title",
+          titleZh: "云端入围资讯",
+          url: "https://example.com/cloud-topic-3",
+          sourceName: "Example Cloud",
+          sourceType: "global_search",
+          provider: "tavily",
+          query: "AI 智能体 工作流",
+          category: "tooling",
+          tags: ["agent", "developer-workflow"],
+          summaryZh: "这是一条云端简报摘要。",
+          topicAngleZh: "从工作流入口变化切入。",
+          shortlistReasonZh: "适合作为今日主文。",
+          shortlistScore: 88,
+          riskNotesZh: ["需要回到原文核验。"]
+        },
+        shortlistedItems: [
+          {
+            id: "cloud-topic-3",
+            runId: "run-cloud-1",
+            newsItemId: "news-3",
+            rank: 1,
+            title: "Cloud topic raw title",
+            titleZh: "云端入围资讯",
+            url: "https://example.com/cloud-topic-3",
+            sourceName: "Example Cloud",
+            sourceType: "global_search",
+            provider: "tavily",
+            query: "AI 智能体 工作流",
+            category: "tooling",
+            tags: ["agent", "developer-workflow"],
+            summaryZh: "这是一条云端简报摘要。",
+            topicAngleZh: "从工作流入口变化切入。",
+            shortlistReasonZh: "适合作为今日主文。",
+            shortlistScore: 88,
+            riskNotesZh: ["需要回到原文核验。"]
+          }
+        ]
+      },
+      {
+        rootDir: root,
+        db,
+        env: { VERCEL: "1" },
+        writeLocalHandoff: false
+      }
+    );
+
+    assert.equal(result.redirectTo, "/article");
+    assert.equal(result.path, "neon:topic_selections");
+    assert.equal(result.persistence, "neon");
+    assert.equal(db.ensured, true);
+    assert.equal(db.selections.length, 1);
+    assert.equal(db.selections[0].runId, "run-cloud-1");
+    assert.equal(db.selections[0].selectedShortlistedItemId, "cloud-topic-3");
+    assert.equal(db.selections[0].handoffJson.approval.approvedTopicId, "cloud-topic-3");
+    assert.equal(
+      (db.selections[0].handoffJson.selectedTopic as any).selected.selection.writingAngle,
+      "从工作流入口变化切入。"
+    );
+    await assert.rejects(() => access(join(root, "inputs/editorial-approval.json")));
+    await assert.rejects(() => access(join(root, "outputs/selected-topic.json")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

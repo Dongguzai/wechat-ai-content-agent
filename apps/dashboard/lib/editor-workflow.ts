@@ -1,6 +1,9 @@
 import { appendFile, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import sharp from "sharp";
+import type { EditorialBriefDbAdapter } from "../../../src/adapters/neon";
+import type { CloudArticleHandoffPayload, CloudTopicSelectionRecord } from "../../../src/types/cloud";
 import { generateApimartImage } from "../../../src/adapters/apimart";
 import { executeDashboardAction } from "./actions";
 import {
@@ -44,6 +47,12 @@ export interface CoverRegenerateOptions extends DashboardFsOptions {
   now?: Date;
 }
 
+export interface SelectBriefTopicOptions extends DashboardFsOptions {
+  db?: EditorialBriefDbAdapter;
+  env?: NodeJS.ProcessEnv;
+  writeLocalHandoff?: boolean;
+}
+
 interface CoverHistoryItem {
   imagePath: string;
   provider: string;
@@ -73,8 +82,14 @@ const WECHAT_COVER_HEIGHT = 383;
 
 export async function selectBriefTopic(
   input: unknown,
-  options: DashboardFsOptions = {}
-): Promise<{ path: string; approval: JsonObject; redirectTo: "/article" }> {
+  options: SelectBriefTopicOptions = {}
+): Promise<{
+  path: string;
+  approval: JsonObject;
+  redirectTo: "/article";
+  persistence: "local-file" | "neon";
+  topicSelection?: JsonObject;
+}> {
   const topicId = stringField(input, "topicId").trim();
   if (!topicId) {
     throw new Error("topicId is required.");
@@ -101,11 +116,40 @@ export async function selectBriefTopic(
     approvedTitle: stringValue(topic.titleZh) || stringValue(topic.title),
     notes: ""
   };
-  const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
+
   if (submittedTopic && isCloudBriefSelection(input)) {
-    await writeCloudArticleHandoff(input, submittedTopic, options);
+    const handoff = createCloudArticleHandoff(input, submittedTopic, approval);
+    const topicSelection = options.db
+      ? await saveCloudTopicSelection(input, submittedTopic, approval, handoff, options)
+      : undefined;
+
+    if (shouldWriteLocalHandoff(options)) {
+      const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
+      await writeCloudArticleHandoff(handoff, options);
+      return {
+        path: writtenPath,
+        approval,
+        redirectTo: "/article",
+        persistence: topicSelection ? "neon" : "local-file",
+        topicSelection: topicSelection ? (redactJson(topicSelection) as JsonObject) : undefined
+      };
+    }
+
+    if (!topicSelection) {
+      throw new Error("Cloud topic selection requires Neon persistence when local handoff is disabled.");
+    }
+
+    return {
+      path: "neon:topic_selections",
+      approval,
+      redirectTo: "/article",
+      persistence: "neon",
+      topicSelection: redactJson(topicSelection) as JsonObject
+    };
   }
-  return { path: writtenPath, approval, redirectTo: "/article" };
+
+  const writtenPath = await writeJsonRelative("inputs/editorial-approval.json", approval, options);
+  return { path: writtenPath, approval, redirectTo: "/article", persistence: "local-file" };
 }
 
 async function findLegacyLocalTopic(
@@ -1026,11 +1070,11 @@ function topicSnapshotsFromInput(input: unknown, selectedTopic: JsonObject): Jso
     .slice(0, 10);
 }
 
-async function writeCloudArticleHandoff(
+function createCloudArticleHandoff(
   input: unknown,
   selectedTopic: JsonObject,
-  options: DashboardFsOptions
-): Promise<void> {
+  approval: JsonObject
+): CloudArticleHandoffPayload {
   const now = new Date().toISOString();
   const snapshots = topicSnapshotsFromInput(input, selectedTopic);
   const candidates = snapshots.map((item) => candidateFromSnapshot(item, now));
@@ -1045,12 +1089,70 @@ async function writeCloudArticleHandoff(
     now
   });
 
+  return {
+    approval: {
+      approvedByUser: Boolean(approval.approvedByUser),
+      approvedTopicId: stringValue(approval.approvedTopicId),
+      approvedTitle: stringValue(approval.approvedTitle),
+      notes: stringValue(approval.notes)
+    },
+    candidateNews: candidates,
+    shortlistedNews: shortlisted,
+    selectedTopic: selectedTopicOutput,
+    editorialBrief
+  };
+}
+
+async function writeCloudArticleHandoff(
+  handoff: CloudArticleHandoffPayload,
+  options: DashboardFsOptions
+): Promise<void> {
   await Promise.all([
-    writeJsonRelative("outputs/candidate-news.json", candidates, options),
-    writeJsonRelative("outputs/shortlisted-news.json", shortlisted, options),
-    writeJsonRelative("outputs/selected-topic.json", selectedTopicOutput, options),
-    writeJsonRelative("outputs/editorial-brief.json", editorialBrief, options)
+    writeJsonRelative("outputs/candidate-news.json", handoff.candidateNews, options),
+    writeJsonRelative("outputs/shortlisted-news.json", handoff.shortlistedNews, options),
+    writeJsonRelative("outputs/selected-topic.json", handoff.selectedTopic, options),
+    writeJsonRelative("outputs/editorial-brief.json", handoff.editorialBrief, options)
   ]);
+}
+
+async function saveCloudTopicSelection(
+  input: unknown,
+  selectedTopic: JsonObject,
+  approval: JsonObject,
+  handoff: CloudArticleHandoffPayload,
+  options: SelectBriefTopicOptions
+): Promise<CloudTopicSelectionRecord> {
+  const db = options.db;
+  if (!db) {
+    throw new Error("Neon db adapter is required for cloud topic selection.");
+  }
+
+  const runId = stringValue(selectedTopic.runId) || stringField(input, "runId");
+  if (!runId) {
+    throw new Error("Cloud topic selection requires runId for durable Neon handoff.");
+  }
+
+  const now = new Date().toISOString();
+  await db.ensureSchema();
+  return await db.saveTopicSelection({
+    id: randomUUID(),
+    runId,
+    selectedShortlistedItemId: stringValue(selectedTopic.id),
+    approvedTitle: stringValue(approval.approvedTitle),
+    approvalNotes: stringValue(approval.notes),
+    approvalJson: approval,
+    handoffJson: handoff,
+    createdAt: now
+  });
+}
+
+function shouldWriteLocalHandoff(options: SelectBriefTopicOptions): boolean {
+  if (typeof options.writeLocalHandoff === "boolean") {
+    return options.writeLocalHandoff;
+  }
+
+  const env = options.env ?? process.env;
+  return env.VERCEL !== "1" && env.VERCEL !== "true";
 }
 
 function topicSnapshotFromRecord(topic: JsonObject, fallbackId: string): JsonObject {

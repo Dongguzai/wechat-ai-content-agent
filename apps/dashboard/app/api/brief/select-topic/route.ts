@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireApiSession } from "@/lib/auth";
+import { createCloudBriefServices } from "@/lib/cloud-brief-server";
 import { selectBriefTopic } from "@/lib/editor-workflow";
 import { redactJson } from "@/lib/redaction";
 
@@ -11,7 +12,14 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const result = await selectBriefTopic(body);
+    const isCloudBriefSelection =
+      body && typeof body === "object" && !Array.isArray(body) && body.source === "cloud-brief";
+    const result = await selectBriefTopic(
+      body,
+      isCloudBriefSelection
+        ? { db: createCloudBriefServices().db, env: process.env }
+        : {}
+    );
     return NextResponse.json(redactJson({ ok: true, ...result }));
   } catch (error) {
     return NextResponse.json(
