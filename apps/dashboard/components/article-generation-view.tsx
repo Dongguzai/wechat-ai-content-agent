@@ -90,9 +90,11 @@ export function ArticleGenerationView({ taskId }: { taskId: string }) {
   const loadTask = useCallback(async () => {
     setError("");
     try {
-      const response = await fetch(`/api/article-generation/status?id=${encodeURIComponent(taskId)}`, {
+      const statusUrl = `/api/article-generation/status?id=${encodeURIComponent(taskId)}&t=${Date.now()}`;
+      const response = await fetch(statusUrl, {
         method: "GET",
-        credentials: "same-origin"
+        credentials: "same-origin",
+        cache: "no-store"
       });
 
       if (response.status === 401) {
@@ -124,6 +126,26 @@ export function ArticleGenerationView({ taskId }: { taskId: string }) {
 
   useEffect(() => {
     void loadTask();
+  }, [loadTask]);
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void loadTask();
+      }
+    }
+
+    function handlePageShow() {
+      void loadTask();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
   }, [loadTask]);
 
   useEffect(() => {

@@ -13,14 +13,36 @@ interface ArticleGenerationHandlerOptions {
 
 type SafeArticleGenerationStep = Omit<ArticleGenerationStepRecord, "inputJson" | "outputJson">;
 
+const noStoreHeaders = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+  Pragma: "no-cache",
+  Expires: "0"
+};
+
+function withNoStoreHeaders(response: NextResponse): NextResponse {
+  for (const [key, value] of Object.entries(noStoreHeaders)) {
+    response.headers.set(key, value);
+  }
+  return response;
+}
+
+function noStoreJson(body: unknown, init: ResponseInit = {}): NextResponse {
+  const headers = new Headers(init.headers);
+  for (const [key, value] of Object.entries(noStoreHeaders)) {
+    headers.set(key, value);
+  }
+  return NextResponse.json(body, { ...init, headers });
+}
+
 async function authorize(options: ArticleGenerationHandlerOptions): Promise<NextResponse | undefined> {
   if (options.isAuthorized) {
     return (await options.isAuthorized())
       ? undefined
-      : NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+      : noStoreJson({ ok: false, error: "Unauthorized." }, { status: 401 });
   }
 
-  return await requireApiSession();
+  const authError = await requireApiSession();
+  return authError ? withNoStoreHeaders(authError) : undefined;
 }
 
 function resolveDb(options: ArticleGenerationHandlerOptions): EditorialBriefDbAdapter {
@@ -38,19 +60,29 @@ export async function handleArticleGenerationStatus(
   const authError = await authorize(options);
   if (authError) return authError;
 
-  const taskId = taskIdFromRequest(request);
-  if (!taskId) {
-    return NextResponse.json({ ok: false, error: "id is required." }, { status: 400 });
-  }
+  try {
+    const taskId = taskIdFromRequest(request);
+    if (!taskId) {
+      return noStoreJson({ ok: false, error: "id is required." }, { status: 400 });
+    }
 
-  const db = resolveDb(options);
-  const task = await db.getArticleGenerationTask(taskId);
-  if (!task) {
-    return NextResponse.json({ ok: false, error: "Article generation task not found." }, { status: 404 });
-  }
+    const db = resolveDb(options);
+    const task = await db.getArticleGenerationTask(taskId);
+    if (!task) {
+      return noStoreJson({ ok: false, error: "Article generation task not found." }, { status: 404 });
+    }
 
-  const steps = (await db.getArticleGenerationSteps(taskId)).map(toSafeStep);
-  return NextResponse.json(redactJson({ ok: true, task, steps }));
+    const steps = (await db.getArticleGenerationSteps(taskId)).map(toSafeStep);
+    return noStoreJson(redactJson({ ok: true, task, steps }));
+  } catch (error) {
+    return noStoreJson(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Article generation status failed."
+      },
+      { status: 500 }
+    );
+  }
 }
 
 export async function handleArticleGenerationCancel(

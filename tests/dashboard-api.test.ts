@@ -52,6 +52,12 @@ async function writeJson(root: string, relativePath: string, value: unknown): Pr
   await writeFile(join(root, relativePath), JSON.stringify(value, null, 2), "utf8");
 }
 
+function assertNoStoreResponse(response: Response): void {
+  assert.match(response.headers.get("Cache-Control") ?? "", /no-store/);
+  assert.equal(response.headers.get("Pragma"), "no-cache");
+  assert.equal(response.headers.get("Expires"), "0");
+}
+
 class SelectionOnlyDb implements EditorialBriefDbAdapter {
   ensured = false;
   selections: CloudTopicSelectionRecord[] = [];
@@ -702,7 +708,7 @@ test("article generation cancel does not overwrite success or failed terminal ra
 
 test("article generation status API handles auth, validation, missing, and found tasks", async () => {
   const db = new SelectionOnlyDb();
-  await db.createArticleGenerationTask({
+  const task = await db.createArticleGenerationTask({
     id: "task-status",
     topicSelectionId: "selection-status",
     runId: "run-status",
@@ -714,24 +720,30 @@ test("article generation status API handles auth, validation, missing, and found
     message: "文章生成任务已创建，等待执行",
     createdAt: "2026-06-02T00:00:00.000Z"
   });
+  task.currentStage = "research";
+  task.progress = 15;
+  task.message = "选题分析完成，等待调研阶段执行";
 
   const unauthorized = await handleArticleGenerationStatus(
     new Request("https://example.com/api/article-generation/status?id=task-status"),
     { db, isAuthorized: async () => false }
   );
   assert.equal(unauthorized.status, 401);
+  assertNoStoreResponse(unauthorized);
 
   const missingId = await handleArticleGenerationStatus(
     new Request("https://example.com/api/article-generation/status"),
     { db, isAuthorized: async () => true }
   );
   assert.equal(missingId.status, 400);
+  assertNoStoreResponse(missingId);
 
   const notFound = await handleArticleGenerationStatus(
     new Request("https://example.com/api/article-generation/status?id=missing-task"),
     { db, isAuthorized: async () => true }
   );
   assert.equal(notFound.status, 404);
+  assertNoStoreResponse(notFound);
 
   const found = await handleArticleGenerationStatus(
     new Request("https://example.com/api/article-generation/status?id=task-status"),
@@ -739,10 +751,23 @@ test("article generation status API handles auth, validation, missing, and found
   );
   const payload = await found.json();
   assert.equal(found.status, 200);
+  assertNoStoreResponse(found);
   assert.equal(payload.ok, true);
   assert.equal(payload.task.id, "task-status");
-  assert.equal(payload.task.currentStage, "waiting_for_worker");
+  assert.equal(payload.task.currentStage, "research");
+  assert.equal(payload.task.progress, 15);
   assert.deepEqual(payload.steps, []);
+});
+
+test("article generation status route is dynamic and no-revalidate", async () => {
+  const routeSource = await readFile(
+    join(process.cwd(), "apps/dashboard/app/api/article-generation/status/route.ts"),
+    "utf8"
+  );
+
+  assert.match(routeSource, /export const runtime = "nodejs"/);
+  assert.match(routeSource, /export const dynamic = "force-dynamic"/);
+  assert.match(routeSource, /export const revalidate = 0/);
 });
 
 test("article generation status API returns safe step records", async () => {
@@ -1181,7 +1206,20 @@ test("article generation view displays queued and cancelled states with polling"
   assert.match(source, /文章生成任务已经创建/);
   assert.match(source, /任务已取消/);
   assert.match(source, /terminalStatuses/);
-  assert.match(source, /\/api\/article-generation\/status/);
+  assert.match(source, /const statusUrl = `\/api\/article-generation\/status\?id=\$\{encodeURIComponent\(taskId\)\}&t=\$\{Date\.now\(\)\}`/);
+  assert.match(source, /fetch\(statusUrl, \{/);
+  assert.match(source, /method: "GET"/);
+  assert.match(source, /credentials: "same-origin"/);
+  assert.match(source, /cache: "no-store"/);
+  assert.match(source, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(source, /document\.visibilityState === "visible"/);
+  assert.match(source, /window\.addEventListener\("pageshow", handlePageShow\)/);
+  assert.match(source, /document\.removeEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(source, /window\.removeEventListener\("pageshow", handlePageShow\)/);
+  assert.match(source, /const progress = Math\.max\(0, Math\.min\(100, task\?\.progress \?\? 0\)\)/);
+  assert.match(source, /\{progress\}%/);
+  assert.match(source, /width: `\$\{progress\}%`/);
+  assert.match(source, /task\.currentStage === "research"\s+\?\s+"等待下一阶段"/);
   assert.match(source, /\/api\/article-generation\/cancel/);
 });
 
