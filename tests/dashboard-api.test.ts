@@ -31,6 +31,7 @@ import {
   setCurrentCoverVersion
 } from "../apps/dashboard/lib/editor-workflow";
 import { saveApproval, saveFeedback } from "../apps/dashboard/lib/forms";
+import { findRepoRoot } from "../apps/dashboard/lib/paths";
 
 const dashboardRequire = createRequire(new URL("../apps/dashboard/package.json", import.meta.url));
 const sharp = dashboardRequire("sharp") as any;
@@ -1277,6 +1278,29 @@ function fakeApimartFetch(calls: string[] = []): typeof fetch {
     );
   }) as typeof fetch;
 }
+
+
+test("dashboard filesystem falls back to writable temp data dir on Vercel standalone", async () => {
+  const previousVercel = process.env.VERCEL;
+  const previousDataDir = process.env.DASHBOARD_DATA_DIR;
+  try {
+    process.env.VERCEL = "1";
+    delete process.env.DASHBOARD_DATA_DIR;
+
+    assert.equal(findRepoRoot("/var/task/apps/dashboard"), "/tmp/wechat-ai-content-agent");
+  } finally {
+    if (previousVercel === undefined) {
+      delete process.env.VERCEL;
+    } else {
+      process.env.VERCEL = previousVercel;
+    }
+    if (previousDataDir === undefined) {
+      delete process.env.DASHBOARD_DATA_DIR;
+    } else {
+      process.env.DASHBOARD_DATA_DIR = previousDataDir;
+    }
+  }
+});
 
 test("dashboard status reads outputs state", async () => {
   const root = await createTempRoot();
